@@ -15,25 +15,7 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 
 ---
 
-## 🛒 Getting started
-
-### What to buy
-
-| # | Component | Notes |
-|---|-----------|-------|
-| 1 | **[Sipeed Tang Nano 20K](https://sipeed.com/tangnano20k)** | Main FPGA board |
-| 2 | **USB-C cable** | Power + FPGA programming |
-| 3 | **HDMI cable + screen/TV** | Video output |
-| 4 | **microSD card** ≥ 1 GB | FAT32, for games and software |
-| 5 | **USB keyboard** | Any standard USB HID keyboard |
-| 6 | **USB gamepad** *(optional)* | Xbox 360 or any XInput-compatible |
-| 7 | **USB hub** *(optional)* | Only needed for 2 simultaneous gamepads |
-| 8 | **ESP-01S module** *(optional)* | WiFi — MSX UNAPI TCP/IP |
-| 9 | **CH340 / CP2102 USB-serial 3.3V adapter** *(optional)* | Only to flash ESP-01S firmware |
-
----
-
-### Connection diagram
+## 🔌 Connection diagram
 
 ```
                     ┌──────────────────────────────┐
@@ -65,10 +47,11 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 | 2a | `bl616_fpga_partner_nano20k.bin` | `0x000000` (BL616) | [BLFlashCube](https://dev.bouffalolab.com/download) | Hold UPDATE → plug USB-C → release |
 | 2b | `fpga_companion_nano20k.bin` | `0x040000` (BL616) | BLFlashCube + `flash_nano20k.ini` | Same session as 2a |
 | 3 | `Nextor-2.1.1.WonderTANG.ROM.bin` | `0x100000` | Gowin Programmer | External Flash mode |
-| 4 | ESP-01S UNAPI firmware | — | esptool / Arduino IDE via CH340 adapter | *(WiFi only)* |
+| 4 | ESP-01S UNAPI firmware (OCM) | — | esptool / Arduino IDE via CH340 adapter | *(WiFi only — see below)* |
 
 > **Files 1, 3:** download from [releases](https://github.com/Papipapito/MSXnano/releases)  
-> **Files 2a/2b:** download from [FPGA-Companion v1.4.21](https://github.com/MiSTle-Dev/FPGA-Companion/releases/tag/v1.4.21)
+> **Files 2a/2b:** download from [FPGA-Companion v1.4.21](https://github.com/MiSTle-Dev/FPGA-Companion/releases/tag/v1.4.21)  
+> **File 4 (ESP-01S):** download from [ducasp MSX-Development — ESPFW1.4](https://github.com/ducasp/MSX-Development/releases/tag/ESPFW1.4) — use the **OCM** release (contains two `.bin` files)
 
 ---
 
@@ -157,6 +140,11 @@ I/O ports used by the WiFi interface:
 | 0x07 | Write     | Send byte to UART (to ESP-01S) |
 
 Default baud rate: **859372 bps**. The ESP-01S must be pre-flashed with MSX UNAPI firmware at this baud rate.
+
+#### ESP-01S firmware
+
+Download the **OCM** build from [ducasp/MSX-Development — ESPFW1.4](https://github.com/ducasp/MSX-Development/releases/tag/ESPFW1.4).  
+It contains two `.bin` files — flash both using esptool or the Arduino IDE via a **CH340 / CP2102 USB-serial 3.3V adapter**.
 
 ### MSX UNAPI
 
