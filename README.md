@@ -49,7 +49,7 @@ Download the following files from the [MiSTle-Dev FPGA-Companion v1.4.21 release
 Also download [`flash_nano20k.ini`](https://github.com/MiSTle-Dev/FPGA-Companion/releases/download/v1.4.21/flash_nano20k.ini) — it configures the flash tool to write both files at the correct addresses in one step.
 
 Flash using [BouffaloLabDevCube](https://dev.bouffalolab.com/download) (BLFlashCube) with the `.ini` file:
-* Press and hold **S2** on the Tang Nano 20K, connect USB, release S2 (ISP mode)
+* Press and hold **UPDATE** on the Tang Nano 20K, connect USB, release UPDATE (enters BL616 ISP mode)
 * For full flashing instructions see: [MiSTle-Dev BL616 Firmware Installation](https://github.com/MiSTle-Dev/.github/wiki/Firmware-Installation-BL616-%C2%B5C)
 
 #### Supported USB gamepads
