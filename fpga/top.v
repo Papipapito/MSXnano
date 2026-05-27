@@ -550,10 +550,10 @@ always @(posedge clk_54m or negedge bus_reset_n) begin
         psg_reg15_joy_sel <= cpu_dout[7:6];
 end
 
-// USB joystick → MSX active-low format: {2'b11, ~TrigB, ~TrigA, ~Right, ~Left, ~Down, ~Up}
-// Companion sends active-high: bit0=Up, bit1=Down, bit2=Left, bit3=Right, bit4=FireA, bit5=FireB
-wire [7:0] joy0_msx = {2'b11, ~joystick0[5:0]};
-wire [7:0] joy1_msx = {2'b11, ~joystick1[5:0]};
+// Companion joy byte (active-high): bit0=Right, bit1=Left, bit2=Down, bit3=Up, bit4=A, bit5=B
+// MSX PSG Port A (active-low):      bit0=Up,    bit1=Down,  bit2=Left, bit3=Right, bit4=TrigA, bit5=TrigB
+wire [7:0] joy0_msx = {2'b11, ~joystick0[5], ~joystick0[4], ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
+wire [7:0] joy1_msx = {2'b11, ~joystick1[5], ~joystick1[4], ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
 wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? joy0_msx :
                           (!psg_reg15_joy_sel[1]) ? joy1_msx :
                           8'hFF;
