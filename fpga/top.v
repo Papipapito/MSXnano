@@ -799,11 +799,11 @@ wire [7:0] mapper_read_data =
 
     reg led_heartbeat = 1'b1;
     reg [19:0] led_cnt;
-    always @(posedge clk_enable_3m6_54 or negedge bus_reset_n) begin
+    always @(posedge clk_54m or negedge bus_reset_n) begin
         if (!bus_reset_n) begin
-            led_cnt      <= 0;
+            led_cnt       <= 0;
             led_heartbeat <= 1'b1;
-        end else begin
+        end else if (clk_enable_3m6_54) begin
             if (led_cnt == 20'd999999) begin
                 led_cnt       <= 0;
                 led_heartbeat <= ~led_heartbeat;
