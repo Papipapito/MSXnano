@@ -7,6 +7,7 @@
 `define ENABLE_CONFIG
 `define SDRAM_32
 `define ENABLE_WAIT //extra wait state for mreq+wr
+`define ENABLE_WIFI
 // `define SWAP23
 
 module top
@@ -66,9 +67,15 @@ module top
     output wire sd_dat2,     // 1
     output wire sd_dat3,     // 1
 
-    //uart
+    //uart (debug)
     //output wire uart_tx,
     output wire uart_tx,
+
+`ifdef ENABLE_WIFI
+    // wifi uart to ESP-01S
+    output wire wifi_tx,
+    input  wire wifi_rx,
+`endif
 
 
     output reg [5:0] led, 
@@ -640,6 +647,10 @@ wire [7:0] mapper_read_data =
                      ( config_req == 1 && config_ok == 1) ? config_dout :
                      ( config_req == 1 && config_ok == 0) ? swio_dout :
                 `endif
+                `ifdef ENABLE_WIFI
+                     ( wifi_uart_req == 1 ) ? wifi_uart_dout :
+                     ( wifi_bios_req == 1 ) ? wifi_bios_dout :
+                `endif
                      ( rtc_req_r == 1 ) ? rtc_dout :
                 //`ifdef SWAP23
                      ( ppi_req_r == 1 ) ? ppi_port_a :
@@ -763,9 +774,17 @@ wire [7:0] mapper_read_data =
 		.clk_falling (clk_falling_3m6_54),
 `endif
 `ifdef ENABLE_SDCARD
+  `ifdef ENABLE_WIFI
+        .WAIT_n    (bus_wait_n & flash_wait_n & wifi_wait_n),
+  `else
         .WAIT_n    (bus_wait_n & flash_wait_n),
+  `endif
 `else
+  `ifdef ENABLE_WIFI
+        .WAIT_n    (bus_wait_n & wifi_wait_n),
+  `else
         .WAIT_n    (bus_wait_n),
+  `endif
 `endif
     `ifdef ENABLE_V9958
         .INT_n     (bus_int_n & vdp_int),
@@ -1899,6 +1918,50 @@ memory_ctrl mem1 (
         Slot2Mode[1]    <=  io42_id212[4];
         Slot2Mode[0]    <=  io42_id212[5];
     end
+
+`ifdef ENABLE_WIFI
+
+    // WiFi BIOS ROM (esp8266e, slot 1 page 1: 0x4000-0x7FFF)
+    reg wifi_bios_req;
+    wire [7:0] wifi_bios_dout;
+    always @ (posedge clk_27m) begin
+        wifi_bios_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[1] == 1 ) ? 1 : 0;
+    end
+
+    esp8266e_rom wifi_bios1 (
+        .address (bus_addr[13:0]),
+        .clock (clk_27m),
+        .data (8'h00),
+        .wren (0),
+        .q (wifi_bios_dout)
+    );
+
+    // WiFi UART I/O (ports 0x06, 0x07)
+    wire wifi_uart_req;
+    wire wifi_wait_n;
+    wire [7:0] wifi_uart_dout;
+    assign wifi_uart_req = (bus_addr[7:1] == 7'b0000011 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
+
+    wifi uwifi (
+        .clk_i   (clk_27m),
+        .wait_o  (wifi_wait_n),
+        .reset_i (bus_reset_n),
+        .iorq_i  (bus_iorq_n),
+        .wrt_i   (bus_wr_n),
+        .rd_i    (bus_rd_n),
+        .rx_i    (wifi_rx),
+        .tx_o    (wifi_tx),
+        .adr_i   (bus_addr),
+        .db_i    (cpu_dout),
+        .db_o    (wifi_uart_dout)
+    );
+
+`else
+
+    wire wifi_wait_n;
+    assign wifi_wait_n = 1'b1;
+
+`endif
 
     wire send;
     monostable mono2 (

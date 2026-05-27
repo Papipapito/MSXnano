@@ -11,6 +11,7 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * PSG
 * OPLL
 * FPGA Companion used as HID (keyboard, gamepads) interface
+* WiFi via ESP-01S (MSX UNAPI)
 
 ## Slot map
 
@@ -69,6 +70,38 @@ Player 1 = first XInput device enumerated; Player 2 = second device (requires US
 
 MSXnano uses the same Nextor driver as Wondertang: `Nextor-2.1.1.WonderTANG.ROM.bin`.
 Flash Address = `0x100000` (subject to change).
+
+## WiFi (ESP-01S)
+
+WiFi support uses an ESP-01S module (ESP8266) connected to the Tang Nano 20K header pins.
+
+### Wiring
+
+| ESP-01S pin | Tang Nano 20K pin | Direction |
+|-------------|-------------------|-----------|
+| TX (GPIO1)  | Pin 77            | ESP → FPGA |
+| RX (GPIO3)  | Pin 73            | FPGA → ESP |
+| VCC         | 3.3V              | Power |
+| GND         | GND               | Ground |
+
+### Slot mapping
+
+The WiFi BIOS ROM (esp8266e) is mapped to **Slot 1, page 1** (0x4000–0x7FFF).  
+It is detected automatically by the MSX BIOS at boot.
+
+I/O ports used by the WiFi interface:
+| Port | Direction | Description |
+|------|-----------|-------------|
+| 0x06 | Read      | Receive byte from UART buffer |
+| 0x06 | Write     | Set baud rate / clear buffer |
+| 0x07 | Read      | UART status flags |
+| 0x07 | Write     | Send byte to UART (to ESP-01S) |
+
+Default baud rate: **859372 bps**. The ESP-01S must be pre-flashed with MSX UNAPI firmware at this baud rate.
+
+### MSX UNAPI
+
+The WiFi module implements MSX UNAPI TCP/IP over the ESP8266 serial interface. Compatible with standard MSX networking software (Telnet clients, FTP, etc.).
 
 ## YouTube video
 https://youtu.be/7KI_Em9QK0Y
