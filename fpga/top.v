@@ -526,6 +526,38 @@ wire [7:0] ex_bus_data;
 wire psg_req_r;
 assign psg_req_r = (bus_addr[7:0] == 8'hA2 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
 
+// USB joystick data wires (driven by fpga_companion instance below)
+wire [7:0] joystick0;
+wire [7:0] joystick1;
+
+// Track which PSG register was last latched via I/O A0h
+reg [3:0] psg_addr_latch;
+always @(posedge clk_54m or negedge bus_reset_n) begin
+    if (!bus_reset_n)
+        psg_addr_latch <= 4'd0;
+    else if (bus_addr[7:0] == 8'hA0 && bus_iorq_n == 0 && bus_wr_n == 0 && bus_m1_n == 1)
+        psg_addr_latch <= cpu_dout[3:0];
+end
+
+// Track PSG reg 15 (Port B) bits [7:6] which select joystick port
+// bit6=0 selects joy1, bit7=0 selects joy2 (active low)
+reg [1:0] psg_reg15_joy_sel;
+always @(posedge clk_54m or negedge bus_reset_n) begin
+    if (!bus_reset_n)
+        psg_reg15_joy_sel <= 2'b11;
+    else if (bus_addr[7:0] == 8'hA1 && bus_iorq_n == 0 && bus_wr_n == 0 && bus_m1_n == 1
+             && psg_addr_latch == 4'd15)
+        psg_reg15_joy_sel <= cpu_dout[7:6];
+end
+
+// USB joystick → MSX active-low format: {2'b11, ~TrigB, ~TrigA, ~Right, ~Left, ~Down, ~Up}
+// Companion sends active-high: bit0=Up, bit1=Down, bit2=Left, bit3=Right, bit4=FireA, bit5=FireB
+wire [7:0] joy0_msx = {2'b11, ~joystick0[5:0]};
+wire [7:0] joy1_msx = {2'b11, ~joystick1[5:0]};
+wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? joy0_msx :
+                          (!psg_reg15_joy_sel[1]) ? joy1_msx :
+                          8'hFF;
+
 
 //keyboard scan
 wire ppi_portb_req_r = (bus_addr[7:0] == 8'hA9 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
@@ -579,7 +611,7 @@ wire [7:0] mapper_read_data =
     always @ (posedge clk_54m) begin
         cpu_din <= 
                 (mapper_port_read==1) ? mapper_read_data :
-                (psg_req_r == 1) ? 8'b11111111 :
+                (psg_req_r == 1) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
                 (ppi_portb_req_r == 1) ? keyboard_data :
                 `ifdef ENABLE_V9958
                      ( vdp_csr_n == 0) ? vdp_dout :
@@ -1900,10 +1932,10 @@ fpga_companion fpga_companion_inst
 	.spi_dat (spi_dat), 
 	.spi_irqn (spi_irqn),
 
-	.keyboard (keyboard)
-	// joystick0 => joystick0,
-	// joystick0_console => joystick0_console,
-	// joystick1 => joystick1,
+	.keyboard (keyboard),
+	.joystick0 (joystick0),
+	.joystick0_console (),
+	.joystick1 (joystick1)
 
     // ws2812_color =>  ws2812_color
 );
