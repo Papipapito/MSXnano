@@ -789,32 +789,36 @@ wire [7:0] mapper_read_data =
         .Data_Reverse (bus_data_reverse)
     );
 
-    //assign led[5:1] = cpu_din[5:1];
+    // LED[5] heartbeat (~1.8Hz blink = core alive)
+    // LED[4] SD card busy
+    // LED[3] joystick 1 fire B (button 2)
+    // LED[2] joystick 1 fire A (button 1)
+    // LED[1] joystick 1 any direction (Up/Down/Left/Right)
+    // LED[0] joystick 2 any input
+    // All active low: 0 = LED on
 
-    // assign  led[5:1] = bus_addr[5:1];
-
-    assign led[5:0] = keyboard_data[5:0];
-
-    // assign led[5] = bus_reset_n;
-    // assign led[4] = reset3_n;
-    // assign led[3] = wait_io;
-    // assign led[2] = bus_wait_n;
-    // assign led[1] = flash_wait_n;
-
+    reg led_heartbeat = 1'b1;
     reg [19:0] led_cnt;
     always @(posedge clk_enable_3m6_54 or negedge bus_reset_n) begin
         if (!bus_reset_n) begin
-            led_cnt <= 0;
-            //led[0] <= 0;
+            led_cnt      <= 0;
+            led_heartbeat <= 1'b1;
         end else begin
-            if (led_cnt == 1000000-1) begin
-                led_cnt <= 0;
-                // led[0] <= ~led[0];      // przełącz LED
+            if (led_cnt == 20'd999999) begin
+                led_cnt       <= 0;
+                led_heartbeat <= ~led_heartbeat;
             end else begin
                 led_cnt <= led_cnt + 1;
             end
         end
     end
+
+    assign led[5] = led_heartbeat;
+    assign led[4] = ~sd_busy_w;
+    assign led[3] = ~joystick0[5];
+    assign led[2] = ~joystick0[4];
+    assign led[1] = ~(|joystick0[3:0]);
+    assign led[0] = ~(|joystick1[5:0]);
 
     //slots decoding
     reg [7:0] ppi_port_a = 8'h00;
