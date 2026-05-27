@@ -59,6 +59,7 @@ Flash using [BouffaloLabDevCube](https://dev.bouffalolab.com/download) (BLFlashC
 | Xbox 360 (wired) | ✅ Works |
 | Xbox 360-compatible clones (XInput) | ✅ Works |
 | Xbox One (XInput mode) | ✅ Works |
+| Lenovo X01 (USB dongle) | ✅ Works |
 | Xbox Series X/S | ❌ Not supported (different protocol) |
 | PlayStation 4 / 5 | ❌ Not supported |
 
