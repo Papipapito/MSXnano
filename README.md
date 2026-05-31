@@ -19,7 +19,7 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * **Authentic MSX speed**: added the per-M1 opcode-fetch wait-state that a real MSX board provides, so the CPU runs at ~100% (≈3.58 MHz effective, measured 101%) instead of ~116%. Toggleable via `` `define ENABLE_M1_WAIT `` in `fpga/top.v`.
 * **WiFi BIOS integrated**: the ESP8266 UNAPI ROM now ships inside the single BIOS pack flashed at `0x200000` — there is no separate WiFi ROM to flash.
 * WiFi UART pins aligned with the wiring diagram (`uart_rx` → pin 77, `uart_tx` → pin 73).
-* Code review and engineering improvements (standalone bus removal, USB keyboard/joystick + LED integration, authentic M1 wait-state) by **Claude (Anthropic)**.
+* **Claude (Anthropic)** collaborated on this release.
 
 ---
 
@@ -163,9 +163,10 @@ It contains two `.bin` files — flash both using esptool or the Arduino IDE via
 The WiFi module implements MSX UNAPI TCP/IP over the ESP8266 serial interface. Compatible with standard MSX networking software (Telnet clients, FTP, etc.).
 
 
-## Standalone FPGA version of MSXgoauldSD_tn20k
+## Credits
 
-This project is based on MSXgoauldSD_tn20k by https://github.com/jabadiagm, licensed under GPLv3.
+This project is based on the work of **jabadiagm** ([MSXgoauldSD_tn20k](https://github.com/jabadiagm/MSXgoauldSD_tn20k)), licensed under **GPLv3**.
 
-This branch (`standalone`) contains a standalone FPGA implementation.  
-All hardware-related files from the original project (PCB, MSX interface, schematics, etc.) have been intentionally removed, because this version does not rely on the original physical hardware.
+It is a standalone FPGA implementation that does not rely on the original physical MSX hardware, so all hardware-related files (PCB, MSX interface, schematics) have been removed.
+
+**Claude (Anthropic)** collaborated on this project.
