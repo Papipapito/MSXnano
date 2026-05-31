@@ -28,7 +28,7 @@ Components to build an **MSXnano** (standalone MSX2+ on Tang Nano 20K).
 
 | # | Qty | Component | Notes |
 |---|-----|-----------|-------|
-| 10 | 1 | **3D-printed case** | STL files in [`../case/`](../case). |
+| 10 | 1 | **3D-printed case (white PETG recommended)** | STL files in [`../case/`](../case); print all at once with `case/msxnano_case_bambulab.3mf` (Bambu Lab). Full BOM also in [`MSXnano_BOM.xlsx`](MSXnano_BOM.xlsx). |
 | 11 | — | **Screws / standoffs** _(if the case needs them)_ | _(fill in size/qty)_ |
 
 ## Notes
