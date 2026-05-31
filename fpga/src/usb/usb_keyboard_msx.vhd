@@ -156,12 +156,11 @@ BEGIN
                         WHEN 57 => keys(6)(3) <= '0'; -- CAPS
 
                         -- GRAPH (row6,bit2) and CODE/KANA (row6,bit4): not mapped in stock
-                        -- nano. Mapped to modifier keys (firmware remap: LAlt=106, RAlt=110,
-                        -- LGUI/Left-Win=107). NOTE: on the MSX, CODE and KANA are the SAME
-                        -- matrix key (row6 bit4) -> Left Alt and Left Windows both trigger it.
-                        WHEN 110 => keys(6)(2) <= '0'; -- GRAPH  (Right Alt)
-                        WHEN 106 => keys(6)(4) <= '0'; -- CODE   (Left Alt)
-                        WHEN 107 => keys(6)(4) <= '0'; -- KANA   (Left Windows) = same bit as CODE
+                        -- nano. Mapped to the Alt keys (firmware remap: LAlt=106, RAlt=110).
+                        -- CODE (international BIOS) and KANA (Japanese BIOS) are the SAME MSX
+                        -- matrix key (row6 bit4) -> one key, region decides its meaning.
+                        WHEN 110 => keys(6)(2) <= '0'; -- GRAPH      (Right Alt)
+                        WHEN 106 => keys(6)(4) <= '0'; -- CODE/KANA  (Left Alt)
 
                         -- SPACE / ENTER / ESC / TAB / BS / STOP / SELECT
                         WHEN 44 => keys(8)(0) <= '0'; -- SPACE  (row 8, bit0)
