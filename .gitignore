@@ -4,6 +4,9 @@ fpga/tn_vdp_v3_v9958/impl/
 fpga/build_log.txt
 *.gprj.user
 
+# Office temp/lock files
+~$*
+
 # Copyrighted MSX BIOS pack — NOT redistributed.
 # Build it locally from your own ROMs with fpga/src/rom/build.bat, then flash at 0x200000.
 fpga/src/rom/goauld_rom_int.bin
