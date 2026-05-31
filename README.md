@@ -79,6 +79,27 @@ The toggle is handled entirely in the FPGA (it never reaches the MSX), survives 
 reset, and powers on in real-MSX mode. (F11 is used because F12 is captured by the
 onboard BL616 FPGA-Companion firmware for its own OSD and never reaches the FPGA.)
 
+## Keyboard (USB → MSX)
+
+USB keyboard via the onboard BL616 (FPGA Companion). Letters and digits are 1:1; the
+MSX special keys are mapped as follows:
+
+| MSX key | USB key | Notes |
+|---------|---------|-------|
+| **GRAPH** | **Right Alt** | |
+| **CODE / KANA** | **Left Alt** | Same MSX matrix key — acts as **CODE** with the international BIOS and **KANA** with the Japanese BIOS |
+| **CAPS** | Caps Lock | |
+| **STOP** | Scroll Lock | |
+| **SELECT** | End | |
+| ESC / TAB / BS / RETURN | Esc / Tab / Backspace / Enter | |
+| Arrows / HOME / INS / DEL | Arrows / Home / Insert / Delete | |
+| F1–F5 | F1–F5 | |
+| **Turbo toggle** | **F11** | Not an MSX key — toggles CPU speed (see above) |
+
+Notes: **F12 is not usable** (the BL616 FPGA-Companion firmware captures it for its own
+OSD). The **Windows key is free** (unassigned). GRAPH and CODE/KANA were added by this
+project (stock nano did not map them).
+
 ## Slot map
 
 Slot map has been updated to improve compatibility without requiring changes.
