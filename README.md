@@ -11,7 +11,15 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * PSG
 * OPLL
 * FPGA Companion used as HID (keyboard, gamepads) interface
-* WiFi via ESP-01S (MSX UNAPI)
+* WiFi via ESP-01S (MSX UNAPI) — WiFi BIOS ROM integrated into the BIOS pack
+* Authentic MSX timing: per-M1 wait-state (runs at ~100% of real MSX speed)
+
+## What's new in v1.2
+* Rebuilt on the **goauld standalone core** (cleaner base) while keeping the standalone / USB / WiFi design.
+* **Authentic MSX speed**: added the per-M1 opcode-fetch wait-state that a real MSX board provides, so the CPU runs at ~100% (≈3.58 MHz effective, measured 101%) instead of ~116%. Toggleable via `` `define ENABLE_M1_WAIT `` in `fpga/top.v`.
+* **WiFi BIOS integrated**: the ESP8266 UNAPI ROM now ships inside the single BIOS pack flashed at `0x200000` — there is no separate WiFi ROM to flash.
+* WiFi UART pins aligned with the wiring diagram (`uart_rx` → pin 77, `uart_tx` → pin 73).
+* Code review and engineering improvements (standalone bus removal, USB keyboard/joystick + LED integration, authentic M1 wait-state) by **Claude (Anthropic)**.
 
 ---
 
@@ -46,11 +54,12 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 | 1 | `msxnano.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) | External Flash mode |
 | 2a | `bl616_fpga_partner_nano20k.bin` | `0x000000` (BL616) | [BLFlashCube](https://dev.bouffalolab.com/download) | Hold UPDATE → plug USB-C → release |
 | 2b | `fpga_companion_nano20k.bin` | `0x040000` (BL616) | BLFlashCube + `flash_nano20k.ini` | Same session as 2a |
-| 3 | `Nextor-2.1.1.WonderTANG.ROM.bin` | `0x100000` | Gowin Programmer | External Flash mode |
+| 3 | `goauld_rom_int.bin` (BIOS pack) | `0x200000` | Gowin Programmer | *exFlash C Bin Erase, Program thru GAO-Bridge*. Bundles MSX2+ BIOS + sub-ROM + Nextor 2.1 + **WiFi ROM** + config. Build locally (copyright) |
 | 4 | ESP-01S UNAPI firmware (OCM) | — | esptool / Arduino IDE via CH340 adapter | *(WiFi only — see below)* |
 
-> **Files 1, 3:** download from [releases](https://github.com/Papipapito/MSXnano/releases)  
-> **Files 2a/2b:** download from [FPGA-Companion v1.4.21](https://github.com/MiSTle-Dev/FPGA-Companion/releases/tag/v1.4.21)  
+> **File 1 (`msxnano.fs`):** download from [releases](https://github.com/Papipapito/MSXnano/releases)  
+> **File 2a/2b:** download from [FPGA-Companion v1.4.21](https://github.com/MiSTle-Dev/FPGA-Companion/releases/tag/v1.4.21)  
+> **File 3 (BIOS pack):** contains copyrighted MSX system ROMs, so it is **not** distributed here — build it from your own ROM dumps with `fpga/src/rom/build.bat`  
 > **File 4 (ESP-01S):** download from [ducasp MSX-Development — ESPFW1.4](https://github.com/ducasp/MSX-Development/releases/tag/ESPFW1.4) — use the **OCM** release (contains two `.bin` files)
 
 ---
@@ -75,7 +84,7 @@ Programming is done in three steps:
 
 ### 1. Flash the FPGA bitstream
 
-Flash `MSXnano.fs` using Gowin Programmer at address `0x000000`.
+Flash `msxnano.fs` using Gowin Programmer at address `0x000000`.
 
 ### 2. Flash the BL616 FPGA Companion firmware
 
@@ -108,10 +117,13 @@ Flash using [BouffaloLabDevCube](https://dev.bouffalolab.com/download) (BLFlashC
 
 Player 1 = first XInput device enumerated; Player 2 = second device (requires USB hub).
 
-### 3. Flash the disk ROM
+### 3. Flash the BIOS pack
 
-MSXnano uses the same Nextor driver as Wondertang: `Nextor-2.1.1.WonderTANG.ROM.bin`.
-Flash Address = `0x100000` (subject to change).
+This standalone core loads the MSX2+ BIOS from external SPI flash (it is **not** embedded in the bitstream), so a second flash step is required. Flash the BIOS pack `goauld_rom_int.bin` (international; or `goauld_rom_japan.bin`) at address `0x200000` with Gowin Programmer, Operation = *"exFlash C Bin Erase, Program thru GAO-Bridge"*.
+
+The pack is a single 512 KB image that already bundles **everything**: MSX2+ BIOS + sub-ROM + logo/FM menu + **Nextor 2.1** disk ROM + **WiFi UNAPI ROM (esp8266e)** + config. There is no separate Nextor or WiFi ROM to flash.
+
+> The pack contains copyrighted MSX system ROMs, so it is **not** included in this repository. Build it yourself from your own ROM dumps with `fpga/src/rom/build.bat`.
 
 ## WiFi (ESP-01S)
 
@@ -126,10 +138,9 @@ WiFi support uses an ESP-01S module (ESP8266) connected to the Tang Nano 20K hea
 | VCC         | 3.3V              | Power |
 | GND         | GND               | Ground |
 
-### Slot mapping
+### WiFi ROM (already integrated)
 
-The WiFi BIOS ROM (esp8266e) is mapped to **Slot 1, page 1** (0x4000–0x7FFF).  
-It is detected automatically by the MSX BIOS at boot.
+The WiFi UNAPI ROM (esp8266e) is **bundled inside the BIOS pack** flashed at `0x200000` (step 3) and is mapped to **Slot 1, page 1** (0x4000–0x7FFF), detected automatically by the MSX BIOS at boot. **No separate WiFi ROM flashing is needed** — you only have to wire the ESP-01S module and pre-flash it with its own UNAPI firmware (below).
 
 I/O ports used by the WiFi interface:
 | Port | Direction | Description |

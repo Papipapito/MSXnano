@@ -1,0 +1,92 @@
+IO_LOC "ex_clk_27m" 4;
+IO_PORT "ex_clk_27m" IO_TYPE=LVCMOS33;
+
+IO_LOC "s1" 88;
+IO_PORT "s1" IO_TYPE=LVCMOS33;
+IO_LOC "s2" 87;
+IO_PORT "s2" IO_TYPE=LVCMOS33;
+
+// ===== STANDALONE MERGE: 31 MSX-bus pins removed; replaced by USB(BL616 SPI)+LED =====
+// (Pins from MSXnano/fpga/tang20k.cst; all sit on pins freed by removing the bus.)
+
+// SPI to on-board BL616 (FPGA Companion). spi_sclk pin 13 verified FREE in base cst (R1).
+IO_LOC  "spi_sclk" 13;
+IO_PORT "spi_sclk" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "spi_csn" 86;
+IO_PORT "spi_csn" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "spi_dat" 76;
+IO_PORT "spi_dat" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "spi_dir" 75;
+IO_PORT "spi_dir" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33;
+IO_LOC  "spi_irqn" 48;
+IO_PORT "spi_irqn" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33;
+
+// M0S Dock (external companion alternative; m0s[2] pulled up so internal BL616 is used)
+IO_LOC  "m0s[0]" 42;
+IO_PORT "m0s[0]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "m0s[1]" 41;
+IO_PORT "m0s[1]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "m0s[2]" 56;
+IO_PORT "m0s[2]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "m0s[3]" 54;
+IO_PORT "m0s[3]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC  "m0s[4]" 51;
+IO_PORT "m0s[4]" PULL_MODE=UP IO_TYPE=LVCMOS33;
+
+// discrete status LEDs (active low)
+IO_LOC  "led[0]" 20;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33;
+IO_LOC  "led[1]" 19;
+IO_PORT "led[1]" IO_TYPE=LVCMOS33;
+IO_LOC  "led[2]" 18;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33;
+IO_LOC  "led[3]" 17;
+IO_PORT "led[3]" IO_TYPE=LVCMOS33;
+IO_LOC  "led[4]" 16;
+IO_PORT "led[4]" IO_TYPE=LVCMOS33;
+IO_LOC  "led[5]" 15;
+IO_PORT "led[5]" IO_TYPE=LVCMOS33;
+
+//hdmi pins
+IO_LOC "data_p[0]" 35,36;
+IO_PORT "data_p[0]" PULL_MODE=NONE DRIVE=4;
+IO_LOC "data_p[1]" 37,38;
+IO_PORT "data_p[1]" PULL_MODE=NONE DRIVE=4;
+IO_LOC "data_p[2]" 39,40;
+IO_PORT "data_p[2]" PULL_MODE=NONE DRIVE=4;
+IO_LOC "clk_p" 33,34;
+IO_PORT "clk_p" PULL_MODE=NONE DRIVE=4;
+
+//usb uart
+IO_LOC "usb_uart_tx" 69;
+IO_PORT "usb_uart_tx"  IO_TYPE=LVCMOS33 DRIVE=4;
+
+//flash
+IO_LOC  "mspi_cs" 60;
+IO_PORT "mspi_cs" IO_TYPE=LVCMOS33 DRIVE=4;
+IO_LOC  "mspi_sclk" 59;
+IO_PORT "mspi_sclk" IO_TYPE=LVCMOS33 DRIVE=4;
+IO_LOC  "mspi_miso" 62;
+IO_PORT "mspi_miso" IO_TYPE=LVCMOS33;
+IO_LOC  "mspi_mosi" 61;
+IO_PORT "mspi_mosi" IO_TYPE=LVCMOS33 DRIVE=4;
+
+//sd card
+IO_LOC  "sd_sclk" 83;
+IO_PORT "sd_sclk" IO_TYPE=LVCMOS33;
+IO_LOC  "sd_cmd" 82;
+IO_PORT "sd_cmd" IO_TYPE=LVCMOS33;
+IO_LOC  "sd_dat0" 84;
+IO_PORT "sd_dat0" IO_TYPE=LVCMOS33;
+IO_LOC  "sd_dat1" 85;
+IO_PORT "sd_dat1" IO_TYPE=LVCMOS33;
+IO_LOC  "sd_dat2" 80;
+IO_PORT "sd_dat2" IO_TYPE=LVCMOS33;
+IO_LOC  "sd_dat3" 81;
+IO_PORT "sd_dat3" IO_TYPE=LVCMOS33;
+
+//wifi (ESP-01S) — pines igual que MSXnano: rx=77, tx=73. (NO usar 75: es spi_dir del BL616/USB)
+IO_LOC "uart_rx" 77;
+IO_PORT "uart_rx" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC "uart_tx" 73;
+IO_PORT "uart_tx"  IO_TYPE=LVCMOS33;
