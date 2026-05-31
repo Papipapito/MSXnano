@@ -768,20 +768,22 @@ assign keyboard_addr = ppi_port_c[3:0];
     end
 `endif
 
-    // ===== Turbo mode toggle (F12) =====
+    // ===== Turbo mode toggle (F11) =====
     // Default turbo=0 -> M1 wait active -> ~100% real-MSX speed (3.58MHz behaviour).
-    // Press F12 (USB HID usage 0x45 = keyboard[69]) to toggle. turbo=1 bypasses the
+    // Press F11 (USB HID usage 0x44 = keyboard[68]) to toggle. turbo=1 bypasses the
     // per-M1 wait -> full speed (~4.13MHz / 116%, "as before"). Toggle survives MSX
-    // soft-reset; powers on in real-MSX mode. LED shows the state (see led[5]).
+    // soft-reset; powers on in real-MSX mode. LED5 shows the state.
+    // NOTE: F12 is captured by the BL616 FPGA-Companion firmware (its OSD) and never
+    // reaches the FPGA, so F11 (which does reach it, verified on HW) is used instead.
     reg turbo   = 1'b0;
-    reg f12_s0  = 1'b0;
-    reg f12_s1  = 1'b0;
-    reg f12_prev= 1'b0;
+    reg f11_s0  = 1'b0;
+    reg f11_s1  = 1'b0;
+    reg f11_prev= 1'b0;
     always @ (posedge clk_54m) begin
-        f12_s0   <= keyboard[69];   // sync HID F12 state into clk_54m domain
-        f12_s1   <= f12_s0;
-        f12_prev <= f12_s1;
-        if (f12_s1 & ~f12_prev)     // rising edge = F12 pressed
+        f11_s0   <= keyboard[68];   // sync HID F11 state into clk_54m domain
+        f11_s1   <= f11_s0;
+        f11_prev <= f11_s1;
+        if (f11_s1 & ~f11_prev)     // rising edge = F11 pressed
             turbo <= ~turbo;        // toggle real-MSX <-> turbo
     end
 
@@ -1576,8 +1578,8 @@ memory_ctrl mem1 (
     end
 `endif
 
-    localparam CONFIG1_DEFAULT = 8'hfb;
-    localparam CONFIG2_DEFAULT = 8'h0f;
+    localparam CONFIG1_DEFAULT = 8'hf3;  // bit3=0 -> Scanlines OFF by default (was 0xfb)
+    localparam CONFIG2_DEFAULT = 8'h07;  // bit3=0 -> Compatible Mode (extra wait) OFF by default (was 0x0f)
 
 `ifdef ENABLE_CONFIG
     //config
@@ -2323,7 +2325,7 @@ memory_ctrl mem1 (
         end
     end
 
-    assign led[5] = turbo ? 1'b0 : led_heartbeat;  // active-low: 0=solid lit (turbo), else heartbeat blink
+    assign led[5] = turbo ? 1'b0 : led_heartbeat;  // active-low: 0=solid lit (turbo ON), else heartbeat blink (real-MSX)
     assign led[4] = ~sd_busy_w;
     assign led[3] = ~joystick0[5];
     assign led[2] = ~joystick0[4];
