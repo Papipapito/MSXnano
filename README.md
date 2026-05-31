@@ -52,8 +52,9 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 | Step | File | Address | Tool | Notes |
 |------|------|---------|------|-------|
 | 1 | `msxnano.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) | External Flash mode |
-| 2a | `bl616_fpga_partner_nano20k.bin` | `0x000000` (BL616) | [BLFlashCube](https://dev.bouffalolab.com/download) | Hold UPDATE → plug USB-C → release |
-| 2b | `fpga_companion_nano20k.bin` | `0x040000` (BL616) | BLFlashCube + `flash_nano20k.ini` | Same session as 2a |
+| 2 |  `flash_nano20k.ini` | (BL616) | [BLFlashCube](https://dev.bouffalolab.com/download) | Hold UPDATE → plug USB-C → release |
+| 2a | `bl616_fpga_partner_nano20k.bin` | `0x000000` (BL616) | [BLFlashCube](https://dev.bouffalolab.com/download) | Into INI File |
+| 2b | `fpga_companion_nano20k.bin` | `0x040000` (BL616) | BLFlashCube + `flash_nano20k.ini` | Into Ini File |
 | 3 | `goauld_rom_int.bin` (BIOS pack) | `0x200000` | Gowin Programmer | *exFlash C Bin Erase, Program thru GAO-Bridge*. Bundles MSX2+ BIOS + sub-ROM + Nextor 2.1 + **WiFi ROM** + config. Build locally (copyright) |
 | 4 | ESP-01S UNAPI firmware (OCM) | — | esptool / Arduino IDE via CH340 adapter | *(WiFi only — see below)* |
 
@@ -161,8 +162,6 @@ It contains two `.bin` files — flash both using esptool or the Arduino IDE via
 
 The WiFi module implements MSX UNAPI TCP/IP over the ESP8266 serial interface. Compatible with standard MSX networking software (Telnet clients, FTP, etc.).
 
-## YouTube video
-https://youtu.be/7KI_Em9QK0Y
 
 ## Standalone FPGA version of MSXgoauldSD_tn20k
 
