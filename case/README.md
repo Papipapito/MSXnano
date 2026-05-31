@@ -24,6 +24,10 @@ out and ready to print all at once.
 | `pillar2.stl` | Pillar 2 | 2 |
 | `msxnano_case_bambulab.3mf` | Bambu Lab project (all parts) | — |
 
+## Credits
+Based on [this Thingiverse design](https://www.thingiverse.com/thing:4066021), which served
+as the inspiration and starting point for this improved version.
+
 ## Assembly
 See the bill of materials in [`../docs/MSXnano_BOM.xlsx`](../docs/MSXnano_BOM.xlsx) (or
 [`../docs/BOM.md`](../docs/BOM.md)) and the wiring/flashing steps in the [main README](../README.md).

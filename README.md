@@ -165,8 +165,10 @@ The WiFi module implements MSX UNAPI TCP/IP over the ESP8266 serial interface. C
 
 ## Hardware: case & bill of materials
 
-- 🧩 **3D-printable case**: STL files in [`case/`](case).
-- 📋 **Bill of materials**: component list in [`docs/BOM.md`](docs/BOM.md).
+- 🧩 **3D-printable case**: STL files in [`case/`](case). Recommended material: **white PETG**. Print everything at once with `case/msxnano_case_bambulab.3mf` (Bambu Lab).
+- 📋 **Bill of materials**: component list in [`docs/BOM.md`](docs/BOM.md) and [`docs/MSXnano_BOM.xlsx`](docs/MSXnano_BOM.xlsx).
+
+> The 3D case is based on [this Thingiverse design](https://www.thingiverse.com/thing:4066021), which served as the inspiration and starting point for our improved version.
 
 ## Credits
 
