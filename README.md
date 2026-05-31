@@ -163,6 +163,11 @@ It contains two `.bin` files — flash both using esptool or the Arduino IDE via
 The WiFi module implements MSX UNAPI TCP/IP over the ESP8266 serial interface. Compatible with standard MSX networking software (Telnet clients, FTP, etc.).
 
 
+## Hardware: case & bill of materials
+
+- 🧩 **3D-printable case**: STL files in [`case/`](case).
+- 📋 **Bill of materials**: component list in [`docs/BOM.md`](docs/BOM.md).
+
 ## Credits
 
 This project is based on the work of **jabadiagm** ([MSXgoauldSD_tn20k](https://github.com/jabadiagm/MSXgoauldSD_tn20k)), licensed under **GPLv3**.
