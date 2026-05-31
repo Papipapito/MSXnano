@@ -768,6 +768,23 @@ assign keyboard_addr = ppi_port_c[3:0];
     end
 `endif
 
+    // ===== Turbo mode toggle (F12) =====
+    // Default turbo=0 -> M1 wait active -> ~100% real-MSX speed (3.58MHz behaviour).
+    // Press F12 (USB HID usage 0x45 = keyboard[69]) to toggle. turbo=1 bypasses the
+    // per-M1 wait -> full speed (~4.13MHz / 116%, "as before"). Toggle survives MSX
+    // soft-reset; powers on in real-MSX mode. LED shows the state (see led[5]).
+    reg turbo   = 1'b0;
+    reg f12_s0  = 1'b0;
+    reg f12_s1  = 1'b0;
+    reg f12_prev= 1'b0;
+    always @ (posedge clk_54m) begin
+        f12_s0   <= keyboard[69];   // sync HID F12 state into clk_54m domain
+        f12_s1   <= f12_s0;
+        f12_prev <= f12_s1;
+        if (f12_s1 & ~f12_prev)     // rising edge = F12 pressed
+            turbo <= ~turbo;        // toggle real-MSX <-> turbo
+    end
+
     // ----- M1-wait fallback (divisor) -----
     // If on real HW the benchmark still does not land near 100% with the WAIT_n
     // brake above, comment out `define ENABLE_M1_WAIT and instead SLOW the CPU
@@ -791,16 +808,16 @@ assign keyboard_addr = ppi_port_c[3:0];
         .CLK_n     (clk_54m),
     `ifdef ENABLE_WAIT
       `ifdef ENABLE_M1_WAIT
-        .clk_enable (clk_enable_3m6_54 & wait_io & wait_m1),
-        .clk_falling (clk_falling_3m6_54 & wait_io & wait_m1),
+        .clk_enable (clk_enable_3m6_54 & wait_io & (wait_m1 | turbo)),
+        .clk_falling (clk_falling_3m6_54 & wait_io & (wait_m1 | turbo)),
       `else
         .clk_enable (clk_enable_3m6_54 & wait_io ),
         .clk_falling (clk_falling_3m6_54 & wait_io ),
       `endif
     `else
       `ifdef ENABLE_M1_WAIT
-        .clk_enable (clk_enable_3m6_54 & wait_m1),
-        .clk_falling (clk_falling_3m6_54 & wait_m1),
+        .clk_enable (clk_enable_3m6_54 & (wait_m1 | turbo)),
+        .clk_falling (clk_falling_3m6_54 & (wait_m1 | turbo)),
       `else
         .clk_enable (clk_enable_3m6_54),
         .clk_falling (clk_falling_3m6_54),
@@ -2288,7 +2305,7 @@ memory_ctrl mem1 (
     );
 
     // ===== STANDALONE MERGE: discrete status LEDs (active low) — from MSXnano =====
-    // LED[5] heartbeat (~1.8Hz = core alive); LED[4] SD busy;
+    // LED[5] TURBO: solid = turbo ON (~4.13MHz); blink (~1.8Hz) = real-MSX speed (also "alive"). LED[4] SD busy;
     // LED[3] joy0 fire B; LED[2] joy0 fire A; LED[1] joy0 any dir; LED[0] joy1 any input
     reg led_heartbeat = 1'b1;
     reg [19:0] led_cnt;
@@ -2306,7 +2323,7 @@ memory_ctrl mem1 (
         end
     end
 
-    assign led[5] = led_heartbeat;
+    assign led[5] = turbo ? 1'b0 : led_heartbeat;  // active-low: 0=solid lit (turbo), else heartbeat blink
     assign led[4] = ~sd_busy_w;
     assign led[3] = ~joystick0[5];
     assign led[2] = ~joystick0[4];

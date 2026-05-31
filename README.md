@@ -12,7 +12,7 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * OPLL
 * FPGA Companion used as HID (keyboard, gamepads) interface
 * WiFi via ESP-01S (MSX UNAPI) — WiFi BIOS ROM integrated into the BIOS pack
-* Authentic MSX timing: per-M1 wait-state (runs at ~100% of real MSX speed)
+* Authentic MSX timing: per-M1 wait-state (~100% of real MSX speed), with a **Turbo mode** toggled by **F12** (full speed, ~116% / 4.13 MHz)
 
 ## What's new in v1.2
 * Rebuilt on the **goauld standalone core** (cleaner base) while keeping the standalone / USB / WiFi design.
@@ -64,6 +64,19 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 > **File 4 (ESP-01S):** download from [ducasp MSX-Development — ESPFW1.4](https://github.com/ducasp/MSX-Development/releases/tag/ESPFW1.4) — use the **OCM** release (contains two `.bin` files)
 
 ---
+
+## Turbo mode (F12)
+
+The CPU boots at **real-MSX speed** (the authentic per-M1 wait-state, ~100% / 3.58 MHz).
+Press **F12** on the USB keyboard to toggle **Turbo** on/off:
+
+| Mode | Speed | LED 5 |
+|------|-------|-------|
+| Real MSX (default) | ~100% (3.58 MHz) | blinking (~1.8 Hz) |
+| Turbo | full speed, ~116% (≈4.13 MHz) | solid on |
+
+The toggle is handled entirely in the FPGA (it never reaches the MSX), survives a soft
+reset, and powers on in real-MSX mode.
 
 ## Slot map
 
