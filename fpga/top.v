@@ -35,6 +35,7 @@ module top
 
     // discrete status LEDs (active low)
     output wire [5:0] led,
+    output wire ws2812_led,   // external WS2812B status strip (case)
 
     //hdmi out
     output wire [2:0] data_p,
@@ -2331,6 +2332,36 @@ memory_ctrl mem1 (
     assign led[2] = ~joystick0[4];
     assign led[1] = ~(|joystick0[3:0]);
     assign led[0] = ~(|joystick1[5:0]);
+
+    // ===== External WS2812B status strip (8 LEDs, e.g. CJMCU-2812-8) on the case =====
+    // One data pin (ws2812_led) drives the whole chain; colours from internal state.
+    wire caps_on  = ~ppi_port_c[6];                       // MSX CAPS LED (PPI port C bit6, active-low)
+    wire kana_on  = keyboard[106];                        // CODE/KANA key held (Left Alt)
+    wire joy_on   = (|joystick0[5:0]) | (|joystick1[5:0]);
+    wire kbd_raw  = |keyboard;                            // any key held
+    wire wifi_raw = ~uart_tx | ~uart_rx;                  // WiFi UART active (idle = high)
+
+    wire disk_act, wifi_act, kbd_act;
+    led_stretch #(.HOLD(1350000)) st_disk (.clk(clk_27m), .rst_n(bus_reset_n), .trig(sd_busy_w), .active(disk_act)); // ~50ms
+    led_stretch #(.HOLD( 540000)) st_wifi (.clk(clk_27m), .rst_n(bus_reset_n), .trig(wifi_raw),  .active(wifi_act)); // ~20ms
+    led_stretch #(.HOLD(1350000)) st_kbd  (.clk(clk_27m), .rst_n(bus_reset_n), .trig(kbd_raw),   .active(kbd_act));  // ~50ms
+
+    // 8 colours in GRB (dim). LED0 = first in the chain (DIN side).
+    wire [23:0] ws_c0 = 24'h180000;                          // 0 POWER  : solid green
+    wire [23:0] ws_c1 = caps_on  ? 24'h180018 : 24'h000000;  // 1 CAPS   : cyan
+    wire [23:0] ws_c2 = kana_on  ? 24'h002020 : 24'h000000;  // 2 KANA   : magenta
+    wire [23:0] ws_c3 = disk_act ? 24'h102800 : 24'h000000;  // 3 DISK   : amber
+    wire [23:0] ws_c4 = turbo    ? 24'h003000 : 24'h040000;  // 4 CPU    : turbo=red / normal=dim green
+    wire [23:0] ws_c5 = wifi_act ? 24'h000030 : 24'h000000;  // 5 WiFi   : blue
+    wire [23:0] ws_c6 = joy_on   ? 24'h202000 : 24'h000000;  // 6 JOY    : yellow
+    wire [23:0] ws_c7 = kbd_act  ? 24'h181818 : 24'h000000;  // 7 KBD    : white flash
+
+    ws2812 #(.NUM_LEDS(8), .CLK_FRE(27)) ws_strip (
+        .clk   (clk_27m),
+        .rst_n (bus_reset_n),
+        .rgb   ({ws_c0, ws_c1, ws_c2, ws_c3, ws_c4, ws_c5, ws_c6, ws_c7}),
+        .dout  (ws2812_led)
+    );
 
     // ===== STANDALONE MERGE: USB host (BL616 FPGA Companion) — from MSXnano =====
     wire [127:0] keyboard;
