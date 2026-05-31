@@ -156,10 +156,12 @@ BEGIN
                         WHEN 57 => keys(6)(3) <= '0'; -- CAPS
 
                         -- GRAPH (row6,bit2) and CODE/KANA (row6,bit4): not mapped in stock
-                        -- nano. Mapped here to the Alt keys (firmware remaps modifiers:
-                        -- Left Alt = 106, Right Alt = 110; same pattern as LCtrl=104/LGUI=107).
-                        WHEN 106 => keys(6)(2) <= '0'; -- GRAPH      (Left Alt)
-                        WHEN 110 => keys(6)(4) <= '0'; -- CODE/KANA  (Right Alt)
+                        -- nano. Mapped to modifier keys (firmware remap: LAlt=106, RAlt=110,
+                        -- LGUI/Left-Win=107). NOTE: on the MSX, CODE and KANA are the SAME
+                        -- matrix key (row6 bit4) -> Left Alt and Left Windows both trigger it.
+                        WHEN 110 => keys(6)(2) <= '0'; -- GRAPH  (Right Alt)
+                        WHEN 106 => keys(6)(4) <= '0'; -- CODE   (Left Alt)
+                        WHEN 107 => keys(6)(4) <= '0'; -- KANA   (Left Windows) = same bit as CODE
 
                         -- SPACE / ENTER / ESC / TAB / BS / STOP / SELECT
                         WHEN 44 => keys(8)(0) <= '0'; -- SPACE  (row 8, bit0)
