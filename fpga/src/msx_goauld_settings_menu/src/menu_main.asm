@@ -401,17 +401,59 @@ main_selection_common:
 	ld   a, (var_selColor)			; fill color
 	jp   FILVRM						; fill name-color row, returns to caller
 
-; Shared screen initialization: SCREEN 0 / 80 columns + blink mode ON.
-; Used by both the main menu and the config menu so they look identical.
+; Shared screen initialization: SCREEN 0 / 80 columns + blink mode ON, with a
+; DETERMINISTIC palette so the menu looks EXACTLY the same on cold boot and on
+; every redraw (placeholder return, etc.). On cold boot the menu used to inherit
+; whatever text colours / palette the FM logo left behind; on a redraw those had
+; changed -> "different blue". We now force the colours ourselves every time:
+;   - FORCLR/BAKCLR/BDRCLR BIOS vars -> INITXT programs VDP r7 from them
+;   - palette entry 4  = blue  (background / normal text bg, blink fg)
+;   - palette entry 15 = white (normal text fg, blink bg / header box)
+; so the result is byte-for-byte identical regardless of prior screen state.
 init_screen:
+	; Fixed text colours: foreground 15 (white), background/border 4 (blue)
+	ld   a, 15
+	ld   (FORCLR), a				; foreground = white (palette index 15)
+	ld   a, 4
+	ld   (BAKCLR), a				; background = blue  (palette index 4)
+	ld   (BDRCLR), a				; border     = blue
 	ld   a, 80
 	ld   (LINL40), a
-	call INITXT
-	; Blink mode on
+	call INITXT						; SCREEN 0 / 80 col; programs VDP r7 from FORCLR/BAKCLR
+	; Blink mode ON: r12 = blink colours (fg 4 / bg 15) -> blue-on-white inverse
 	ld   bc, #4f0c
 	call WRTVDP
-	ld   bc, #100d
-	jp   WRTVDP						; tail-call, returns to caller
+	ld   bc, #100d					; r13 = blink rate (steady)
+	call WRTVDP
+	; Force palette entries 4 and 15 to fixed RGB so the blue/white never drift.
+	call set_menu_palette
+	ret
+
+; Reprograms VDP palette entries 4 (blue) and 15 (white) deterministically.
+; V9938/V9958 palette write: select entry in r16, then write 2 bytes to port
+; 0x9A: byte1 = (R<<4)|B, byte2 = G  (each component 0..7).
+set_menu_palette:
+	di
+	; --- entry 4 = blue (R=1, G=1, B=7) ---
+	ld   a, 4
+	out  (#99), a					; low byte = palette index 4
+	ld   a, 16 | #80				; select VDP register 16 (palette pointer)
+	out  (#99), a
+	ld   a, #17						; byte1 = (R<<4)|B = (1<<4)|7 = 0x17
+	out  (#9A), a
+	ld   a, #01						; byte2 = G = 1
+	out  (#9A), a
+	; --- entry 15 = white (R=7, G=7, B=7) ---
+	ld   a, 15
+	out  (#99), a
+	ld   a, 16 | #80
+	out  (#99), a
+	ld   a, #77						; byte1 = (7<<4)|7 = 0x77
+	out  (#9A), a
+	ld   a, #07						; byte2 = G = 7
+	out  (#9A), a
+	ei
+	ret
 
 ; #############################################################################
 ; ##  EXISTING GOA'ULD CONFIG MENU  (reached from main menu option "Ajustes")
