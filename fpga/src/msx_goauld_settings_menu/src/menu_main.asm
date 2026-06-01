@@ -55,10 +55,30 @@ ENDIF ;ENABLE_SDCARD
 ; it and 'ret' cleanly back into the BIOS boot flow.
 
 main_menu_entry:
-	ld   (var_savedSP), sp			; Save BIOS return stack for "Arrancar sistema"
+	; --- Capture the BIOS return context for "Arrancar sistema" ---
+	; When we arrive here the top of the stack is the return address into the
+	; BIOS cartridge-INIT caller. We save BOTH the stack pointer AND the return
+	; address itself, because the menu's screen/BIOS calls do not leave the
+	; stack perfectly balanced on every BIOS implementation (observed on real
+	; hardware the top-of-stack at selection time was NOT the BIOS return). By
+	; snapshotting the return address now and rebuilding a clean 1-entry stack
+	; on boot, "Arrancar sistema" always returns to the right place instead of
+	; ret'ing into garbage (which caused the cold-reset loop in the first M1).
+	ld   hl, 0
+	add  hl, sp						; HL = SP
+	ld   (var_savedSP), hl			; save SP at entry
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)					; DE = BIOS return address (word on top of stack)
+	ld   (var_biosRet), de
+
 	xor  a
 	ld   (var_mainSel), a			; start with first option highlighted
 
+; Re-entry point used by the placeholders (M2/M3): re-init the screen and
+; redraw WITHOUT re-capturing the BIOS context (which is only valid on the
+; very first entry from the cartridge INIT).
+main_menu_restart:
 	call init_screen				; Reuse screen/blink init (shared routine)
 
 main_menu_redraw:
@@ -183,26 +203,42 @@ main_menu_select_now:
 	jp   config_menu_entry			; 3 -> Ajustes (existing config menu)
 
 ; --- Option 1: continue the normal MSX boot ---------------------------------
-; Restore the saved stack and 'ret' to the BIOS, exactly as the cartridge INIT
-; would have done if the menu had not taken over. This chains to Nextor/MSX-DOS.
+; This MUST behave exactly like the proven "Save & Exit" of the config menu,
+; which is known to continue the boot on real Goa'uld hardware: clean up the
+; screen and then 'ret' through the NATURAL stack back to the BIOS cartridge-
+; INIT caller (it chains to Nextor / MSX-DOS).
+;
+; IMPORTANT (root-cause of the M1 reset): we do NOT touch SP here. The earlier
+; version did "ld sp,(var_savedSP)" which, if var_savedSP held an unexpected
+; value, made the final 'ret' jump to garbage -> CPU reset. When we reach this
+; point the stack is already balanced (every call in the menu loop is matched),
+; so the word on top of the stack is the BIOS INIT return address, exactly as
+; for the config menu's Save & Exit. A plain 'ret' is therefore correct and
+; matches the proven path byte-for-byte.
 main_action_boot:
-	call INITXT						; clear screen before handing control back
+	di
+	call INITXT						; clear screen (SCREEN 0) before handing back
 	ld   bc, #000d					; turn blink mode off (restore normal text)
 	call WRTVDP
-	ld   sp, (var_savedSP)			; restore BIOS return stack
+	; Rebuild a clean stack with exactly the saved BIOS return address on top,
+	; then 'ret' into the BIOS so the normal MSX boot continues (Nextor/DOS).
+	ld   sp, (var_savedSP)			; SP back to the entry value (BIOS stack frame)
+	ld   hl, (var_biosRet)			; HL = saved BIOS return address
+	ex   (sp), hl					; overwrite top-of-stack with the saved return
+	ei
 	ret								; return into BIOS boot -> normal boot continues
 
 ; --- Option 2: Lanzar ROM de la SD (PLACEHOLDER, M2) ------------------------
 main_action_sdrom:
 	ld   hl, msgSoonM2Str
 	call main_show_message
-	jp   main_menu_entry			; redraw whole menu and continue
+	jp   main_menu_restart			; redraw menu (keep BIOS context, no reset)
 
 ; --- Option 3: Configuracion WiFi (PLACEHOLDER, M3) -------------------------
 main_action_wifi:
 	ld   hl, msgSoonM3Str
 	call main_show_message
-	jp   main_menu_entry
+	jp   main_menu_restart			; redraw menu (keep BIOS context, no reset)
 
 ; Shows a centered message line, waits for a key, returns.
 ; Input: HL - message string
@@ -670,7 +706,12 @@ selected_saveReset:
 	ret
 
 selected_saveExit:
-	pop  hl							; Remove ret to bucle
+	pop  hl							; Remove ret to bucle (the config-menu loop)
+	call config_var2byte			; Save settings to flash + clear screen
+	; Continue the boot using the SAME robust mechanism as the main-menu
+	; "Arrancar sistema" option, instead of ret'ing into a possibly-drifted
+	; stack. This guarantees we hand control back to the BIOS cleanly.
+	jp   main_action_boot
 
 config_var2byte:
 	ld   a, (var_mapper)			; #41 Bit 0: mapper enable
@@ -1000,7 +1041,8 @@ ENDIF
 	; Main menu (MSXnano) state
 	var_mainSel:  ds 1				; currently selected main-menu option (0..3)
 	var_selColor: ds 1				; scratch: fill color for highlight bar
-	var_savedSP:  ds 2				; SP at entry (BIOS return stack)
+	var_savedSP:  ds 2				; SP at INIT entry (BIOS stack frame)
+	var_biosRet:  ds 2				; BIOS cartridge-INIT return address
 
 
 ; ############## MSX VT-52 Character Codes
