@@ -55,23 +55,9 @@ ENDIF ;ENABLE_SDCARD
 ; it and 'ret' cleanly back into the BIOS boot flow.
 
 main_menu_entry:
-	; --- Capture the BIOS return context for "Arrancar sistema" ---
-	; When we arrive here the top of the stack is the return address into the
-	; BIOS cartridge-INIT caller. We save BOTH the stack pointer AND the return
-	; address itself, because the menu's screen/BIOS calls do not leave the
-	; stack perfectly balanced on every BIOS implementation (observed on real
-	; hardware the top-of-stack at selection time was NOT the BIOS return). By
-	; snapshotting the return address now and rebuilding a clean 1-entry stack
-	; on boot, "Arrancar sistema" always returns to the right place instead of
-	; ret'ing into garbage (which caused the cold-reset loop in the first M1).
-	ld   hl, 0
-	add  hl, sp						; HL = SP
-	ld   (var_savedSP), hl			; save SP at entry
-	ld   e, (hl)
-	inc  hl
-	ld   d, (hl)					; DE = BIOS return address (word on top of stack)
-	ld   (var_biosRet), de
-
+	; The "Arrancar sistema" option returns to the BIOS through the live stack
+	; (see main_action_boot); we do NOT snapshot SP/return into page-2 RAM
+	; because that RAM may be remapped between now and the selection.
 	xor  a
 	ld   (var_mainSel), a			; start with first option highlighted
 
@@ -126,11 +112,13 @@ main_menu_loop:
 	call main_draw_selection
 
 main_menu_wait:
-	ei
-	halt
-	call CHSNS						; BIOS keyStatus
-	jr   z, main_menu_wait
-	call CHGET						; BIOS readChar
+	; Read a key by scanning the keyboard matrix DIRECTLY through the PPI ports
+	; (0xAA = row select, 0xA9 = column read), instead of using the BIOS
+	; CHSNS/CHGET. At cartridge-INIT time the BIOS keyboard interrupt service
+	; is not reliably hooked yet on the Goa'uld, so CHGET ignored the cursor /
+	; space keys on real hardware. Direct matrix scan works regardless of BIOS
+	; keyboard state (this is the same technique the original G-key gate uses).
+	call read_menu_key				; A = key code (0 if none / unmapped)
 	or   a
 	jr   z, main_menu_wait
 
@@ -142,7 +130,7 @@ main_menu_wait:
 	jr   z, main_menu_select
 	cp   VT_SPACE
 	jr   z, main_menu_select
-	; numeric shortcuts 1..4
+	; numeric shortcuts 1..4 (direct selection: the user expects this)
 	cp   '1'
 	jr   z, main_sel_set0
 	cp   '2'
@@ -151,7 +139,7 @@ main_menu_wait:
 	jr   z, main_sel_set2
 	cp   '4'
 	jr   z, main_sel_set3
-	jr   main_menu_wait
+	jr   main_menu_wait				; any other key: ignore, keep waiting
 
 main_sel_set0:
 	xor  a
@@ -165,8 +153,13 @@ main_sel_set2:
 main_sel_set3:
 	ld   a, 3
 main_set_and_select:
-	call main_clear_selection
-	ld   (var_mainSel), a
+	; A = new selection index. Clear the OLD highlight first (uses the old
+	; var_mainSel), then store the new index. NOTE: main_clear_selection
+	; destroys A, so preserve it across the call.
+	push af
+	call main_clear_selection		; remove highlight from the previously-selected row
+	pop  af
+	ld   (var_mainSel), a			; commit the new selection
 	jr   main_menu_select_now
 
 main_menu_up:
@@ -203,28 +196,25 @@ main_menu_select_now:
 	jp   config_menu_entry			; 3 -> Ajustes (existing config menu)
 
 ; --- Option 1: continue the normal MSX boot ---------------------------------
-; This MUST behave exactly like the proven "Save & Exit" of the config menu,
-; which is known to continue the boot on real Goa'uld hardware: clean up the
-; screen and then 'ret' through the NATURAL stack back to the BIOS cartridge-
-; INIT caller (it chains to Nextor / MSX-DOS).
+; Behaves EXACTLY like the proven "Save & Exit" of the config menu (known to
+; continue the boot on real Goa'uld hardware): clean up the screen and 'ret'
+; through the NATURAL, LIVE stack back to the BIOS cartridge-INIT caller, which
+; chains to Nextor / MSX-DOS.
 ;
-; IMPORTANT (root-cause of the M1 reset): we do NOT touch SP here. The earlier
-; version did "ld sp,(var_savedSP)" which, if var_savedSP held an unexpected
-; value, made the final 'ret' jump to garbage -> CPU reset. When we reach this
-; point the stack is already balanced (every call in the menu loop is matched),
-; so the word on top of the stack is the BIOS INIT return address, exactly as
-; for the config menu's Save & Exit. A plain 'ret' is therefore correct and
-; matches the proven path byte-for-byte.
+; ROOT CAUSE of the previous reset (found by debugger): a previous version
+; saved SP + the BIOS return address into page-2 RAM variables at entry and
+; restored them here. But on the Goa'uld the page-2 (0x8000-0xBFFF) slot/segment
+; mapping is NOT guaranteed to be the same when the menu first runs and when an
+; option is later selected, so those variables read back as GARBAGE -> "ld sp,
+; garbage" + "ret" jumped to a random address -> CPU reset/loop. The fix is to
+; never rely on page-2 stored state: the LIVE stack (page-3 RAM) still holds the
+; BIOS return address on top here (the menu's calls are balanced), so a plain
+; 'ret' returns correctly regardless of any page-2 remapping.
 main_action_boot:
 	di
 	call INITXT						; clear screen (SCREEN 0) before handing back
 	ld   bc, #000d					; turn blink mode off (restore normal text)
 	call WRTVDP
-	; Rebuild a clean stack with exactly the saved BIOS return address on top,
-	; then 'ret' into the BIOS so the normal MSX boot continues (Nextor/DOS).
-	ld   sp, (var_savedSP)			; SP back to the entry value (BIOS stack frame)
-	ld   hl, (var_biosRet)			; HL = saved BIOS return address
-	ex   (sp), hl					; overwrite top-of-stack with the saved return
 	ei
 	ret								; return into BIOS boot -> normal boot continues
 
@@ -240,22 +230,145 @@ main_action_wifi:
 	call main_show_message
 	jp   main_menu_restart			; redraw menu (keep BIOS context, no reset)
 
-; Shows a centered message line, waits for a key, returns.
+; Shows a centered message line, waits for ANY key, returns.
 ; Input: HL - message string
 main_show_message:
 	push hl
 	ld   hl, #1212					; bottom area
 	call POSIT
-	; clear the hint line first by overwriting with spaces is unneeded; print msg
 	pop  hl
 	call print_string
 .msg_wait:
-	ei
-	halt
-	call CHSNS
+	call read_any_key				; direct matrix scan, A!=0 when a key was pressed
+	or   a
 	jr   z, .msg_wait
-	call CHGET
 	ret
+
+; -----------------------------------------------------------------------------
+; Direct keyboard-matrix reader (bypasses BIOS CHGET, which is unreliable at
+; cartridge-INIT time on the Goa'uld). Reads via PPI: write row to port 0xAA
+; (low nibble = row, high nibble kept high), read columns from port 0xA9
+; (a 0 bit = key pressed). Matrix positions verified empirically:
+;   '1'..'4' = row 0 bits 1..4 | UP = row8 bit5 | DOWN = row8 bit6
+;   SPACE    = row8 bit0       | RETURN = row7 bit7
+; Each routine implements press+release debouncing so one physical press yields
+; exactly one event.
+; -----------------------------------------------------------------------------
+KB_PPIB	equ	0xA9				; PPI port B: keyboard column read
+KB_PPIC	equ	0xAA				; PPI port C: keyboard row select (low nibble)
+
+; read_menu_key: returns A = mapped key code (VT_UP/VT_DOWN/VT_RETURN/VT_SPACE/
+;                '1'..'4') or 0 if nothing relevant is pressed. Waits for the
+;                key to be released before returning (one event per press).
+read_menu_key:
+	; --- Row 0: digits 1..4 ---
+	ld   a, 0xF0
+	out  (KB_PPIC), a				; select row 0
+	in   a, (KB_PPIB)
+	cpl								; now 1 bit = pressed
+	ld   b, a						; B = row0 pressed mask
+	bit  1, b
+	jr   nz, .k1
+	bit  2, b
+	jr   nz, .k2
+	bit  3, b
+	jr   nz, .k3
+	bit  4, b
+	jr   nz, .k4
+	; --- Row 8: space / cursor up / cursor down ---
+	ld   a, 0xF8
+	out  (KB_PPIC), a				; select row 8
+	in   a, (KB_PPIB)
+	cpl
+	ld   b, a						; B = row8 pressed mask
+	bit  5, b
+	jr   nz, .kup
+	bit  6, b
+	jr   nz, .kdown
+	bit  0, b
+	jr   nz, .kspace
+	; --- Row 7: RETURN ---
+	ld   a, 0xF7
+	out  (KB_PPIC), a				; select row 7
+	in   a, (KB_PPIB)
+	cpl
+	bit  7, a
+	jr   nz, .kret
+	xor  a							; nothing relevant pressed
+	ret
+
+.k1:	ld   c, '1'
+	jr   .got
+.k2:	ld   c, '2'
+	jr   .got
+.k3:	ld   c, '3'
+	jr   .got
+.k4:	ld   c, '4'
+	jr   .got
+.kup:	ld   c, VT_UP
+	jr   .got
+.kdown:	ld   c, VT_DOWN
+	jr   .got
+.kspace:ld   c, VT_SPACE
+	jr   .got
+.kret:	ld   c, VT_RETURN
+.got:
+	call wait_all_released			; debounce: wait until ALL keys are up
+	ld   a, c
+	ret
+
+; read_any_key: returns A!=0 once ANY key is pressed (then released), else 0.
+read_any_key:
+	ld   a, 0xF0
+	ld   b, 9						; scan rows 0..8
+.ra_loop:
+	out  (KB_PPIC), a
+	push af
+	in   a, (KB_PPIB)
+	cp   0xFF						; 0xFF = no key in this row
+	jr   nz, .ra_pressed
+	pop  af
+	inc  a							; next row
+	djnz .ra_loop
+	xor  a							; no key
+	ret
+.ra_pressed:
+	pop  af
+	call wait_all_released
+	ld   a, 1						; signal "a key was pressed"
+	ret
+
+; wait_all_released: blocks until no key is pressed on rows 0,7,8 (the ones we
+; use), with a short settle, so a single press is not read repeatedly.
+wait_all_released:
+	push bc
+.war_loop:
+	ld   a, 0xF0					; row 0
+	out  (KB_PPIC), a
+	in   a, (KB_PPIB)
+	inc  a							; 0xFF -> 0 if all released
+	jr   nz, .war_busy
+	ld   a, 0xF7					; row 7
+	out  (KB_PPIC), a
+	in   a, (KB_PPIB)
+	inc  a
+	jr   nz, .war_busy
+	ld   a, 0xF8					; row 8
+	out  (KB_PPIC), a
+	in   a, (KB_PPIB)
+	inc  a
+	jr   nz, .war_busy
+	; all released -> small settle delay then return
+	ld   bc, 0x0800
+.war_settle:
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .war_settle
+	pop  bc
+	ret
+.war_busy:
+	jr   .war_loop
 
 ; Draws (#ff) the inverse-video highlight bar on the current main-menu row.
 main_draw_selection:
@@ -1041,8 +1154,6 @@ ENDIF
 	; Main menu (MSXnano) state
 	var_mainSel:  ds 1				; currently selected main-menu option (0..3)
 	var_selColor: ds 1				; scratch: fill color for highlight bar
-	var_savedSP:  ds 2				; SP at INIT entry (BIOS stack frame)
-	var_biosRet:  ds 2				; BIOS cartridge-INIT return address
 
 
 ; ############## MSX VT-52 Character Codes
