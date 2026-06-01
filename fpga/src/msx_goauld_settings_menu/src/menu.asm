@@ -3,17 +3,21 @@
 
 .org #4760
 
-	;call CHSNS						; BIOS keyStatus
-	;ret  z
-	;call CHGET						; BIOS readChar
-	;cp   a, 'g'
-	di
-	ld   a, ROW_G ; Selecciona renglón de “G”
-	out  (PPIC), a	
-	in   a, (PPIB)
-	bit  COL_G, a
-	ei
-	ret  nz
+	; --- MSXnano M1 ---------------------------------------------------------
+	; The cartridge INIT used to only enter the config menu while the 'G' key
+	; was held; otherwise it 'ret'urned and the normal MSX boot continued.
+	; For M1 we ALWAYS enter: decompress the menu code to #8000 and jump into
+	; it. The new main menu (option "1. Arrancar sistema") restores the stack
+	; and 'ret's back to the BIOS, reproducing the original "continue boot"
+	; behaviour. The old G-key gate is kept commented for reference.
+	; ------------------------------------------------------------------------
+	;di
+	;ld   a, ROW_G					; Select keyboard matrix row of "G"
+	;out  (PPIC), a
+	;in   a, (PPIB)
+	;bit  COL_G, a
+	;ei
+	;ret  nz						; G not pressed -> continue normal boot
 
 	ld   hl, compressed_code
 	ld   de, menu_main

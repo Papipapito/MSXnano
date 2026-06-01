@@ -11,3 +11,10 @@ fpga/build_log.txt
 # Build it locally from your own ROMs with fpga/src/rom/build.bat, then flash at 0x200000.
 fpga/src/rom/goauld_rom_int.bin
 fpga/src/rom/goauld_rom_japan.bin
+fpga/src/rom/goauld_rom_int_menu.bin
+
+# Settings/boot menu ROM: host build tools (binaries) + build outputs
+fpga/src/msx_goauld_settings_menu/bin/
+fpga/src/msx_goauld_settings_menu/out/
+fpga/src/msx_goauld_settings_menu/fm_logo_menu.bin
+_menu_shot*.png

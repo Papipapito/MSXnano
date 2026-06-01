@@ -40,9 +40,221 @@ ENDIF ;ENABLE_SDCARD
 
 .org #8000
 
-; ############## Initialization
+; #############################################################################
+; ##  MSXnano MAIN MENU (Picoverse-style boot menu) - added for M1
+; #############################################################################
+; This is now the entry point reached after the FM logo (menu.asm decompresses
+; this code to #8000 and jumps here). It shows a main menu with 4 options and,
+; when "Arrancar sistema" is chosen, returns to the BIOS so the normal MSX boot
+; continues (chain to Nextor/MSX-DOS exactly as it would without a cartridge
+; INIT taking over).
+;
+; STACK NOTE: when execution arrives at #8000 the top of the stack is the
+; return address into the BIOS boot routine (the original caller of the
+; cartridge INIT at #4760). We save SP here so "Arrancar sistema" can restore
+; it and 'ret' cleanly back into the BIOS boot flow.
 
-	; Screen 0 / 80 columns
+main_menu_entry:
+	ld   (var_savedSP), sp			; Save BIOS return stack for "Arrancar sistema"
+	xor  a
+	ld   (var_mainSel), a			; start with first option highlighted
+
+	call init_screen				; Reuse screen/blink init (shared routine)
+
+main_menu_redraw:
+	; Title "MSXnano" centered in the top white box
+	ld   hl, #1c02					; X=28, Y=2
+	call POSIT						; BIOS setCursor
+	ld   hl, mainTitleStr
+	call print_string
+	; clear text area below the header box
+	ld   a, #00
+	ld   bc, 240
+	ld   hl, #0800
+	call FILVRM
+	; Top header line (white box like the config menu)
+	ld   a, #ff
+	ld   bc, 30
+	ld   hl, #0800
+	call FILVRM						; BIOS fill VRAM
+
+	; Print the 4 main-menu option strings
+	ld   hl, #1c06					; X=28
+	call POSIT
+	ld   hl, mainOpt1Str
+	call print_string
+	ld   hl, #1c08
+	call POSIT
+	ld   hl, mainOpt2Str
+	call print_string
+	ld   hl, #1c0a
+	call POSIT
+	ld   hl, mainOpt3Str
+	call print_string
+	ld   hl, #1c0c
+	call POSIT
+	ld   hl, mainOpt4Str
+	call print_string
+	; Hint line at the bottom
+	ld   hl, #1216
+	call POSIT
+	ld   hl, mainHintStr
+	call print_string
+
+main_menu_loop:
+	; Draw the selection highlight (inverse video) on the current option row
+	call main_draw_selection
+
+main_menu_wait:
+	ei
+	halt
+	call CHSNS						; BIOS keyStatus
+	jr   z, main_menu_wait
+	call CHGET						; BIOS readChar
+	or   a
+	jr   z, main_menu_wait
+
+	cp   VT_UP
+	jr   z, main_menu_up
+	cp   VT_DOWN
+	jr   z, main_menu_down
+	cp   VT_RETURN
+	jr   z, main_menu_select
+	cp   VT_SPACE
+	jr   z, main_menu_select
+	; numeric shortcuts 1..4
+	cp   '1'
+	jr   z, main_sel_set0
+	cp   '2'
+	jr   z, main_sel_set1
+	cp   '3'
+	jr   z, main_sel_set2
+	cp   '4'
+	jr   z, main_sel_set3
+	jr   main_menu_wait
+
+main_sel_set0:
+	xor  a
+	jr   main_set_and_select
+main_sel_set1:
+	ld   a, 1
+	jr   main_set_and_select
+main_sel_set2:
+	ld   a, 2
+	jr   main_set_and_select
+main_sel_set3:
+	ld   a, 3
+main_set_and_select:
+	call main_clear_selection
+	ld   (var_mainSel), a
+	jr   main_menu_select_now
+
+main_menu_up:
+	call main_clear_selection
+	ld   a, (var_mainSel)
+	or   a
+	jr   nz, .mu_dec
+	ld   a, MAIN_OPT_COUNT			; wrap from top to bottom
+.mu_dec:
+	dec  a
+	ld   (var_mainSel), a
+	jr   main_menu_loop
+
+main_menu_down:
+	call main_clear_selection
+	ld   a, (var_mainSel)
+	inc  a
+	cp   MAIN_OPT_COUNT				; wrap from bottom to top
+	jr   c, .md_store
+	xor  a
+.md_store:
+	ld   (var_mainSel), a
+	jr   main_menu_loop
+
+main_menu_select:
+main_menu_select_now:
+	ld   a, (var_mainSel)
+	or   a
+	jr   z, main_action_boot		; 0 -> Arrancar sistema
+	dec  a
+	jr   z, main_action_sdrom		; 1 -> Lanzar ROM de la SD (placeholder)
+	dec  a
+	jr   z, main_action_wifi		; 2 -> Configuracion WiFi (placeholder)
+	jp   config_menu_entry			; 3 -> Ajustes (existing config menu)
+
+; --- Option 1: continue the normal MSX boot ---------------------------------
+; Restore the saved stack and 'ret' to the BIOS, exactly as the cartridge INIT
+; would have done if the menu had not taken over. This chains to Nextor/MSX-DOS.
+main_action_boot:
+	call INITXT						; clear screen before handing control back
+	ld   bc, #000d					; turn blink mode off (restore normal text)
+	call WRTVDP
+	ld   sp, (var_savedSP)			; restore BIOS return stack
+	ret								; return into BIOS boot -> normal boot continues
+
+; --- Option 2: Lanzar ROM de la SD (PLACEHOLDER, M2) ------------------------
+main_action_sdrom:
+	ld   hl, msgSoonM2Str
+	call main_show_message
+	jp   main_menu_entry			; redraw whole menu and continue
+
+; --- Option 3: Configuracion WiFi (PLACEHOLDER, M3) -------------------------
+main_action_wifi:
+	ld   hl, msgSoonM3Str
+	call main_show_message
+	jp   main_menu_entry
+
+; Shows a centered message line, waits for a key, returns.
+; Input: HL - message string
+main_show_message:
+	push hl
+	ld   hl, #1212					; bottom area
+	call POSIT
+	; clear the hint line first by overwriting with spaces is unneeded; print msg
+	pop  hl
+	call print_string
+.msg_wait:
+	ei
+	halt
+	call CHSNS
+	jr   z, .msg_wait
+	call CHGET
+	ret
+
+; Draws (#ff) the inverse-video highlight bar on the current main-menu row.
+main_draw_selection:
+	ld   a, #ff
+	jr   main_selection_common
+; Clears (0) the highlight bar on the current main-menu row.
+main_clear_selection:
+	xor  a
+main_selection_common:
+	ld   (var_selColor), a			; remember fill color (#ff highlight / 0 clear)
+	; Compute VRAM name-color offset = #0800 + Y*80 + 28
+	; Y (screen row) = 6 + sel*2  -> options at Y=6,8,10,12
+	ld   a, (var_mainSel)
+	add  a, a						; sel*2
+	add  a, 6						; A = Y
+	ld   l, a
+	ld   h, 0						; HL = Y
+	add  hl, hl						; 2Y
+	add  hl, hl						; 4Y
+	add  hl, hl						; 8Y
+	add  hl, hl						; 16Y
+	push hl							; save 16Y
+	add  hl, hl						; 32Y
+	add  hl, hl						; 64Y
+	pop  de							; DE = 16Y
+	add  hl, de						; HL = 80Y
+	ld   de, #0800 + 28				; name table base + column 28
+	add  hl, de						; HL = VRAM address of the row start
+	ld   bc, 14						; width of the highlight bar
+	ld   a, (var_selColor)			; fill color
+	jp   FILVRM						; fill name-color row, returns to caller
+
+; Shared screen initialization: SCREEN 0 / 80 columns + blink mode ON.
+; Used by both the main menu and the config menu so they look identical.
+init_screen:
 	ld   a, 80
 	ld   (LINL40), a
 	call INITXT
@@ -50,7 +262,15 @@ ENDIF ;ENABLE_SDCARD
 	ld   bc, #4f0c
 	call WRTVDP
 	ld   bc, #100d
-	call WRTVDP
+	jp   WRTVDP						; tail-call, returns to caller
+
+; #############################################################################
+; ##  EXISTING GOA'ULD CONFIG MENU  (reached from main menu option "Ajustes")
+; #############################################################################
+
+; ############## Initialization
+config_menu_entry:
+	call init_screen				; SCREEN 0 80-col + blink (shared routine)
 
 	; Print menu title
 	ld   hl,#1a02
@@ -575,6 +795,26 @@ print_selection:
 
 ; ############## Constants
 
+; ----- Main menu (MSXnano) strings -----
+MAIN_OPT_COUNT	equ		4				; number of main-menu options
+
+mainTitleStr:
+	.db "MSXnano",0
+mainOpt1Str:
+	.db "1. Arrancar sistema",0
+mainOpt2Str:
+	.db "2. Lanzar ROM de la SD",0
+mainOpt3Str:
+	.db "3. Configuracion WiFi",0
+mainOpt4Str:
+	.db "4. Ajustes",0
+mainHintStr:
+	.db "Flechas para mover - ENTER/ESPACIO para elegir",0
+msgSoonM2Str:
+	.db "Lanzar ROM de la SD: Proximamente (M2). Pulsa una tecla...",0
+msgSoonM3Str:
+	.db "Configuracion WiFi: Proximamente (M3). Pulsa una tecla...",0
+
 menuTitleStr:
 	.db "MSX Goa'uld Settings Menu v1.23",0
 enableMapperStr:
@@ -756,6 +996,11 @@ IFDEF ENABLE_SDCARD
 ENDIF
 
 	var_currentStruct: ds 2
+
+	; Main menu (MSXnano) state
+	var_mainSel:  ds 1				; currently selected main-menu option (0..3)
+	var_selColor: ds 1				; scratch: fill color for highlight bar
+	var_savedSP:  ds 2				; SP at entry (BIOS return stack)
 
 
 ; ############## MSX VT-52 Character Codes
