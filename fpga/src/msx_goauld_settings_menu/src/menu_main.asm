@@ -55,9 +55,27 @@ ENDIF ;ENABLE_SDCARD
 ; it and 'ret' cleanly back into the BIOS boot flow.
 
 main_menu_entry:
-	; The "Arrancar sistema" option returns to the BIOS through the live stack
-	; (see main_action_boot); we do NOT snapshot SP/return into page-2 RAM
-	; because that RAM may be remapped between now and the selection.
+	; Save the BIOS cartridge-INIT return context. At this point SP points at the
+	; BIOS return address (the decompressor's final 'ret' consumed the pushed
+	; #8000, leaving the BIOS return on top). We store SP in PAGE-3 RAM (#E000),
+	; which does NOT remap like page 2, so "Arrancar sistema" can restore the exact
+	; SP and 'ret' reliably even if the menu's stack ends up unbalanced for any
+	; reason (this is more robust than relying on perfectly balanced calls).
+	ld   (BOOT_SP), sp
+	pop  hl							; top of stack = BIOS boot return address
+	push hl
+	ld   (BOOT_RET), hl				; save it: the WiFi ESP ROM may clobber the stack
+	; The goauld BIOS boot calls this cartridge INIT a SECOND time before it
+	; finally boots the disk. "Arrancar sistema" sets BOOT_FLAG and rets; on the
+	; re-run we see the flag and ret again WITHOUT showing the browser, so a
+	; single ESC boots (otherwise it took two: logo + browser reappear, then boot).
+	ld   a, (BOOT_FLAG)
+	ld   b, a
+	xor  a
+	ld   (BOOT_FLAG), a				; the flag is only valid transiently
+	ld   a, b
+	cp   #99
+	jp   z, main_action_boot		; pending boot -> continue the boot, skip the menu
 	xor  a
 	ld   (var_mainSel), a			; start with first option highlighted
 
@@ -65,7 +83,13 @@ main_menu_entry:
 ; redraw WITHOUT re-capturing the BIOS context (which is only valid on the
 ; very first entry from the cartridge INIT).
 main_menu_restart:
+	xor  a
+	ld   (BROWSING), a				; leaving the browser: stop marquee animation
 	call init_screen				; Reuse screen/blink init (shared routine)
+	; UNIFIED UI (Picoverse-style): the SD browser IS the home screen. Boot and
+	; every "return to menu" land here. ESC in the browser = boot the system,
+	; 'A' = settings. The old 4-option menu below is kept but no longer reached.
+	jp   main_action_sdrom
 
 main_menu_redraw:
 	; Title "MSXnano" centered in the top white box
@@ -112,13 +136,11 @@ main_menu_loop:
 	call main_draw_selection
 
 main_menu_wait:
-	; Read a key by scanning the keyboard matrix DIRECTLY through the PPI ports
-	; (0xAA = row select, 0xA9 = column read), instead of using the BIOS
-	; CHSNS/CHGET. At cartridge-INIT time the BIOS keyboard interrupt service
-	; is not reliably hooked yet on the Goa'uld, so CHGET ignored the cursor /
-	; space keys on real hardware. Direct matrix scan works regardless of BIOS
-	; keyboard state (this is the same technique the original G-key gate uses).
-	call read_menu_key				; A = key code (0 if none / unmapped)
+	; Read a key via the BIOS keyboard (ei/halt/CHSNS/CHGET, see browse_getkey).
+	; This delivers the cursor keys (rows the direct PPI scan missed) so the main
+	; menu can be driven with cursors + ENTER, just like the SD browser. The
+	; numeric 1..4 shortcuts still work (CHGET returns the same codes).
+	call browse_getkey				; A = key code (cursors 1E/1F, RETURN 0D, etc.)
 	or   a
 	jr   z, main_menu_wait
 
@@ -190,9 +212,9 @@ main_menu_select_now:
 	or   a
 	jr   z, main_action_boot		; 0 -> Arrancar sistema
 	dec  a
-	jr   z, main_action_sdrom		; 1 -> Lanzar ROM de la SD (placeholder)
+	jp   z, main_action_sdrom		; 1 -> Lanzar ROM de la SD
 	dec  a
-	jr   z, main_action_wifi		; 2 -> Configuracion WiFi (placeholder)
+	jp   z, main_action_wifi		; 2 -> Configuracion WiFi (placeholder)
 	jp   config_menu_entry			; 3 -> Ajustes (existing config menu)
 
 ; --- Option 1: continue the normal MSX boot ---------------------------------
@@ -210,25 +232,2486 @@ main_menu_select_now:
 ; never rely on page-2 stored state: the LIVE stack (page-3 RAM) still holds the
 ; BIOS return address on top here (the menu's calls are balanced), so a plain
 ; 'ret' returns correctly regardless of any page-2 remapping.
+; boot_system: user chose "arrancar sistema". Mark a pending-boot flag (so the
+; BIOS's second INIT pass auto-continues instead of showing the browser again)
+; and continue the boot.
+boot_system:
+	ld   a, #99
+	ld   (BOOT_FLAG), a
+	; fall through to main_action_boot
+
 main_action_boot:
 	di
 	call INITXT						; clear screen (SCREEN 0) before handing back
 	ld   bc, #000d					; turn blink mode off (restore normal text)
 	call WRTVDP
+	ld   sp, (BOOT_SP)				; restore the exact BIOS-INIT SP saved at entry
+	ld   hl, (BOOT_RET)				; re-supply the BIOS return address in case the
+	ex   (sp), hl					; WiFi ESP ROM clobbered that stack slot
 	ei
 	ret								; return into BIOS boot -> normal boot continues
 
-; --- Option 2: Lanzar ROM de la SD (PLACEHOLDER, M2) ------------------------
+; --- Option 2: Lanzar ROM de la SD -------------------------------------------
+; M2.1 derisk: prove the boot menu itself can read a raw SD sector through the
+; WonderTANG window BEFORE the OS boots. Menu code runs at #8000 (page 2); the
+; SD register window is at #7C00-#7EFF in PAGE 1, slot 3-2. We switch page 1 to
+; slot 3-2 only around the access, read sector 0, restore page 1 to slot 3-1.
+; The sector buffer + scratch live at FIXED PAGE-3 RAM addresses (NOT reserved
+; inside the menu image with 'ds', which would inflate the decompressed image).
+SD_LBA		equ	#C000			; 4 bytes: LBA to read (page-3 RAM scratch)
+SD_CTYPE	equ	#C004			; 1 byte: card type read back
+SD_STATUS	equ	#C005			; 1 byte: 0=OK, 1=init timeout, 2=read timeout
+part_type	equ	#C006			; 1 byte: MBR partition 1 type
+PART_LBA	equ	#C008			; 4 bytes: partition start LBA (FAT16 volume)
+ROOT_LBA	equ	#C00C			; 4 bytes: root directory start LBA
+disp_row	equ	#C010			; 1 byte: current display row
+sec_left	equ	#C011			; 1 byte: root-dir sectors remaining
+ent_in_sec	equ	#C01F			; 1 byte: dir entries left in current sector
+name83		equ	#C012			; 13 bytes: formatted 8.3 name (ASCIIZ)
+ENT_COUNT	equ	#C020			; 1 byte: number of entries scanned
+BR_SEL		equ	#C021			; 1 byte: selected entry index
+BR_TOP		equ	#C022			; 1 byte: first visible entry index
+BR_TMP		equ	#C023			; 1 byte: scratch (draw_entry)
+BR_TMP2		equ	#C024			; 1 byte: scratch (draw_browser loop index)
+BR_REC		equ	#C025			; 2 bytes: scratch record pointer
+ARR_PTR		equ	#C027			; 2 bytes: array write pointer (scan)
+BR_OLD		equ	#C029			; 1 byte: previously-selected index (partial repaint)
+BR_OLDTOP	equ	#C02A			; 1 byte: BR_TOP before ensure_visible (scroll detect)
+ENT_ARRAY	equ	#C300			; entry array: ENT_SIZE bytes each (type,cluster,name)
+ENT_SIZE	equ	64				; record: type(1)+cluster(2)+size(4)+name(57 ASCIIZ)
+NAME_OFF	equ	7				; name offset inside a record (after type+cluster+size)
+NAME_MAX	equ	56				; max name chars stored (+ NUL)
+NAME_WIN	equ	59				; name display window width (cols 9..67, size at 69)
+VISIBLE		equ	19				; entries per page (list rows 3..21; hdr rows 1-2, sep 22, footer 23)
+MAX_ENT		equ	144				; array capacity (144*64 = 9216 bytes -> C300..E700)
+HAVE_LFN	equ	#C02B			; 1 byte: a long-file-name is being accumulated
+LFN_BUF		equ	#C02C			; 80 bytes: assembled long file name (C02C..C07B)
+CUR_CLUS	equ	#C07C			; 2 bytes: current directory cluster (0 = root)
+DIR_SP		equ	#C07E			; 1 byte: folder back-stack depth
+DATA_LBA	equ	#C090			; 4 bytes: FAT data region start LBA
+SEC_PER_CLUS equ #C094			; 1 byte: sectors per cluster
+ROOT_SECS	equ	#C095			; 1 byte: root-directory sector count
+JOY_PREV	equ	#C096			; 1 byte: previous joystick code (edge detect)
+FAT_LBA		equ	#C097			; 4 bytes: FAT table start LBA
+FILE_CLUS	equ	#C09B			; 2 bytes: selected file's first cluster
+CHAIN_CNT	equ	#C09D			; 2 bytes: file cluster-chain length
+DIR_STACK	equ	#C0A0			; 8 x 2 bytes: parent-cluster back stack
+BOOT_SP		equ	#C0B0			; 2 bytes: saved BIOS cartridge-INIT SP (page-3, stable)
+MQ_OFF		equ	#C0B2			; 1 byte: marquee scroll offset of the selected name
+MQ_SEL		equ	#C0B3			; 1 byte: entry index currently being marquee-scrolled
+MQ_TICK		equ	#C0B4			; 1 byte: marquee frame counter
+BROWSING	equ	#C0B5			; 1 byte: 1 while inside the SD browser (gate marquee)
+MAP_SCC		equ	#C0B6			; 2 bytes: Konami-SCC bank-write count
+MAP_KON		equ	#C0B8			; 2 bytes: Konami bank-write count
+MAP_A8		equ	#C0BA			; 2 bytes: ASCII8 bank-write count
+MAP_A16		equ	#C0BC			; 2 bytes: ASCII16 bank-write count
+SCAN_CLUS	equ	#C0BE			; 2 bytes: cluster being scanned
+SSEC_LEFT	equ	#C0C0			; 1 byte: sectors left in current cluster (scan)
+SCAN_N		equ	#C0C1			; 2 bytes: sectors scanned so far
+MAPPER_ID	equ	#C0C3			; 1 byte: detected mapper id
+MEG_T0		equ	#C0C4			; 1 byte: megaram write-test readback byte 0
+MEG_T1		equ	#C0C5			; 1 byte: megaram write-test readback byte 1
+MEG_P42		equ	#C0C6			; 1 byte: SWIO port 0x42 readback (Slot2Mode in bits 4,5)
+MEG_B0		equ	#C0C7			; 1 byte: megaram byte 0 BEFORE the write
+LOAD_SEG	equ	#C0C8			; 1 byte: current 8K megaram segment being loaded
+LOAD_OFF	equ	#C0C9			; 2 bytes: byte offset within the current 8K segment
+LOAD_CLUS	equ	#C0CB			; 2 bytes: cluster being loaded (chain walk)
+MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
+NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
+TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
+PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
+PE_ROW		equ	#C0DB			; 1 byte: partition dump display row
+PE_DW		equ	#C0DC			; 4 bytes: 32-bit value scratch for hex print
+; --- multi-partition support (placed at #E800, above ENT_ARRAY C300..E700) ---
+MAX_PARTS	equ	8
+PART_TBL	equ	#E800			; up to 8 entries x 4 bytes = start LBA of each FAT16 partition
+PART_CNT	equ	#E820			; 1 byte: number of partitions found
+EXT_BASE	equ	#E821			; 4 bytes: extended-partition base LBA (0 = none)
+CUR_PART	equ	#E825			; 1 byte: currently-selected partition index
+EBR_CUR		equ	#E826			; 4 bytes: current EBR LBA while walking the chain
+ADD_TMP		equ	#E82A			; 4 bytes: 32-bit add scratch
+BOOT_RET	equ	#E82E			; 2 bytes: saved BIOS boot return address (survives WiFi ROM)
+BOOT_FLAG	equ	#E830			; 1 byte: 0x99 = boot pending (skip menu on BIOS 2nd INIT pass)
+CLK_STR		equ	#E831			; 9 bytes: "HH:MM:SS" + 0 (header clock)
+CLK_LAST	equ	#E83A			; 1 byte: last seconds-units digit (clock change detect)
+JOY_RPT		equ	#E83B			; 1 byte: joystick auto-repeat frame counter
+JOY_RPT_DELAY equ 14			; frames before a held stick starts repeating
+JOY_RPT_RATE  equ 2				; frames between repeats (lower = faster)
+MEG_SLOT	equ	#02				; primary slot 2 (the OCM relocates the megaram here
+								; when Slot2Mode is set via the SWIO smart command)
+; mapper ids
+MAP_PLAIN	equ	0
+MAP_KON_ID	equ	2
+MAP_SCC_ID	equ	3
+MAP_A8_ID	equ	4
+MAP_A16_ID	equ	5
+MAP_UNK		equ	6
+MAP_THRESH	equ	2				; min bank-writes to accept a mapper signature
+SD_BUF		equ	#C100			; 512 bytes: sector transfer buffer
+SD_SLOT_32	equ	#8B			; ENASLT slot id: expanded, primary 3, secondary 2 (SD)
+SD_SLOT_31	equ	#87			; ENASLT slot id: expanded, primary 3, secondary 1 (menu)
+SDC_SDATA	equ	#7C00			; 512-byte sector transfer window
+SDC_ENABLE	equ	#7E00			; wo: bit0 = enable SDC register block
+SDC_CMD		equ	#7E01			; wo: bit0=read
+SDC_STATUS	equ	#7E02			; ro: bit7 = busy
+SDC_SADDR	equ	#7E03			; wo: 4 bytes = LBA
+SDC_CTYPE	equ	#7E0C			; ro: card type
+
 main_action_sdrom:
-	ld   hl, msgSoonM2Str
-	call main_show_message
-	jp   main_menu_restart			; redraw menu (keep BIOS context, no reset)
+	call cls_browser				; show feedback (the SD init can pause a moment)
+	ld   hl, #0103
+	call POSIT
+	ld   hl, readingStr				; "Leyendo SD..."
+	call print_string
+	; --- read sector 0 (MBR with partition table) ---
+	xor  a
+	ld   (SD_LBA+0), a
+	ld   (SD_LBA+1), a
+	ld   (SD_LBA+2), a
+	ld   (SD_LBA+3), a
+	call sd_read_sector
+	; --- SD-present check: if the init/read timed out (no card, or not the SD
+	;     window) bail out cleanly instead of parsing garbage and hanging ---
+	ld   a, (SD_STATUS)
+	or   a
+	jp   nz, sd_not_present
+	ld   a, (SD_BUF+510)			; MBR boot signature must be 0x55 0xAA
+	cp   #55
+	jp   nz, sd_not_present
+	ld   a, (SD_BUF+511)
+	cp   #AA
+	jp   nz, sd_not_present
+	; --- enumerate ALL FAT16 partitions (4 primaries + extended-chain logicals) ---
+	call enum_partitions
+	ld   a, (PART_CNT)
+	or   a
+	jp   z, sd_not_present			; no readable FAT16 partition
+	xor  a
+	call select_partition			; open partition 0 (reads BPB, computes root, scans;
+	jp   c, sd_not_present			; sets BR_SEL/BR_TOP/MQ_SEL/BROWSING)
+	jp   browse						; scrolling browser (returns to menu on ESC)
+
+; sd_not_present: no usable SD card (init/read timeout or bad MBR signature).
+; In the unified UI the browser is the home screen, so DON'T loop back to it
+; (that would re-read the SD and bounce here forever). Offer the global actions.
+sd_not_present:
+	call cls_browser
+	ld   hl, #0103
+	call POSIT
+	ld   hl, noSdStr
+	call print_string
+	ld   hl, #0105
+	call POSIT
+	ld   hl, noSdStr2
+	call print_string
+.snp_key:
+	call browse_getkey
+	cp   #0D						; RETURN -> arrancar sistema
+	jp   z, boot_system
+	cp   #1B						; ESC -> arrancar sistema
+	jp   z, boot_system
+	cp   #53						; 'S' -> Settings (Ajustes)
+	jp   z, config_menu_entry
+	cp   #73						; 's'
+	jp   z, config_menu_entry
+	cp   #57						; 'W' -> WiFi config
+	jp   z, main_action_wifi
+	cp   #77						; 'w'
+	jp   z, main_action_wifi
+	jr   .snp_key
+
+; =====================================================================
+; Multi-partition support
+; =====================================================================
+; is_fat16: A = MBR/EBR partition type byte. CF=1 if it is a FAT12/16 type we
+; can browse (0x01/0x04/0x06/0x0E). CF=0 otherwise. A preserved.
+is_fat16:
+	cp   #01
+	jr   z, .if_yes
+	cp   #04
+	jr   z, .if_yes
+	cp   #06
+	jr   z, .if_yes
+	cp   #0E
+	jr   z, .if_yes
+	or   a							; CF = 0
+	ret
+.if_yes:
+	scf
+	ret
+
+; add_partition_at: HL = ptr to a 4-byte start LBA. Append it to PART_TBL if room.
+add_partition_at:
+	ld   a, (PART_CNT)
+	cp   MAX_PARTS
+	ret  nc							; table full -> ignore
+	push hl							; src
+	ld   l, a						; dest = PART_TBL + cnt*4
+	ld   h, 0
+	add  hl, hl						; *2
+	add  hl, hl						; *4
+	ld   de, PART_TBL
+	add  hl, de
+	ex   de, hl						; DE = dest
+	pop  hl							; HL = src
+	ld   bc, 4
+	ldir
+	ld   a, (PART_CNT)
+	inc  a
+	ld   (PART_CNT), a
+	ret
+
+; set_add_tmp: HL = ptr to 4-byte value -> ADD_TMP = value.
+set_add_tmp:
+	ld   de, ADD_TMP
+	ld   bc, 4
+	ldir
+	ret
+
+; add_to_tmp: HL = ptr to 4-byte addend -> ADD_TMP += (HL), 32-bit.
+add_to_tmp:
+	or   a							; clear carry
+	ld   de, ADD_TMP
+	ld   b, 4
+.att_loop:
+	ld   a, (de)
+	adc  a, (hl)
+	ld   (de), a
+	inc  de
+	inc  hl
+	djnz .att_loop
+	ret
+
+; enum_partitions: SD_BUF holds the MBR. Fill PART_TBL / PART_CNT with every
+; FAT16 partition: the 4 primary entries, plus the logical drives inside an
+; extended partition (type 0x05/0x0F) by walking its EBR chain.
+enum_partitions:
+	xor  a
+	ld   (PART_CNT), a
+	ld   (EXT_BASE+0), a
+	ld   (EXT_BASE+1), a
+	ld   (EXT_BASE+2), a
+	ld   (EXT_BASE+3), a
+	ld   hl, SD_BUF + 446			; first primary entry
+	ld   b, 4
+.ep_pri:
+	push bc
+	push hl
+	ld   de, 4
+	add  hl, de						; HL -> type byte
+	ld   a, (hl)
+	cp   #05
+	jr   z, .ep_ext
+	cp   #0F
+	jr   z, .ep_ext
+	call is_fat16
+	jr   nc, .ep_pnext
+	pop  hl							; HL = entry base
+	push hl
+	ld   de, 8
+	add  hl, de						; HL -> start LBA
+	call add_partition_at
+	jr   .ep_pnext
+.ep_ext:
+	pop  hl							; HL = entry base
+	push hl
+	ld   de, 8
+	add  hl, de						; HL -> extended start LBA
+	ld   de, EXT_BASE
+	ld   bc, 4
+	ldir							; EXT_BASE = this entry's start LBA
+.ep_pnext:
+	pop  hl							; HL = entry base
+	ld   de, 16
+	add  hl, de						; next primary entry
+	pop  bc
+	djnz .ep_pri
+	; --- walk the extended chain, if any ---
+	ld   a, (EXT_BASE+0)
+	ld   hl, EXT_BASE+1
+	or   (hl)
+	inc  hl
+	or   (hl)
+	inc  hl
+	or   (hl)
+	ret  z							; EXT_BASE == 0 -> no extended partition
+	ld   hl, EXT_BASE				; EBR_CUR = EXT_BASE
+	ld   de, EBR_CUR
+	ld   bc, 4
+	ldir
+	ld   b, MAX_PARTS				; bound the chain length
+.ep_walk:
+	push bc
+	ld   hl, EBR_CUR				; SD_LBA = EBR_CUR
+	ld   de, SD_LBA
+	ld   bc, 4
+	ldir
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .ep_wend				; read error -> stop
+	ld   a, (SD_BUF + 450)			; EBR entry0 type
+	call is_fat16
+	jr   nc, .ep_link				; not FAT16 -> skip recording
+	ld   hl, EBR_CUR				; logical LBA = EBR_CUR + entry0.rel_start
+	call set_add_tmp
+	ld   hl, SD_BUF + 454
+	call add_to_tmp
+	ld   hl, ADD_TMP
+	call add_partition_at
+.ep_link:
+	ld   a, (SD_BUF + 466)			; EBR entry1 type (link to next EBR)
+	or   a
+	jr   z, .ep_wend				; empty -> end of chain
+	ld   hl, EXT_BASE				; next EBR = EXT_BASE + entry1.rel_start
+	call set_add_tmp
+	ld   hl, SD_BUF + 470
+	call add_to_tmp
+	ld   hl, ADD_TMP
+	ld   de, EBR_CUR
+	ld   bc, 4
+	ldir
+	pop  bc
+	djnz .ep_walk
+	ret
+.ep_wend:
+	pop  bc
+	ret
+
+; select_partition: A = partition index. Set PART_LBA from PART_TBL, read its
+; boot sector (BPB), compute the root dir and scan it. Also (re)inits the browser
+; selection/marquee. Returns CF=1 on SD error, CF=0 on success.
+select_partition:
+	ld   (CUR_PART), a
+	ld   l, a						; src = PART_TBL + idx*4
+	ld   h, 0
+	add  hl, hl
+	add  hl, hl
+	ld   de, PART_TBL
+	add  hl, de
+	ld   de, PART_LBA				; PART_LBA = table[idx]
+	ld   bc, 4
+	ldir
+	ld   hl, PART_LBA				; SD_LBA = PART_LBA
+	ld   de, SD_LBA
+	ld   bc, 4
+	ldir
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	scf
+	ret  nz							; SD error -> CF=1
+	call fat_compute_root
+	call scan_root
+	xor  a
+	ld   (BR_SEL), a
+	ld   (BR_TOP), a
+	xor  a
+	ld   (DIR_SP), a				; reset folder back-stack (root of this partition)
+	ld   a, #FF
+	ld   (MQ_SEL), a
+	ld   a, 1
+	ld   (BROWSING), a
+	or   a							; CF = 0 (success)
+	ret
+
+; dump_part_table: TEMP diagnostic. Print the 4 MBR partition-table entries
+; (type + 32-bit start LBA + 32-bit sector count) from SD_BUF (must hold the
+; MBR = sector 0). Each entry is 16 bytes starting at offset 446 (0x1BE).
+; No IX / no live BC across BIOS calls (POSIT/CHPUT clobber both).
+dump_part_table:
+	call cls_browser
+	ld   hl, #0101
+	call POSIT
+	ld   hl, partHdrStr
+	call print_string
+	ld   hl, SD_BUF + 446
+	ld   a, 1
+	call print_part_entry
+	ld   hl, SD_BUF + 462
+	ld   a, 2
+	call print_part_entry
+	ld   hl, SD_BUF + 478
+	ld   a, 3
+	call print_part_entry
+	ld   hl, SD_BUF + 494
+	ld   a, 4
+	call print_part_entry
+	ld   hl, #010A
+	call POSIT
+	ld   hl, sdWaitStr
+	call print_string
+	call browse_getkey
+	ret
+
+; print_part_entry: A = partition number (1-4), HL = ptr to its 16-byte MBR entry
+print_part_entry:
+	ld   (PE_PTR), hl
+	add  a, 2						; display row = number + 2
+	ld   (PE_ROW), a
+	ld   h, 1
+	ld   l, a
+	call POSIT
+	ld   a, 'P'
+	call CHPUT
+	ld   a, (PE_ROW)
+	sub  2
+	add  a, '0'
+	call CHPUT
+	ld   hl, partTStr				; " t="
+	call print_string
+	ld   hl, (PE_PTR)				; +4 = type
+	ld   de, 4
+	add  hl, de
+	ld   a, (hl)
+	call print_hex_a
+	ld   hl, partLStr				; " LBA="
+	call print_string
+	ld   hl, (PE_PTR)				; +8 = start LBA (4 bytes LE)
+	ld   de, 8
+	add  hl, de
+	call print_hex32_at
+	ld   hl, partSStr				; " sec="
+	call print_string
+	ld   hl, (PE_PTR)				; +12 = sector count (4 bytes LE)
+	ld   de, 12
+	add  hl, de
+	call print_hex32_at
+	ret
+
+; print_hex32_at: HL -> 4-byte little-endian value; print 8 hex digits, MSB first.
+print_hex32_at:
+	ld   de, PE_DW
+	ld   bc, 4
+	ldir							; copy the 4 bytes to scratch (HL clobbered by prints)
+	ld   a, (PE_DW+3)
+	call print_hex_a
+	ld   a, (PE_DW+2)
+	call print_hex_a
+	ld   a, (PE_DW+1)
+	call print_hex_a
+	ld   a, (PE_DW+0)
+	call print_hex_a
+	ret
+
+; -----------------------------------------------------------------------------
+; fat_compute_root: ROOT_LBA = PART_LBA + RsvdSecCnt + NumFATs*FATSz16.
+; Inputs: SD_BUF = FAT16 boot sector, PART_LBA = partition start LBA.
+; -----------------------------------------------------------------------------
+fat_compute_root:
+	ld   a, (SD_BUF+16)				; NumFATs
+	ld   b, a
+	ld   hl, 0
+	ld   de, (SD_BUF+22)			; FATSz16
+.fcr_mul:
+	add  hl, de
+	djnz .fcr_mul					; hl = NumFATs * FATSz16
+	ld   de, (SD_BUF+14)			; RsvdSecCnt
+	add  hl, de						; hl = relative root-dir sector
+	ld   de, (PART_LBA+0)			; + partition start (low word)
+	add  hl, de
+	ld   (ROOT_LBA+0), hl
+	ld   hl, (PART_LBA+2)			; high word + carry (ld does not affect carry)
+	ld   de, 0
+	adc  hl, de
+	ld   (ROOT_LBA+2), hl
+	; --- also derive data-region geometry for subdirectory access ---
+	ld   a, (SD_BUF+13)				; sectors per cluster
+	ld   (SEC_PER_CLUS), a
+	ld   hl, (SD_BUF+17)			; RootEntCnt
+	srl  h
+	rr   l
+	srl  h
+	rr   l
+	srl  h
+	rr   l
+	srl  h
+	rr   l							; HL = RootEntCnt/16 = root-dir sectors (32B entries, 512B/sec)
+	ld   a, l
+	ld   (ROOT_SECS), a
+	ld   d, 0						; DATA_LBA = ROOT_LBA + ROOT_SECS
+	ld   e, a
+	ld   hl, (ROOT_LBA+0)
+	add  hl, de
+	ld   (DATA_LBA+0), hl
+	ld   hl, (ROOT_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (DATA_LBA+2), hl
+	; FAT_LBA = PART_LBA + RsvdSecCnt (first FAT table sector)
+	ld   hl, (SD_BUF+14)			; RsvdSecCnt
+	ld   de, (PART_LBA+0)
+	add  hl, de
+	ld   (FAT_LBA+0), hl
+	ld   hl, (PART_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (FAT_LBA+2), hl
+	ret
+
+; -----------------------------------------------------------------------------
+; set_scan_start: set SD_LBA (first sector) and sec_left (sector limit) for the
+; directory whose cluster is CUR_CLUS (0 = the fixed root-dir region).
+; -----------------------------------------------------------------------------
+set_scan_start:
+	ld   hl, (CUR_CLUS)
+	ld   a, h
+	or   l
+	jr   nz, .sss_data
+	ld   hl, (ROOT_LBA+0)			; root: fixed region after the FATs
+	ld   (SD_LBA+0), hl
+	ld   hl, (ROOT_LBA+2)
+	ld   (SD_LBA+2), hl
+	ld   a, (ROOT_SECS)
+	ld   (sec_left), a
+	ret
+.sss_data:
+	; SD_LBA = DATA_LBA + (CUR_CLUS-2) * SEC_PER_CLUS
+	ld   hl, (DATA_LBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (DATA_LBA+2)
+	ld   (SD_LBA+2), hl
+	ld   hl, (CUR_CLUS)
+	dec  hl
+	dec  hl							; cluster - 2
+	ex   de, hl						; DE = cluster-2
+	ld   a, (SEC_PER_CLUS)
+	ld   b, a
+.sss_loop:
+	call add32_de					; SD_LBA += (cluster-2), SEC_PER_CLUS times
+	djnz .sss_loop
+	ld   a, (SEC_PER_CLUS)
+	ld   (sec_left), a
+	ret
+
+; add32_de: SD_LBA (32-bit) += DE (16-bit). DE preserved.
+add32_de:
+	push de
+	ld   hl, (SD_LBA+0)
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (SD_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	pop  de
+	ret
+
+; -----------------------------------------------------------------------------
+; scan_root / scan_current: read the current directory and store each [DIR]/.ROM
+; entry into ENT_ARRAY as {type(1: 0=dir 1=rom), cluster(2), name(ASCIIZ)}.
+; scan_root resets to the root; scan_current rescans whatever CUR_CLUS points to.
+; -----------------------------------------------------------------------------
+scan_root:
+	xor  a
+	ld   (CUR_CLUS+0), a
+	ld   (CUR_CLUS+1), a
+	ld   (DIR_SP), a
+scan_current:
+	xor  a
+	ld   (ENT_COUNT), a
+	ld   (HAVE_LFN), a
+	ld   hl, ENT_ARRAY
+	ld   (ARR_PTR), hl
+	call set_scan_start
+.scr_sec:
+	call sd_read_sector
+	ld   ix, SD_BUF
+	ld   a, 16
+	ld   (ent_in_sec), a
+.scr_ent:
+	ld   a, (ix+0)
+	or   a
+	jp   z, .scr_done				; 0x00 = end of directory
+	cp   #E5
+	jp   z, .scr_drop				; deleted -> skip, drop pending LFN
+	ld   a, (ix+11)
+	and  #0F
+	cp   #0F
+	jp   z, .scr_lfn				; LFN entry -> accumulate the long name
+	ld   a, (ix+11)
+	and  #08
+	jp   nz, .scr_drop				; volume label -> skip
+	ld   a, (ix+0)
+	cp   '.'
+	jp   z, .scr_drop				; "." and ".." entries -> skip
+	ld   a, (ENT_COUNT)
+	cp   MAX_ENT
+	jp   nc, .scr_done				; array full
+	ld   a, (ix+11)
+	and  #10
+	jr   z, .scr_file
+	ld   c, 0						; type 0 = directory
+	jr   .scr_store
+.scr_file:
+	call ix_is_rom
+	jp   nz, .scr_drop				; not .ROM -> skip
+	ld   c, 1						; type 1 = rom
+.scr_store:
+	; name source: assembled LFN if any, else the 8.3 short name
+	ld   a, (HAVE_LFN)
+	or   a
+	jr   z, .scr_short
+	ld   hl, LFN_BUF
+	jr   .scr_named
+.scr_short:
+	push bc							; preserve type across fmt_name83
+	call fmt_name83					; -> name83 (uses ix)
+	pop  bc
+	ld   hl, name83
+.scr_named:
+	push hl							; name source ptr
+	ld   hl, (ARR_PTR)
+	ld   (hl), c					; +0 type
+	inc  hl
+	ld   a, (ix+26)					; +1 cluster low
+	ld   (hl), a
+	inc  hl
+	ld   a, (ix+27)					; +2 cluster high
+	ld   (hl), a
+	inc  hl
+	ld   a, (ix+28)					; +3 file size byte 0 (LE dword)
+	ld   (hl), a
+	inc  hl
+	ld   a, (ix+29)					; +4 file size byte 1
+	ld   (hl), a
+	inc  hl
+	ld   a, (ix+30)					; +5 file size byte 2
+	ld   (hl), a
+	inc  hl
+	ld   a, (ix+31)					; +6 file size byte 3
+	ld   (hl), a
+	inc  hl							; hl = record+7 (name destination)
+	ex   de, hl						; de = dest
+	pop  hl							; hl = name source
+	call copy_name					; copy up to NAME_MAX, NUL-terminated
+	ld   hl, (ARR_PTR)				; advance ARR_PTR by one full record
+	ld   de, ENT_SIZE
+	add  hl, de
+	ld   (ARR_PTR), hl
+	ld   a, (ENT_COUNT)
+	inc  a
+	ld   (ENT_COUNT), a
+.scr_drop:
+	xor  a
+	ld   (HAVE_LFN), a				; clear any pending LFN accumulation
+	jr   .scr_next
+.scr_lfn:
+	call lfn_accumulate				; place this entry's 13 chars into LFN_BUF
+	jr   .scr_next
+.scr_next:
+	ld   de, 32
+	add  ix, de
+	ld   a, (ent_in_sec)
+	dec  a
+	ld   (ent_in_sec), a
+	jp   nz, .scr_ent
+	call inc_sd_lba
+	ld   a, (sec_left)
+	dec  a
+	ld   (sec_left), a
+	jp   nz, .scr_sec
+.scr_done:
+	ret
+
+; lfn_accumulate: place the 13 chars of this LFN entry (IX) into LFN_BUF at
+; (seq-1)*13, where seq = (IX+0) & 0x3F. Clears LFN_BUF on the first entry.
+lfn_accumulate:
+	ld   a, (HAVE_LFN)
+	or   a
+	jr   nz, .lac_seq
+	ld   hl, LFN_BUF				; first of group: clear 80-byte buffer
+	ld   (hl), 0
+	ld   de, LFN_BUF+1
+	ld   bc, 79
+	ldir
+	ld   a, 1
+	ld   (HAVE_LFN), a
+.lac_seq:
+	ld   a, (ix+0)
+	and  #3F						; sequence number (1-based)
+	dec  a							; 0-based
+	cp   6
+	ret  nc							; seq too high -> ignore (name truncated)
+	ld   hl, 0
+	or   a
+	jr   z, .lac_dst
+	ld   b, a
+	ld   de, 13
+.lac_mul:
+	add  hl, de
+	djnz .lac_mul					; hl = (seq-1)*13
+.lac_dst:
+	ld   de, LFN_BUF
+	add  hl, de
+	ex   de, hl						; de = LFN_BUF + (seq-1)*13
+	jp   lfn_copy13					; copy 13 chars (ends with ret)
+
+; lfn_copy13: copy the 13 name chars (UTF-16 low bytes) of the LFN entry at IX
+; into (DE). Char byte offsets: 1,3,5,7,9, 14,16,18,20,22,24, 28,30.
+lfn_copy13:
+	ld   a, (ix+1)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+3)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+5)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+7)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+9)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+14)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+16)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+18)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+20)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+22)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+24)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+28)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+30)
+	ld   (de), a
+	inc  de
+	ret
+
+; copy_name: copy name from HL to DE, up to NAME_MAX chars, stopping at NUL or
+; 0xFF (LFN padding); then NUL-terminate the destination.
+copy_name:
+	ld   b, NAME_MAX
+.cn_loop:
+	ld   a, (hl)
+	or   a
+	jr   z, .cn_end
+	cp   #FF
+	jr   z, .cn_end
+	ld   (de), a
+	inc  hl
+	inc  de
+	djnz .cn_loop
+.cn_end:
+	xor  a
+	ld   (de), a
+	ret
+
+; fat_next_cluster: DE = current cluster -> DE = next cluster (>=0xFFF8 = end).
+; FAT16: entry at FAT_LBA + cluster/256, byte offset (cluster&255)*2.
+fat_next_cluster:
+	ld   a, d						; cluster/256 = high byte
+	ld   hl, (FAT_LBA+0)
+	push de
+	ld   d, 0
+	ld   e, a
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (FAT_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	pop  de
+	push de							; preserve cluster across sd_read_sector
+	call sd_read_sector				; read the FAT sector into SD_BUF
+	pop  de
+	ld   l, e						; byte offset = (cluster&255)*2
+	ld   h, 0
+	add  hl, hl
+	ld   de, SD_BUF
+	add  hl, de
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)					; DE = next cluster
+	ret
+
+; inc16: HL = address of a 16-bit counter -> increment it.
+inc16:
+	inc  (hl)
+	ret  nz
+	inc  hl
+	inc  (hl)
+	ret
+
+; classify_addr: DE = a "LD (nn),A" target address; bump exactly ONE mapper
+; counter, counting only the DISTINGUISHING bank registers of each mapper.
+; (Low byte of every bank register is 0; classify by the high byte.)
+;   0x50/0x90/0xB0 -> SCC-only    0x80/0xA0 -> Konami-only
+;   0x68/0x78      -> ASCII8-only 0x60/0x70 -> ASCII16/generic
+classify_addr:
+	ld   a, e
+	or   a
+	ret  nz							; low byte != 0 -> not a bank register
+	ld   a, d
+	cp   #50
+	jr   z, .ca_scc
+	cp   #90
+	jr   z, .ca_scc
+	cp   #B0
+	jr   z, .ca_scc
+	cp   #80
+	jr   z, .ca_kon
+	cp   #A0
+	jr   z, .ca_kon
+	cp   #68
+	jr   z, .ca_a8
+	cp   #78
+	jr   z, .ca_a8
+	cp   #60
+	jr   z, .ca_a16
+	cp   #70
+	jr   z, .ca_a16
+	ret
+.ca_scc:
+	ld   hl, MAP_SCC
+	jp   inc16
+.ca_kon:
+	ld   hl, MAP_KON
+	jp   inc16
+.ca_a8:
+	ld   hl, MAP_A8
+	jp   inc16
+.ca_a16:
+	ld   hl, MAP_A16
+	jp   inc16
+
+; scan_sector_mapper: scan SD_BUF (512 bytes) for "32 lo hi" (LD (nn),A).
+scan_sector_mapper:
+	ld   hl, SD_BUF
+	ld   bc, 510
+.ssm:
+	ld   a, (hl)
+	cp   #32
+	jr   nz, .ssm_n
+	push hl
+	push bc
+	inc  hl
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	call classify_addr
+	pop  bc
+	pop  hl
+.ssm_n:
+	inc  hl
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .ssm
+	ret
+
+; scan_rom: read the ROM (FILE_CLUS chain), up to 256 sectors, scanning for
+; mapper bank-writes into MAP_* counters. Restores CUR_CLUS.
+scan_rom:
+	ld   hl, 0
+	ld   (MAP_SCC), hl
+	ld   (MAP_KON), hl
+	ld   (MAP_A8), hl
+	ld   (MAP_A16), hl
+	ld   (SCAN_N), hl
+	ld   hl, (CUR_CLUS)
+	push hl
+	ld   hl, (FILE_CLUS)
+	ld   (SCAN_CLUS), hl
+.sr_clus:
+	ld   hl, (SCAN_CLUS)
+	ld   (CUR_CLUS), hl
+	call set_scan_start
+	ld   a, (SEC_PER_CLUS)
+	ld   (SSEC_LEFT), a
+.sr_sec:
+	call sd_read_sector
+	call scan_sector_mapper
+	ld   hl, (SCAN_N)
+	inc  hl
+	ld   (SCAN_N), hl
+	ld   a, h						; cap at 512 sectors (256 KB scanned)
+	cp   2
+	jr   nc, .sr_done
+	call inc_sd_lba
+	ld   a, (SSEC_LEFT)
+	dec  a
+	ld   (SSEC_LEFT), a
+	jr   nz, .sr_sec
+	ld   de, (SCAN_CLUS)
+	call fat_next_cluster
+	ld   a, d
+	cp   #FF
+	jr   nz, .sr_more
+	ld   a, e
+	cp   #F8
+	jr   nc, .sr_done
+.sr_more:
+	ld   a, d
+	or   e
+	jr   z, .sr_done
+	ld   (SCAN_CLUS), de
+	jr   .sr_clus
+.sr_done:
+	pop  hl
+	ld   (CUR_CLUS), hl
+	ret
+
+; sig_ok: HL = a counter -> CF=1 if it reaches MAP_THRESH (a real signature).
+sig_ok:
+	ld   a, h
+	or   a
+	jr   nz, .sok_yes				; high byte set -> well over threshold
+	ld   a, l
+	cp   MAP_THRESH
+	jr   nc, .sok_yes				; l >= THRESH
+	or   a							; CF = 0
+	ret
+.sok_yes:
+	scf
+	ret
+
+; decide_mapper: priority by DISTINGUISHING signature (ASCII8 -> SCC -> Konami ->
+; ASCII16). No signature -> plain/linear. Fixes ASCII16 being seen as Konami-SCC.
+decide_mapper:
+	ld   hl, (MAP_A8)
+	call sig_ok
+	jr   c, .dm_a8
+	ld   hl, (MAP_SCC)
+	call sig_ok
+	jr   c, .dm_scc
+	ld   hl, (MAP_KON)
+	call sig_ok
+	jr   c, .dm_kon
+	ld   hl, (MAP_A16)
+	call sig_ok
+	jr   c, .dm_a16
+	ld   a, MAP_PLAIN				; no mapper writes -> plain/linear
+	ld   (MAPPER_ID), a
+	ret
+.dm_a8:
+	ld   a, MAP_A8_ID
+	ld   (MAPPER_ID), a
+	ret
+.dm_scc:
+	ld   a, MAP_SCC_ID
+	ld   (MAPPER_ID), a
+	ret
+.dm_kon:
+	ld   a, MAP_KON_ID
+	ld   (MAPPER_ID), a
+	ret
+.dm_a16:
+	ld   a, MAP_A16_ID
+	ld   (MAPPER_ID), a
+	ret
+
+; detect_mapper: decide MAPPER_ID for the selected file. <=32 KB -> plain; else
+; scan the content. Uses the file size in the record (BR_REC+3 dword) for the rule.
+detect_mapper:
+	ld   hl, (BR_REC)
+	ld   de, 5
+	add  hl, de
+	ld   a, (hl)					; size byte 2
+	inc  hl
+	or   (hl)						; | size byte 3
+	jr   nz, .det_scan				; > 64 KB -> scan
+	ld   hl, (BR_REC)
+	ld   de, 4
+	add  hl, de
+	ld   a, (hl)					; size byte 1 (x256)
+	cp   #80						; < 0x8000 (32 KB)?
+	jr   nc, .det_scan				; 32..64 KB -> scan to be sure
+	ld   a, MAP_PLAIN
+	ld   (MAPPER_ID), a
+	ret
+.det_scan:
+	call scan_rom
+	jp   decide_mapper
+
+; megaram_test: set the megaram to Konami-SCC mode (OCM SWIO), write-enable it,
+; write A5/5A to bank 0, read them back into MEG_T0/MEG_T1. No reset (safe).
+; If the readback is A5 5A the megaram load mechanism works.
+megaram_test:
+	di
+	; --- OCM SWIO smart command: set Slot2 = Internal SCC-I (Konami-SCC mode) ---
+	; (Slot2Mode is driven by the virtual DIP-SW, changed via a smart command on
+	;  port 0x41, NOT by writing port 0x42 directly. 0x0F = Ext Slot1 + Int SCC-I
+	;  Slot2 -> io42[5:3]="010" -> Slot2Mode=10 -> megaram map_sel[0]=0 = SCC mode.)
+	ld   a, #D4
+	out  (#40), a					; select smart device ID212
+	ld   a, #0F
+	out  (#41), a					; smart command: Internal SCC-I in Slot2
+	in   a, (#42)					; diagnostic readback (expect bit4 set, bit5 clear)
+	ld   (MEG_P42), a
+	; --- map page 1 to the megaram slot ---
+	ld   a, MEG_SLOT
+	ld   hl, #4000
+	call ENASLT
+	ld   a, (#4000)					; diagnostic: megaram content BEFORE writing
+	ld   (MEG_B0), a
+	; bank 0 -> reg0 (write-enable must be OFF to set the bank register)
+	xor  a
+	ld   (#7FFE), a					; mode_a = 0
+	xor  a
+	ld   (#5000), a					; megaram_reg0 = 0 (segment 0 at 0x4000-0x5FFF)
+	; enable writing
+	ld   a, #10
+	ld   (#7FFE), a					; mode_a bit4 = 1 (write enable)
+	ld   a, #A5
+	ld   (#4000), a
+	ld   a, #5A
+	ld   (#4001), a
+	xor  a
+	ld   (#7FFE), a					; write disable
+	ld   a, (#4000)					; read back
+	ld   (MEG_T0), a
+	ld   a, (#4001)
+	ld   (MEG_T1), a
+	; restore page 1 -> slot 3-1 (this menu)
+	ld   a, #87
+	ld   hl, #4000
+	call ENASLT
+	ei
+	ret
+
+; write_sector_to_megaram: copy SD_BUF (512 B) into the megaram at LOAD_SEG/LOAD_OFF
+; (8K-segment linear). Sets the bank + write-enable at each segment start.
+write_sector_to_megaram:
+	ld   a, MEG_SLOT				; page 1 -> megaram (slot 2)
+	ld   hl, #4000
+	call ENASLT
+	ld   hl, (LOAD_OFF)
+	ld   a, h
+	or   l
+	jr   nz, .wsm_copy				; mid-segment -> just copy
+	xor  a							; new 8K segment: disable write, set bank, enable write
+	ld   (#7FFE), a
+	ld   a, (LOAD_SEG)
+	ld   (#5000), a					; megaram_reg0 = segment
+	ld   a, #10
+	ld   (#7FFE), a
+.wsm_copy:
+	ld   hl, (LOAD_OFF)
+	ld   de, #4000
+	add  hl, de
+	ex   de, hl						; de = 0x4000 + offset
+	ld   hl, SD_BUF
+	ld   bc, 512
+	ldir
+	ld   a, #87						; page 1 -> slot 3-1
+	ld   hl, #4000
+	call ENASLT
+	ld   hl, (LOAD_OFF)				; advance offset, wrap to next segment at 8 KB
+	ld   de, 512
+	add  hl, de
+	ld   (LOAD_OFF), hl
+	ld   a, h
+	cp   #20						; 0x2000 = 8192
+	ret  c
+	ld   hl, 0
+	ld   (LOAD_OFF), hl
+	ld   a, (LOAD_SEG)
+	inc  a
+	ld   (LOAD_SEG), a
+	ret
+
+; load_rom: load the whole ROM (FILE_CLUS chain) into the megaram, 8K linear.
+load_rom:
+	ld   a, #D4						; SWIO: Slot2 = Int SCC-I (megaram -> slot 2, SCC mode)
+	out  (#40), a
+	ld   a, #0F
+	out  (#41), a
+	ld   hl, #010D					; progress bar row (its own line; max 64 blocks)
+	call POSIT
+	xor  a
+	ld   (LOAD_SEG), a
+	ld   hl, 0
+	ld   (LOAD_OFF), hl
+	ld   hl, (CUR_CLUS)
+	push hl
+	ld   hl, (FILE_CLUS)
+	ld   (LOAD_CLUS), hl
+.lro_clus:
+	ld   hl, (LOAD_CLUS)
+	ld   (CUR_CLUS), hl
+	call set_scan_start
+	ld   a, (SEC_PER_CLUS)
+	ld   (SSEC_LEFT), a
+.lro_sec:
+	call sd_read_sector
+	call write_sector_to_megaram
+	ld   hl, (LOAD_OFF)				; LOAD_OFF wrapped to 0 -> one 8K segment done
+	ld   a, h
+	or   l
+	jr   nz, .lro_nobar
+	ld   a, (LOAD_SEG)				; cap the bar at 64 blocks so it never wraps the
+	cp   65							; line (a 2 MB ROM is 256 segments otherwise)
+	jr   nc, .lro_nobar
+	ld   a, #DB						; solid block -> progress bar tick
+	call CHPUT
+.lro_nobar:
+	call inc_sd_lba
+	ld   a, (SSEC_LEFT)
+	dec  a
+	ld   (SSEC_LEFT), a
+	jr   nz, .lro_sec
+	ld   de, (LOAD_CLUS)
+	call fat_next_cluster
+	ld   a, d
+	cp   #FF
+	jr   nz, .lro_more
+	ld   a, e
+	cp   #F8
+	jr   nc, .lro_done
+.lro_more:
+	ld   a, d
+	or   e
+	jr   z, .lro_done
+	ld   (LOAD_CLUS), de
+	jr   .lro_clus
+.lro_done:
+	pop  hl
+	ld   (CUR_CLUS), hl
+	ret
+
+; read_megaram_seg: A = segment; read its first 8 bytes from the megaram into MEG_RB.
+read_megaram_seg:
+	push af
+	ld   a, MEG_SLOT
+	ld   hl, #4000
+	call ENASLT
+	xor  a
+	ld   (#7FFE), a					; write-disable so the bank register accepts the write
+	pop  af
+	ld   (#5000), a					; megaram_reg0 = segment
+	ld   hl, #4000
+	ld   de, MEG_RB
+	ld   bc, 8
+	ldir
+	ld   a, #87
+	ld   hl, #4000
+	call ENASLT
+	ret
+
+; override_mapper_by_name: if the selected file's name contains a GoodMSX mapper
+; tag ([ASCII16]/[ASCII8]/[KonamiSCC]/[SCC]/[Konami]) set MAPPER_ID from it. The
+; name tag is far more reliable than scanning code for bank-write opcodes (many
+; games bank-switch via LD (HL),A which the opcode scan misses, e.g. Ikari).
+; BR_REC must point at the selected record (name ASCIIZ at +NAME_OFF).
+override_mapper_by_name:
+	ld   hl, (BR_REC)
+	ld   de, NAME_OFF
+	add  hl, de
+	ld   (TAGPTR), hl				; haystack = filename
+	ld   hl, tag_a16
+	call name_contains
+	jr   nc, .omn_a8
+	ld   a, MAP_A16_ID
+	jr   .omn_set
+.omn_a8:
+	ld   hl, tag_a8
+	call name_contains
+	jr   nc, .omn_scc
+	ld   a, MAP_A8_ID
+	jr   .omn_set
+.omn_scc:
+	ld   hl, tag_scc
+	call name_contains
+	jr   nc, .omn_kon
+	ld   a, MAP_SCC_ID
+	jr   .omn_set
+.omn_kon:
+	ld   hl, tag_kon
+	call name_contains
+	ret  nc							; no tag -> keep the code-scan result
+	ld   a, MAP_KON_ID
+.omn_set:
+	ld   (MAPPER_ID), a
+	ret
+
+; name_contains: case-sensitive substring search. HL = needle (ASCIIZ);
+; (TAGPTR) = haystack (ASCIIZ). Returns CF=1 if needle occurs in haystack.
+name_contains:
+	ld   (NEEDLE), hl
+	ld   hl, (TAGPTR)
+.ncs_try:
+	ld   a, (hl)
+	or   a
+	jr   z, .ncs_nf					; end of haystack -> not found
+	push hl							; remember this start position
+	ld   de, (NEEDLE)
+.ncs_cmp:
+	ld   a, (de)
+	or   a
+	jr   z, .ncs_found				; end of needle -> matched
+	ld   c, a						; needle char (tags are stored UPPER-case)
+	ld   a, (hl)					; haystack char -> upper-case for case-insensitive cmp
+	cp   'a'
+	jr   c, .ncs_noup
+	cp   'z' + 1
+	jr   nc, .ncs_noup
+	sub  #20						; 'a'..'z' -> 'A'..'Z'
+.ncs_noup:
+	cp   c
+	jr   nz, .ncs_next
+	inc  hl
+	inc  de
+	jr   .ncs_cmp
+.ncs_next:
+	pop  hl
+	inc  hl
+	jr   .ncs_try
+.ncs_found:
+	pop  hl
+	scf
+	ret
+.ncs_nf:
+	or   a							; CF = 0
+	ret
+
+tag_a16:
+	.db "ASCII16",0
+tag_a8:
+	.db "ASCII8",0
+tag_scc:
+	.db "SCC",0
+tag_kon:
+	.db "KONAMI",0
+
+; launch_rom: ROM already loaded into the megaram (SCC mode). Boot it DIRECTLY
+; (no BIOS reset — the reset re-runs the menu cartridge in slot 3-1 instead of
+; the game): leave the megaram clean (while still in SCC mode), set the game's
+; real mapper mode via the OCM SWIO smart command, then run a tiny stub in
+; page-3 RAM that switches pages 1+2 to slot 2 and jumps to the cart INIT.
+launch_rom:
+	di
+	; 1) clean megaram to cartridge state -- MUST be in SCC mode (writes to
+	;    0x7FFE/0x5000 are SCC control regs; in ASCII mode they are bank regs)
+	ld   a, MEG_SLOT				; page 1 -> megaram (slot 2)
+	ld   hl, #4000
+	call ENASLT
+	xor  a
+	ld   (#7FFE), a					; mode_a = 0 : write-protect (normal cartridge)
+	xor  a
+	ld   (#5000), a					; bank reg0 = 0 (first 8 KB at 0x4000)
+	; 2) set the game's real mapper mode via the OCM SWIO smart command
+	ld   a, (MAPPER_ID)
+	cp   MAP_A8_ID
+	jr   z, .lr_a8
+	cp   MAP_A16_ID
+	jr   z, .lr_a16
+	ld   a, #0F						; SCC / Konami / plain
+	jr   .lr_setmap
+.lr_a8:
+	ld   a, #11						; Int ASCII8K
+	jr   .lr_setmap
+.lr_a16:
+	ld   a, #13						; Int ASCII16K
+.lr_setmap:
+	ld   b, a
+	ld   a, #D4						; SWIO: select ID212
+	out  (#40), a
+	ld   a, b
+	out  (#41), a					; set Slot2Mode -> map_sel (mapper mode)
+	; 2b) reset the VDP to a clean state. INIT32 fixes R0-R7 + the BIOS work-area
+	;     mirror; then we clear the MSX2/V9958 registers R8-R23 + R25-R27 that the
+	;     menu's TEXT2 80-col mode left dirty (display adjust R18, line-int R19,
+	;     vertical scroll R23, ...). Without this, MSX2 games that only set some
+	;     VDP regs inherit garbage -> distortion / top-of-screen rubbish (Metal
+	;     Gear 2, Space Manbow). Done here (page 2, IRQs off); the stub afterwards
+	;     only flips slots, so the VDP stays clean until the game's own INIT.
+	call #006F						; INIT32 (SCREEN 1): R0-R7 + work-area mirror
+	di								; INIT32 may have re-enabled IRQs
+	ld   hl, vdp_clean_tbl
+	ld   b, 19						; R8-R23 (16 regs) + R25-R27 (3 regs)
+.lr_vdp:
+	ld   a, (hl)
+	inc  hl
+	out  (#99), a					; data byte
+	ld   a, (hl)
+	inc  hl
+	out  (#99), a					; register select (0x80 | reg)
+	djnz .lr_vdp
+	; 3) copy the boot stub to page-3 RAM (#E000) and jump to it
+	ld   hl, boot_stub
+	ld   de, #E000
+	ld   bc, boot_stub_end - boot_stub
+	ldir
+	jp   #E000
+
+; clean MSX2/V9958 VDP register values: (data, 0x80|reg) pairs for R8-R23,R25-27
+vdp_clean_tbl:
+	.db #08,#88						; R8  = 0x08 (VR=64K, color0 opaque)
+	.db #00,#89						; R9  = 192 lines, no interlace
+	.db #00,#8A, #00,#8B, #00,#8C, #00,#8D, #00,#8E, #00,#8F
+	.db #00,#90, #00,#91
+	.db #00,#92						; R18 = display adjust 0 (centered)
+	.db #00,#93						; R19 = line-interrupt line 0
+	.db #00,#94, #00,#95, #00,#96
+	.db #00,#97						; R23 = vertical scroll 0
+	.db #00,#99						; R25 = 0 (V9958 modes/scroll)
+	.db #00,#9A						; R26 = 0 (V9958 horiz scroll H)
+	.db #00,#9B						; R27 = 0 (V9958 horiz scroll L)
+
+; boot_stub: runs from #E000 (page-3 RAM). Position-independent (absolute refs
+; only). Switches pages 1+2 to slot 2 (megaram = the loaded ROM), then jumps to
+; the cartridge INIT vector at 0x4002 the way the BIOS boots a cartridge.
+boot_stub:
+	ld   sp, #F380					; standard MSX boot stack (page-3 RAM)
+	ld   a, #02						; page 1 (0x4000) -> slot 2
+	ld   hl, #4000
+	call ENASLT
+	ld   a, #02						; page 2 (0x8000) -> slot 2
+	ld   hl, #8000
+	call ENASLT
+	ld   hl, (#4002)				; cartridge INIT vector
+	ei
+	jp   (hl)
+boot_stub_end:
+
+; -----------------------------------------------------------------------------
+; browse: scrolling browser over ENT_ARRAY. Cursor up/down move the selection,
+; RETURN shows the selected entry, ESC returns to the main menu. Input goes via
+; the BIOS (ei/halt/CHSNS/CHGET) so the cursor keys are delivered (same method as
+; the config menu; the direct PPI matrix scan missed row 8).
+; -----------------------------------------------------------------------------
+browse:
+.br_redraw:
+	call draw_browser
+.br_key:
+	call browse_getkey				; A = key code
+	cp   #1E						; cursor up
+	jp   z, .br_up
+	cp   #1F						; cursor down
+	jp   z, .br_down
+	cp   #1C						; cursor right (next column)
+	jp   z, .br_right
+	cp   #1D						; cursor left (prev column)
+	jp   z, .br_left
+	cp   #0D						; RETURN
+	jp   z, .br_enter
+	cp   #08						; BACKSPACE -> parent folder
+	jp   z, .br_back
+	cp   #09						; TAB -> next partition (multi-partition cards)
+	jp   z, .br_nextpart
+	cp   #53						; 'S' -> Settings (Ajustes)
+	jp   z, config_menu_entry
+	cp   #73						; 's'
+	jp   z, config_menu_entry
+	cp   #57						; 'W' -> WiFi config (ESP ROM menu)
+	jp   z, main_action_wifi
+	cp   #77						; 'w'
+	jp   z, main_action_wifi
+	cp   #48						; 'H' -> help overlay
+	jp   z, .br_help
+	cp   #68						; 'h'
+	jp   z, .br_help
+	cp   #1B						; ESC -> arrancar sistema (boot the OS)
+	jp   z, boot_system
+	jr   .br_key
+.br_help:
+	call help_screen
+	jp   .br_redraw
+.br_nextpart:
+	ld   a, (PART_CNT)
+	cp   2
+	jp   c, .br_key					; only one partition -> ignore TAB
+	ld   a, (CUR_PART)
+	inc  a							; next index, wrap to 0 at PART_CNT
+	ld   hl, PART_CNT
+	cp   (hl)
+	jr   c, .bnp_go
+	xor  a
+.bnp_go:
+	call select_partition			; switch partition (re-scans its root)
+	jp   c, .br_key					; SD error -> stay
+	call refresh_list				; repaint only the list+footer (bars don't flash)
+	jp   .br_key
+.br_up:
+	ld   a, (BR_SEL)
+	ld   (BR_OLD), a				; remember old selection
+	or   a
+	jr   nz, .bu_dec
+	; at the top -> wrap to the LAST entry (fast jump to the end)
+	ld   a, (ENT_COUNT)
+	or   a
+	jp   z, .br_key					; empty list
+	dec  a
+	ld   (BR_SEL), a
+	jp   .br_move
+.bu_dec:
+	dec  a
+	ld   (BR_SEL), a
+	jp   .br_move
+.br_down:
+	ld   a, (ENT_COUNT)
+	ld   b, a
+	ld   a, (BR_SEL)
+	ld   (BR_OLD), a				; remember old selection
+	inc  a
+	cp   b
+	jr   c, .bd_set					; sel+1 < count -> normal move down
+	; at the bottom -> wrap to the FIRST entry
+	xor  a
+	ld   (BR_SEL), a
+	jp   .br_move
+.bd_set:
+	ld   (BR_SEL), a
+	jp   .br_move
+.br_right:
+	ld   a, (BR_SEL)
+	add  a, VISIBLE				; sel + 22 (jump to next column / down a page-half)
+	ld   c, a
+	ld   a, (ENT_COUNT)
+	cp   c
+	jp   c, .br_key					; candidate beyond list
+	jp   z, .br_key
+	ld   a, (BR_SEL)
+	ld   (BR_OLD), a
+	ld   a, c
+	ld   (BR_SEL), a
+	jp   .br_move
+.br_left:
+	ld   a, (BR_SEL)
+	cp   VISIBLE
+	jp   c, .br_key					; already in first column
+	ld   (BR_OLD), a
+	sub  VISIBLE
+	ld   (BR_SEL), a
+	jp   .br_move
+.br_move:
+	; Repaint only the old and new rows so the '>' marker moves without a
+	; full-screen redraw (no flicker). Full redraw only when the page scrolls.
+	ld   a, (BR_TOP)
+	ld   (BR_OLDTOP), a
+	call ensure_visible
+	ld   a, (BR_TOP)
+	ld   hl, BR_OLDTOP
+	cp   (hl)
+	jp   nz, .br_scroll				; page scrolled -> repaint rows in place (no clear)
+	ld   a, (BR_OLD)
+	call draw_entry					; repaint old row (clears its '>')
+	ld   a, (BR_SEL)
+	call draw_entry					; repaint new row (draws '>')
+	jp   .br_key
+.br_scroll:
+	call draw_rows					; redraw the visible rows WITHOUT clearing screen
+	jp   .br_key
+.br_enter:
+	ld   a, (ENT_COUNT)
+	or   a
+	jp   z, .br_key					; empty list
+	ld   a, (BR_SEL)
+	call ent_addr					; hl = record
+	ld   a, (hl)					; type (0=dir, 1=rom)
+	or   a
+	jr   nz, .br_selrom
+	; --- directory: push current cluster, descend ---
+	ld   a, (DIR_SP)
+	cp   8
+	jp   nc, .br_key				; stack full -> ignore
+	ld   e, a						; DIR_STACK[DIR_SP] = CUR_CLUS
+	ld   d, 0
+	ld   hl, DIR_STACK
+	add  hl, de
+	add  hl, de
+	ld   de, (CUR_CLUS)
+	ld   (hl), e
+	inc  hl
+	ld   (hl), d
+	ld   a, (DIR_SP)
+	inc  a
+	ld   (DIR_SP), a
+	ld   a, (BR_SEL)				; CUR_CLUS = selected dir's first cluster
+	call ent_addr
+	inc  hl
+	ld   e, (hl)					; record+1 cluster low
+	inc  hl
+	ld   d, (hl)					; record+2 cluster high
+	ld   (CUR_CLUS), de
+	call scan_current
+	xor  a
+	ld   (BR_SEL), a
+	ld   (BR_TOP), a
+	jp   .br_redraw					; full redraw of the new directory
+.br_selrom:
+	; --- selected file: detect mapper, show name + size + mapper (load = M2.2) ---
+	ld   a, (BR_SEL)
+	call ent_addr
+	ld   (BR_REC), hl				; record (size at +3, name at +7)
+	inc  hl
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)					; DE = first cluster
+	ld   (FILE_CLUS), de
+	call detect_mapper				; scans the ROM -> MAPPER_ID (fallback)
+	call override_mapper_by_name	; GoodMSX name tag wins over the code scan
+	; read the file's first sector (header) without disturbing CUR_CLUS
+	ld   hl, (CUR_CLUS)
+	push hl
+	ld   hl, (FILE_CLUS)
+	ld   (CUR_CLUS), hl
+	call set_scan_start
+	pop  hl
+	ld   (CUR_CLUS), hl
+	call sd_read_sector
+	call cls_browser
+	ld   hl, #0101
+	call POSIT
+	ld   hl, romInfoStr
+	call print_string
+	ld   hl, #0103
+	call POSIT
+	ld   hl, (BR_REC)
+	ld   de, NAME_OFF
+	add  hl, de
+	call print_string				; ROM name
+	ld   hl, #0105
+	call POSIT
+	ld   hl, romClusStr				; "Tamano: "
+	call print_string
+	call print_rom_kb
+	ld   a, 'K'
+	call CHPUT
+	ld   hl, romSpcStr				; "  Mapper: "
+	call print_string
+	call print_mapper_name
+	ld   hl, #0107
+	call POSIT
+	ld   hl, romFirstStr
+	call print_string
+	ld   hl, SD_BUF
+	ld   b, 8
+.bsr_dump:
+	ld   a, (hl)
+	push hl
+	push bc
+	call print_hex_a
+	ld   a, #20
+	call CHPUT
+	pop  bc
+	pop  hl
+	inc  hl
+	djnz .bsr_dump
+	ld   hl, #0109
+	call POSIT
+	ld   hl, launchStr				; "RET=cargar a megaram   ESC=volver"
+	call print_string
+.bsr_k:
+	call browse_getkey
+	cp   #0D
+	jr   z, .bsr_load
+	cp   #1B
+	jp   z, .br_redraw
+	jr   .bsr_k
+.bsr_load:
+	ld   hl, #010B
+	call POSIT
+	ld   hl, loadingStr				; "Cargando ROM en megaram..."
+	call print_string
+	call load_rom					; A3b: full load (no reset yet)
+	ld   hl, #010C
+	call POSIT
+	ld   hl, segStr					; "Verif seg0(41 42)="
+	call print_string
+	xor  a
+	call read_megaram_seg
+	ld   a, (MEG_RB)
+	call print_hex_a
+	ld   a, (MEG_RB+1)
+	call print_hex_a
+	ld   hl, seg1Str				; "  seg1="
+	call print_string
+	ld   a, 1
+	call read_megaram_seg
+	ld   a, (MEG_RB)
+	call print_hex_a
+	ld   a, (MEG_RB+1)
+	call print_hex_a
+	ld   hl, #010E
+	call POSIT
+	ld   hl, launch2Str				; "RETURN=LANZAR JUEGO   ESC=volver"
+	call print_string
+.bsr_lk:
+	call browse_getkey
+	cp   #0D
+	jp   z, launch_rom				; A4: set mapper + reset to boot the game
+	cp   #1B
+	jp   z, .br_redraw
+	jr   .bsr_lk
+.br_back:
+	ld   a, (DIR_SP)
+	or   a
+	jp   z, .br_key					; already at root
+	dec  a
+	ld   (DIR_SP), a
+	ld   e, a						; CUR_CLUS = DIR_STACK[DIR_SP]
+	ld   d, 0
+	ld   hl, DIR_STACK
+	add  hl, de
+	add  hl, de
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	ld   (CUR_CLUS), de
+	call scan_current
+	xor  a
+	ld   (BR_SEL), a
+	ld   (BR_TOP), a
+	jp   .br_redraw
+
+; print_rom_kb: print the selected ROM's size in KB (decimal) from BR_REC.
+print_rom_kb:
+	ld   hl, (BR_REC)
+	ld   de, 4
+	add  hl, de
+	ld   a, (hl)					; size byte 1
+	srl  a
+	srl  a
+	ld   c, a
+	ld   hl, (BR_REC)
+	ld   de, 5
+	add  hl, de
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	ex   de, hl						; hl = size >> 16
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl						; * 64
+	ld   e, c
+	ld   d, 0
+	add  hl, de						; hl = KB
+	jp   print_dec16
+
+; print_mapper_name: print the detected mapper's name (MAPPER_ID).
+print_mapper_name:
+	ld   a, (MAPPER_ID)
+	cp   MAP_KON_ID
+	jr   z, .pmn_kon
+	cp   MAP_SCC_ID
+	jr   z, .pmn_scc
+	cp   MAP_A8_ID
+	jr   z, .pmn_a8
+	cp   MAP_A16_ID
+	jr   z, .pmn_a16
+	cp   MAP_PLAIN
+	jr   z, .pmn_plain
+	ld   hl, mapUnkStr
+	jp   print_string
+.pmn_plain:
+	ld   hl, mapPlainStr
+	jp   print_string
+.pmn_kon:
+	ld   hl, mapKonStr
+	jp   print_string
+.pmn_scc:
+	ld   hl, mapSccStr
+	jp   print_string
+.pmn_a8:
+	ld   hl, mapA8Str
+	jp   print_string
+.pmn_a16:
+	ld   hl, mapA16Str
+	jp   print_string
+
+; ensure_visible: adjust BR_TOP so BR_SEL is within the visible window.
+ensure_visible:
+	ld   a, (BR_SEL)
+	ld   hl, BR_TOP
+	cp   (hl)
+	jr   nc, .ev1
+	ld   (BR_TOP), a				; sel < top -> top = sel
+	ret
+.ev1:
+	ld   a, (BR_TOP)
+	add  a, VISIBLE
+	ld   b, a						; top + VISIBLE
+	ld   a, (BR_SEL)
+	cp   b
+	ret  c							; sel < top+VISIBLE -> already visible
+	sub  VISIBLE - 1
+	ld   (BR_TOP), a				; top = sel - (VISIBLE-1)
+	ret
+
+; browse_getkey: wait for input from the keyboard (cursors via CHGET) OR the
+; joystick (GTSTCK/GTTRIG, edge-detected) and return it as a key code.
+browse_getkey:
+	ei
+.bgk_loop:
+	halt
+	call marquee_tick				; scroll the selected long name while idle (browser only)
+	call CHSNS						; keyboard pending?
+	jr   z, .bgk_joy
+	call CHGET
+	or   a
+	jr   z, .bgk_loop
+	ret
+.bgk_joy:
+	call poll_joy					; A = joystick code (0 = nothing new)
+	or   a
+	jr   z, .bgk_loop
+	ret
+
+; poll_joy: read joystick 1, edge-detect against JOY_PREV. Returns a key code on
+; a fresh press (0 otherwise) so holding the stick yields one event per push.
+poll_joy:
+	call read_joy_code				; A = code for the current joystick state
+	ld   hl, JOY_PREV
+	cp   (hl)
+	jr   z, .pj_held				; unchanged -> held (maybe auto-repeat)
+	ld   (hl), a					; state changed -> store
+	ld   b, a
+	ld   a, JOY_RPT_DELAY			; (re)arm the auto-repeat initial delay
+	ld   (JOY_RPT), a
+	ld   a, b
+	or   a
+	ret  nz							; fresh non-neutral press -> emit now
+	xor  a
+	ret
+.pj_held:
+	or   a
+	jr   z, .pj_zero				; neutral held -> nothing
+	cp   #1C						; only auto-repeat the 4 directions (1C..1F),
+	jr   c, .pj_zero				; not the A/B buttons (RETURN 0D / BS 08)
+	ld   b, a						; save the direction code
+	ld   a, (JOY_RPT)
+	dec  a
+	ld   (JOY_RPT), a
+	jr   nz, .pj_zero				; delay not elapsed -> nothing this frame
+	ld   a, JOY_RPT_RATE			; reload interval for the next repeat
+	ld   (JOY_RPT), a
+	ld   a, b						; emit the held direction (fast repeat)
+	ret
+.pj_zero:
+	xor  a
+	ret
+
+; read_joy_code: map joystick 1 direction/buttons to menu key codes.
+;   up=VT_UP down=VT_DOWN left=VT_LEFT right=VT_RIGHT  A=RETURN  B=BACKSPACE
+read_joy_code:
+	ld   a, 1
+	call GTSTCK						; A = direction 0..8 (joystick 1)
+	cp   1
+	jr   z, .rjc_up
+	cp   5
+	jr   z, .rjc_down
+	cp   3
+	jr   z, .rjc_right
+	cp   7
+	jr   z, .rjc_left
+	ld   a, 1						; trigger A (joystick 1) -> select
+	call GTTRIG
+	or   a
+	jr   nz, .rjc_a
+	ld   a, 3						; trigger B (joystick 1) -> back
+	call GTTRIG
+	or   a
+	jr   nz, .rjc_b
+	xor  a
+	ret
+.rjc_up:
+	ld   a, #1E
+	ret
+.rjc_down:
+	ld   a, #1F
+	ret
+.rjc_right:
+	ld   a, #1C
+	ret
+.rjc_left:
+	ld   a, #1D
+	ret
+.rjc_a:
+	ld   a, #0D
+	ret
+.rjc_b:
+	ld   a, #08
+	ret
+
+; draw_hline: A = row (1-based). Draw a 78-char separator line ('=').
+draw_hline:
+	ld   h, 1
+	ld   l, a
+	call POSIT
+	ld   b, 78
+.dhl_loop:
+	ld   a, '='						; separator line
+	push bc
+	call CHPUT
+	pop  bc
+	djnz .dhl_loop
+	ret
+
+; read_clock: read the RTC (RP-5C01 at ports B4/B5, block 0) into CLK_STR = "HH:MM:SS".
+read_clock:
+	di
+	ld   a, #0D
+	out  (#B4), a					; point to mode register
+	in   a, (#B5)
+	and  #0C						; keep timer/alarm enables, select block 0
+	out  (#B5), a
+	ld   a, 5
+	out  (#B4), a
+	in   a, (#B5)
+	and  #03
+	add  a, '0'
+	ld   (CLK_STR+0), a				; hours tens
+	ld   a, 4
+	out  (#B4), a
+	in   a, (#B5)
+	and  #0F
+	add  a, '0'
+	ld   (CLK_STR+1), a				; hours units
+	ld   a, 3
+	out  (#B4), a
+	in   a, (#B5)
+	and  #07
+	add  a, '0'
+	ld   (CLK_STR+3), a				; minutes tens
+	ld   a, 2
+	out  (#B4), a
+	in   a, (#B5)
+	and  #0F
+	add  a, '0'
+	ld   (CLK_STR+4), a				; minutes units
+	ld   a, 1
+	out  (#B4), a
+	in   a, (#B5)
+	and  #07
+	add  a, '0'
+	ld   (CLK_STR+6), a				; seconds tens
+	xor  a
+	out  (#B4), a
+	in   a, (#B5)
+	and  #0F
+	add  a, '0'
+	ld   (CLK_STR+7), a				; seconds units
+	ld   a, ':'
+	ld   (CLK_STR+2), a
+	ld   (CLK_STR+5), a
+	xor  a
+	ld   (CLK_STR+8), a				; terminator
+	ei
+	ret
+
+; draw_clock: print the clock at the top-right of the header (row 1, X=72).
+draw_clock:
+	call read_clock
+	ld   hl, #4801					; X=72, Y=1
+	call POSIT
+	ld   hl, CLK_STR
+	call print_string
+	ret
+
+; clock_tick: called from the input wait loop; refresh the clock once per second.
+clock_tick:
+	ld   a, (BROWSING)				; only while the browser is on screen
+	or   a
+	ret  z
+	di
+	ld   a, #0D
+	out  (#B4), a
+	in   a, (#B5)
+	and  #0C
+	out  (#B5), a
+	xor  a
+	out  (#B4), a
+	in   a, (#B5)
+	and  #0F						; seconds units
+	ei
+	ld   hl, CLK_LAST
+	cp   (hl)
+	ret  z							; same second -> no redraw
+	ld   (hl), a
+	jp   draw_clock
+
+; draw_footer: bottom shortcut bar (row 23) with the partition indicator.
+draw_footer:
+	ld   hl, #0117					; X=1, Y=23
+	call POSIT
+	ld   a, (PART_CNT)
+	cp   2
+	jr   c, .df_keys
+	ld   a, 'P'
+	call CHPUT
+	ld   a, (CUR_PART)
+	inc  a
+	add  a, '0'
+	call CHPUT
+	ld   a, '/'
+	call CHPUT
+	ld   a, (PART_CNT)
+	add  a, '0'
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
+	call CHPUT
+.df_keys:
+	ld   hl, footerStr
+	call print_string
+	ret
+
+; help_screen: overlay listing the keys and how to move around. Any key returns.
+help_screen:
+	xor  a
+	ld   (BROWSING), a				; freeze marquee/clock while help is shown
+	call cls_browser
+	ld   hl, #0101
+	call POSIT
+	ld   hl, helpTitleStr
+	call print_string
+	ld   a, 2
+	call draw_hline
+	ld   hl, #0204
+	call POSIT
+	ld   hl, help1Str
+	call print_string
+	ld   hl, #0206
+	call POSIT
+	ld   hl, help2Str
+	call print_string
+	ld   hl, #0207
+	call POSIT
+	ld   hl, help3Str
+	call print_string
+	ld   hl, #0208
+	call POSIT
+	ld   hl, help4Str
+	call print_string
+	ld   hl, #020A
+	call POSIT
+	ld   hl, help5Str
+	call print_string
+	ld   hl, #020B
+	call POSIT
+	ld   hl, help6Str
+	call print_string
+	ld   hl, #020C
+	call POSIT
+	ld   hl, help7Str
+	call print_string
+	ld   hl, #020D
+	call POSIT
+	ld   hl, help8Str
+	call print_string
+	ld   hl, #0217
+	call POSIT
+	ld   hl, helpEndStr
+	call print_string
+	call browse_getkey
+	ld   a, 1
+	ld   (BROWSING), a
+	ret
+
+; refresh_list: repaint ONLY the list area (rows 3..21) + the footer partition
+; indicator, leaving the header/clock and separator lines untouched (no flash).
+refresh_list:
+	ld   a, 3
+.rl_clear:
+	push af
+	ld   h, 1
+	ld   l, a
+	call POSIT
+	ld   a, #1B
+	call CHPUT
+	ld   a, 'K'						; ESC K = clear to end of line
+	call CHPUT
+	pop  af
+	inc  a
+	cp   22
+	jr   c, .rl_clear
+	call draw_rows
+	call draw_footer
+	ret
+
+; draw_browser: full repaint (clear + header), then fall into draw_rows.
+draw_browser:
+	call cls_browser
+	; --- header row 1: title + build (left), live clock (right) ---
+	ld   hl, #0101					; X=1, Y=1
+	call POSIT
+	ld   hl, hdrTitleStr			; "MSX Nano  v1.5"
+	call print_string
+	; --- separator lines (rows 2 and 22) + footer (row 23) ---
+	ld   a, 2
+	call draw_hline
+	ld   a, 22
+	call draw_hline
+	call draw_footer
+	; --- file list (rows 3..21) ---
+	call draw_rows
+	ret
+; draw_rows: repaint the visible page in place (no clear, no header) so a scroll
+; does not flash. Each row self-clears to end of line (draw_entry emits ESC K).
+draw_rows:
+	ld   a, (BR_TOP)
+	ld   (BR_TMP2), a
+	ld   b, VISIBLE
+.dbw_loop:
+	ld   a, (ENT_COUNT)
+	ld   c, a
+	ld   a, (BR_TMP2)
+	cp   c
+	jr   nc, .dbw_done				; idx >= count -> done
+	push bc
+	ld   a, (BR_TMP2)
+	call draw_entry
+	pop  bc
+	ld   a, (BR_TMP2)
+	inc  a
+	ld   (BR_TMP2), a
+	djnz .dbw_loop
+.dbw_done:
+	ret
+
+; draw_entry: A = entry index. Print marker + [DIR]/file tag + name at its row.
+draw_entry:
+	ld   (BR_TMP), a
+	ld   c, a						; idx
+	ld   a, (BR_TOP)
+	neg
+	add  a, c						; rel = idx - BR_TOP (0..21)
+	add  a, 3						; Y = 3 + rel (list rows 3..21)
+	ld   l, a
+	ld   h, 1						; X = 1
+	call POSIT
+	ld   a, (BR_TMP)				; selection marker
+	ld   hl, BR_SEL
+	cp   (hl)
+	ld   a, ' '
+	jr   nz, .de0
+	ld   a, '>'
+.de0:
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
+	ld   a, (BR_TMP)
+	call ent_addr
+	ld   (BR_REC), hl
+	ld   a, (hl)					; type
+	or   a
+	ld   hl, tagDirStr
+	jr   z, .de1
+	ld   hl, tagRomStr
+.de1:
+	call print_string
+	ld   hl, (BR_REC)
+	ld   de, NAME_OFF
+	add  hl, de
+	ld   b, NAME_WIN
+	call print_name_win				; the name (record+7), padded to NAME_WIN
+	ld   a, #1B						; ESC
+	call CHPUT
+	ld   a, 'K'						; VT-52 "erase to end of line": self-clear leftovers
+	call CHPUT
+	; --- file size in KB, right side (ROMs only) ---
+	ld   hl, (BR_REC)
+	ld   a, (hl)					; type
+	or   a
+	ret  z							; directory -> no size
+	ld   a, (BR_TMP)				; reposition cursor to the size column
+	ld   c, a
+	ld   a, (BR_TOP)
+	neg
+	add  a, c
+	add  a, 3
+	ld   l, a
+	ld   h, 69						; X = 69 (size column, moved right)
+	call POSIT
+	; KB = (size>>16)*64 + (size_byte1 >> 2)
+	ld   hl, (BR_REC)
+	ld   de, 4
+	add  hl, de
+	ld   a, (hl)					; size byte 1
+	srl  a
+	srl  a
+	ld   c, a
+	ld   hl, (BR_REC)
+	ld   de, 5
+	add  hl, de
+	ld   e, (hl)					; size byte 2
+	inc  hl
+	ld   d, (hl)					; size byte 3
+	ex   de, hl						; hl = size >> 16
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl						; * 64
+	ld   e, c
+	ld   d, 0
+	add  hl, de						; hl = size in KB
+	call print_dec16
+	ld   a, 'K'
+	call CHPUT
+	ret
+
+; print_dec16: print HL as unsigned decimal (no leading zeros).
+print_dec16:
+	ld   b, 0						; b = "a non-zero digit was printed" flag
+	ld   de, 10000
+	call .pd_dig
+	ld   de, 1000
+	call .pd_dig
+	ld   de, 100
+	call .pd_dig
+	ld   de, 10
+	call .pd_dig
+	ld   a, l						; units digit (always shown)
+	add  a, '0'
+	jp   CHPUT
+.pd_dig:
+	xor  a
+.pd_loop:
+	or   a							; clear carry
+	sbc  hl, de
+	jr   c, .pd_done
+	inc  a
+	jr   .pd_loop
+.pd_done:
+	add  hl, de						; restore remainder
+	or   a							; digit == 0 ?
+	jr   nz, .pd_show
+	ld   a, b
+	or   a
+	ret  z							; leading zero -> suppress
+	xor  a							; print a '0'
+.pd_show:
+	ld   b, 1
+	add  a, '0'
+	jp   CHPUT
+
+; print_name_win: print exactly B chars from (HL) — the name, then spaces to pad.
+; Stops copying at NUL and pads the rest with blanks so the window is fully drawn.
+print_name_win:
+	ld   a, (hl)
+	or   a
+	jr   z, .pnw_pad
+	push hl
+	push bc
+	call CHPUT
+	pop  bc
+	pop  hl
+	inc  hl
+	djnz print_name_win
+	ret
+.pnw_pad:
+	ld   a, ' '
+	push bc
+	call CHPUT
+	pop  bc
+	djnz .pnw_pad
+	ret
+
+; strlen_name: HL = string -> A = length (B clobbered, HL advanced).
+strlen_name:
+	ld   b, 0
+.snl:
+	ld   a, (hl)
+	or   a
+	jr   z, .snd
+	inc  hl
+	inc  b
+	jr   .snl
+.snd:
+	ld   a, b
+	ret
+
+; marquee_tick: while in the browser, if the selected entry's name is longer than
+; the window, scroll it horizontally (one step every few frames).
+marquee_tick:
+	ld   a, (BROWSING)
+	or   a
+	ret  z
+	ld   a, (ENT_COUNT)
+	or   a
+	ret  z
+	ld   a, (BR_SEL)
+	call ent_addr
+	ld   de, NAME_OFF
+	add  hl, de						; hl -> name
+	call strlen_name				; a = len
+	cp   NAME_WIN + 1
+	ret  c							; len <= window -> fits, no scroll
+	ld   c, a						; c = name length
+	ld   a, (BR_SEL)				; selection changed since last tick?
+	ld   b, a
+	ld   a, (MQ_SEL)
+	cp   b
+	jr   z, .mt_same
+	ld   a, b
+	ld   (MQ_SEL), a
+	xor  a
+	ld   (MQ_OFF), a
+	ld   (MQ_TICK), a
+.mt_same:
+	ld   a, (MQ_TICK)
+	inc  a
+	cp   5							; advance one column every 5 frames
+	jr   c, .mt_savetick
+	xor  a
+	ld   (MQ_TICK), a
+	ld   a, (MQ_OFF)
+	inc  a
+	ld   b, a						; b = candidate offset
+	ld   a, c						; len
+	sub  NAME_WIN					; a = max offset (len - window)
+	cp   b
+	jr   nc, .mt_okoff				; max >= candidate -> keep
+	ld   b, 0						; wrap back to the start
+.mt_okoff:
+	ld   a, b
+	ld   (MQ_OFF), a
+	jp   draw_sel_name_window		; redraw the selected name window
+.mt_savetick:
+	ld   (MQ_TICK), a
+	ret
+
+; draw_sel_name_window: redraw the selected row's name window at offset MQ_OFF
+; (leaves the marker, tag and size columns intact).
+draw_sel_name_window:
+	ld   a, (BR_SEL)				; screen row = 2 + (BR_SEL - BR_TOP)
+	ld   c, a
+	ld   a, (BR_TOP)
+	neg
+	add  a, c
+	add  a, 3
+	ld   l, a
+	ld   h, 9						; X = name column
+	call POSIT
+	ld   a, (BR_SEL)
+	call ent_addr
+	ld   de, NAME_OFF
+	add  hl, de
+	ld   a, (MQ_OFF)				; hl = name + MQ_OFF
+	ld   e, a
+	ld   d, 0
+	add  hl, de
+	ld   b, NAME_WIN
+	jp   print_name_win				; padded -> size column survives
+
+; ent_addr: A = index -> HL = ENT_ARRAY + index*ENT_SIZE (44, not a power of 2).
+ent_addr:
+	ld   hl, ENT_ARRAY
+	or   a
+	ret  z
+	ld   b, a
+	ld   de, ENT_SIZE
+.ea_mul:
+	add  hl, de
+	djnz .ea_mul
+	ret
+
+; cls_browser: SCREEN 0 + clear the TEXT2 blink colour table (removes the white bar).
+cls_browser:
+	call INITXT
+	ld   a, 0
+	ld   bc, 240
+	ld   hl, #0800
+	call FILVRM
+	ret
+
+; ix_is_rom: Z set if the entry's extension (ix+8..10) is "ROM" (upper-case).
+ix_is_rom:
+	ld   a, (ix+8)
+	cp   'R'
+	ret  nz
+	ld   a, (ix+9)
+	cp   'O'
+	ret  nz
+	ld   a, (ix+10)
+	cp   'M'
+	ret
+
+; fmt_name83: format the 11-byte 8.3 name at IX into name83 as "NAME.EXT",0
+fmt_name83:
+	ld   de, name83
+	push ix
+	pop  hl							; hl -> name field
+	ld   b, 8
+.fn_base:
+	ld   a, (hl)
+	cp   ' '
+	jr   z, .fn_ext
+	ld   (de), a
+	inc  de
+	inc  hl
+	djnz .fn_base
+.fn_ext:
+	ld   a, (ix+8)
+	cp   ' '
+	jr   z, .fn_term				; no extension
+	ld   a, '.'
+	ld   (de), a
+	inc  de
+	ld   a, (ix+8)
+	ld   (de), a
+	inc  de
+	ld   a, (ix+9)
+	cp   ' '
+	jr   z, .fn_term
+	ld   (de), a
+	inc  de
+	ld   a, (ix+10)
+	cp   ' '
+	jr   z, .fn_term
+	ld   (de), a
+	inc  de
+.fn_term:
+	xor  a
+	ld   (de), a
+	ret
+
+; inc_sd_lba: 32-bit increment of SD_LBA.
+inc_sd_lba:
+	ld   hl, SD_LBA
+	inc  (hl)
+	ret  nz
+	inc  hl
+	inc  (hl)
+	ret  nz
+	inc  hl
+	inc  (hl)
+	ret  nz
+	inc  hl
+	inc  (hl)
+	ret
+
+; sd_read_sector: read the 512-byte sector at SD_LBA into SD_BUF.
+; The WonderTANG card is NOT auto-initialized: after reset the FPGA state machine
+; sits in STANDBY with busy=1 FOREVER until we kick CMD0 via the init bit. The
+; menu runs at cartridge INIT, BEFORE Nextor inits the card, so we must init it
+; ourselves. Every busy-wait has a timeout so the CPU can NEVER hang (which would
+; freeze the whole menu with interrupts off). SD_STATUS: 0=OK 1=init-TO 2=read-TO.
+; Maps page 1 to slot 3-2 only for the transfer; menu code in page 2 is untouched.
+sd_read_sector:
+	di
+	xor  a
+	ld   (SD_STATUS), a				; assume OK
+	ld   a, SD_SLOT_32				; page 1 -> slot 3-2 (SD window)
+	ld   hl, #4000
+	call ENASLT
+	ld   a, #1
+	ld   (SDC_ENABLE), a			; enable SDC register block
+
+	ld   a, #80						; SDC_CMD bit7 = init (STANDBY -> CMD0 -> ... -> IDLING)
+	ld   (SDC_CMD), a
+	call sd_wait_idle				; wait busy->0, CARRY=timeout
+	jr   nc, .init_ok
+	ld   a, #1
+	ld   (SD_STATUS), a				; init timed out
+	jr   .sd_done
+.init_ok:
+	ld   a, (SD_LBA+0)
+	ld   (SDC_SADDR+0), a
+	ld   a, (SD_LBA+1)
+	ld   (SDC_SADDR+1), a
+	ld   a, (SD_LBA+2)
+	ld   (SDC_SADDR+2), a
+	ld   a, (SD_LBA+3)
+	ld   (SDC_SADDR+3), a
+	ld   a, #1						; SDC_CMD bit0 = read
+	ld   (SDC_CMD), a
+	ld   b, 0						; settle: let the FSM leave IDLING before polling
+.sd_settle:
+	djnz .sd_settle
+	call sd_wait_idle
+	jr   nc, .read_ok
+	ld   a, #2
+	ld   (SD_STATUS), a				; read timed out
+	jr   .sd_done
+.read_ok:
+	ld   a, (SDC_CTYPE)
+	ld   (SD_CTYPE), a
+	ld   hl, SDC_SDATA				; copy 512 bytes window -> page-3 RAM
+	ld   de, SD_BUF
+	ld   bc, 512
+	ldir
+.sd_done:
+	ld   a, SD_SLOT_31				; restore page 1 -> slot 3-1 (menu)
+	ld   hl, #4000
+	call ENASLT
+	ei
+	ret
+
+; sd_wait_idle: poll SDC busy (status bit7) until 0. Returns CARRY clear on
+; success, CARRY set on timeout (~a few seconds backstop so we never hang).
+sd_wait_idle:
+	ld   d, 6						; outer count (~2-3 s backstop; card responds in ms)
+.swo:
+	ld   bc, 0						; 65536 inner iterations
+.swi:
+	ld   a, (SDC_STATUS)
+	and  #80
+	ret  z							; busy=0 -> AND cleared carry -> OK
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .swi
+	dec  d
+	jr   nz, .swo
+	scf								; timeout
+	ret
+
+; print A as two upper-case hex digits via CHPUT
+print_hex_a:
+	push af
+	rrca
+	rrca
+	rrca
+	rrca
+	call .ph_nib
+	pop  af
+.ph_nib:
+	and  #0f
+	add  a, #90
+	daa
+	adc  a, #40
+	daa
+	jp   CHPUT
+
+; print HL as four upper-case hex digits (high byte first)
+print_hex_hl:
+	ld   a, h
+	call print_hex_a
+	ld   a, l
+	jp   print_hex_a
 
 ; --- Option 3: Configuracion WiFi (PLACEHOLDER, M3) -------------------------
+; main_action_wifi: open the ESP8266 WiFi config menu that already lives in the
+; ESP ROM (slot 0-2, esp8266e.rom). Its INIT (which ran at boot, before our menu,
+; since slot 0 < slot 3) shows that menu when F1 is held: 'jp z,#4202'. We reach
+; the same entry on demand: map page 1 to slot 0-2 and CALL #4202; the WiFi menu
+; runs there (page 0 BIOS + page 3 RAM + UART I/O all stay valid) and returns on
+; exit, then we restore page 1 and go back to the SD browser.
+ESP_SLOT	equ	#88				; slot 0-2 (expanded: pri 0, sec 2)
 main_action_wifi:
-	ld   hl, msgSoonM3Str
-	call main_show_message
-	jp   main_menu_restart			; redraw menu (keep BIOS context, no reset)
+	di
+	ld   a, ESP_SLOT				; page 1 -> ESP8266 WiFi ROM
+	ld   hl, #4000
+	call ENASLT
+	ei
+	call #4202						; ESP WiFi config menu (returns on exit)
+	di
+	ld   a, #87						; page 1 -> our menu ROM (slot 3-1)
+	ld   hl, #4000
+	call ENASLT
+	ei
+	jp   main_menu_restart			; back to the SD browser (home)
 
 ; Shows a centered message line, waits for ANY key, returns.
 ; Input: HL - message string
@@ -372,34 +2855,22 @@ wait_all_released:
 
 ; Draws (#ff) the inverse-video highlight bar on the current main-menu row.
 main_draw_selection:
-	ld   a, #ff
+	ld   a, '>'						; draw the selection marker
 	jr   main_selection_common
-; Clears (0) the highlight bar on the current main-menu row.
+; Clears the selection marker on the current main-menu row.
 main_clear_selection:
-	xor  a
+	ld   a, ' '
 main_selection_common:
-	ld   (var_selColor), a			; remember fill color (#ff highlight / 0 clear)
-	; Compute VRAM name-color offset = #0800 + Y*80 + 28
-	; Y (screen row) = 6 + sel*2  -> options at Y=6,8,10,12
+	ld   (var_selColor), a			; marker char ('>' or ' ')
 	ld   a, (var_mainSel)
 	add  a, a						; sel*2
-	add  a, 6						; A = Y
-	ld   l, a
-	ld   h, 0						; HL = Y
-	add  hl, hl						; 2Y
-	add  hl, hl						; 4Y
-	add  hl, hl						; 8Y
-	add  hl, hl						; 16Y
-	push hl							; save 16Y
-	add  hl, hl						; 32Y
-	add  hl, hl						; 64Y
-	pop  de							; DE = 16Y
-	add  hl, de						; HL = 80Y
-	ld   de, #0800 + 28				; name table base + column 28
-	add  hl, de						; HL = VRAM address of the row start
-	ld   bc, 14						; width of the highlight bar
-	ld   a, (var_selColor)			; fill color
-	jp   FILVRM						; fill name-color row, returns to caller
+	add  a, 6						; Y = 6 + sel*2 (options are at rows 6,8,10,12)
+	ld   l, a						; L = Y
+	ld   h, 26						; H = X (column 26, just left of the option text)
+	call POSIT
+	ld   a, (var_selColor)
+	call CHPUT						; print '>' (or ' ' to clear)
+	ret
 
 ; Shared screen initialization: SCREEN 0 / 80 columns + blink mode ON, with a
 ; DETERMINISTIC palette so the menu looks EXACTLY the same on cold boot and on
@@ -1010,6 +3481,120 @@ msgSoonM2Str:
 	.db "Lanzar ROM de la SD: Proximamente (M2). Pulsa una tecla...",0
 msgSoonM3Str:
 	.db "Configuracion WiFi: Proximamente (M3). Pulsa una tecla...",0
+sdTestStr:
+	.db "SD READ TEST - sector 0",0
+sdStatusStr:
+	.db "Status (00=OK 01=initTO 02=readTO): ",0
+sdTypeStr:
+	.db "Card type (1=v1 2=v2 3=SDHC): ",0
+sdSigStr:
+	.db "Sig 510,511 (espera 55AA): ",0
+sdWaitStr:
+	.db "Pulsa una tecla para volver...",0
+romHdrStr:
+	.db "Raiz SD ([DIR]=carpeta, .ROM=juego):",0
+tagDirStr:
+	.db "[DIR] ",0
+tagRomStr:
+	.db "      ",0
+hdrTitleStr:
+	.db "MSX Nano  v1.5",0
+footerStr:
+	.db "W=WiFi  ESC=Boot  S=Settings  TAB=Particion  H=Ayuda",0
+helpTitleStr:
+	.db "MSXnano - AYUDA",0
+help1Str:
+	.db "Arriba/Abajo          : mover (Izq/Der = pagina)",0
+help2Str:
+	.db "RETURN / Boton A      : abrir carpeta o lanzar ROM",0
+help3Str:
+	.db "BACKSPACE / Boton B   : carpeta anterior",0
+help4Str:
+	.db "TAB                   : cambiar de particion",0
+help5Str:
+	.db "ESC                   : arrancar el sistema (MSX-DOS)",0
+help6Str:
+	.db "S                     : Ajustes (configuracion goauld)",0
+help7Str:
+	.db "W                     : configuracion WiFi (ESP)",0
+help8Str:
+	.db "H                     : esta ayuda",0
+helpEndStr:
+	.db "Pulsa una tecla para volver...",0
+romInfoStr:
+	.db "ROM seleccionada:",0
+romClusStr:
+	.db "Tamano: ",0
+romSpcStr:
+	.db "  Mapper: ",0
+romFirstStr:
+	.db "Primeros bytes: ",0
+mapPlainStr:
+	.db "Plain (lineal)",0
+mapKonStr:
+	.db "Konami",0
+mapSccStr:
+	.db "Konami-SCC",0
+mapA8Str:
+	.db "ASCII8",0
+mapA16Str:
+	.db "ASCII16",0
+mapUnkStr:
+	.db "? (desconocido)",0
+megP42Str:
+	.db "P42=",0
+megB0Str:
+	.db "  Antes=",0
+megTestStr:
+	.db "  Desp(A5 5A)=",0
+launchStr:
+	.db "RETURN=cargar a megaram   ESC=volver",0
+loadingStr:
+	.db "Cargando ROM en megaram...",0
+segStr:
+	.db "Verif seg0(41 42)=",0
+seg1Str:
+	.db "  seg1=",0
+launch2Str:
+	.db "RETURN=LANZAR JUEGO   ESC=volver",0
+readingStr:
+	.db "Leyendo SD...",0
+partTabStr:
+	.db " TAB=cambiar",0
+partHdrStr:
+	.db "Tabla de particiones (MBR):",0
+partTStr:
+	.db " t=",0
+partLStr:
+	.db " LBA=",0
+partSStr:
+	.db " sec=",0
+noSdStr:
+	.db "No se detecta la tarjeta SD.",0
+noSdStr2:
+	.db "RETURN=Boot MSX   S=Settings   W=WiFi",0
+brSelStr:
+	.db "Sel: ",0
+partTypeStr:
+	.db "Ptype=",0
+partLbaStr:
+	.db " pLBA=",0
+bpbBpsStr:
+	.db "BPS=",0
+bpbSpcStr:
+	.db " SPC=",0
+bpbRsvStr:
+	.db " RSV=",0
+bpbNfatStr:
+	.db "NFAT=",0
+bpbRentStr:
+	.db " REnt=",0
+bpbFs16Str:
+	.db " FS16=",0
+bpbFs32Str:
+	.db "FS32=",0
+bpbRclusStr:
+	.db " RtClus=",0
 
 menuTitleStr:
 	.db "MSX Goa'uld Settings Menu v1.23",0

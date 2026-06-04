@@ -12,6 +12,12 @@ fpga/build_log.txt
 fpga/src/rom/goauld_rom_int.bin
 fpga/src/rom/goauld_rom_japan.bin
 fpga/src/rom/goauld_rom_int_menu.bin
+fpga/src/rom/goauld_rom_int_SDTEST.bin
+fpga/src/rom/fm_logo_menu.bin
+
+# Boot-menu build temporaries / logs
+fpga/src/msx_goauld_settings_menu/~tmppre.*
+fpga/autofire_build.log
 
 # Settings/boot menu ROM: host build tools (binaries) + build outputs
 fpga/src/msx_goauld_settings_menu/bin/

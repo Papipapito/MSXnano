@@ -501,10 +501,36 @@ always @(posedge clk_54m or negedge bus_reset_n) begin
         psg_reg15_joy_sel <= cpu_dout[7:6];
 end
 
+// ===== AUTOFIRE (turbo) on the otherwise-unused joystick buttons 3 & 4 =====
+// The FPGA-Companion joy byte uses bits 0-5 (dirs + A + B); bits 6/7 carry the
+// extra pad buttons 3/4 (unused by the MSX 2-button joystick). While button 3
+// is held it pulses TrigA, button 4 pulses TrigB, at ~10 Hz (50 ms ON / 50 ms
+// OFF). Each phase must outlast one MSX PSG scan (~1 frame @50/60 Hz) so every
+// press AND release is sampled; 50 ms = 2.5-3 frames is safe even on PAL.
+// Ported from the goauld+RP2040 fork (there it lived in firmware; here, no
+// RP2040 -> it lives in the FPGA on the PSG joystick-injection path).
+//   54 MHz * 0.050 s = 2,700,000 cycles per half period.
+reg        af_phase = 1'b0;
+reg [21:0] af_cnt   = 22'd0;
+always @(posedge clk_54m) begin
+    if (af_cnt >= 22'd2700000) begin
+        af_cnt   <= 22'd0;
+        af_phase <= ~af_phase;
+    end else begin
+        af_cnt   <= af_cnt + 22'd1;
+    end
+end
+// fire = manual press OR (autofire button held AND square-wave high). If the pad
+// has no button 3/4 (bits 6/7 stay 0) this reduces to the original behaviour.
+wire af_fa0 = joystick0[4] | (joystick0[6] & af_phase);   // joy0 TrigA: manual + btn3 turbo
+wire af_fb0 = joystick0[5] | (joystick0[7] & af_phase);   // joy0 TrigB: manual + btn4 turbo
+wire af_fa1 = joystick1[4] | (joystick1[6] & af_phase);   // joy1 TrigA
+wire af_fb1 = joystick1[5] | (joystick1[7] & af_phase);   // joy1 TrigB
+
 // Companion joy byte (active-high): bit0=Right, bit1=Left, bit2=Down, bit3=Up, bit4=A, bit5=B
 // MSX PSG Port A (active-low):      bit0=Up,    bit1=Down,  bit2=Left, bit3=Right, bit4=TrigA, bit5=TrigB
-wire [7:0] joy0_msx = {2'b11, ~joystick0[5], ~joystick0[4], ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
-wire [7:0] joy1_msx = {2'b11, ~joystick1[5], ~joystick1[4], ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
+wire [7:0] joy0_msx = {2'b11, ~af_fb0, ~af_fa0, ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
+wire [7:0] joy1_msx = {2'b11, ~af_fb1, ~af_fa1, ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
 wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? joy0_msx :
                           (!psg_reg15_joy_sel[1]) ? joy1_msx :
                           8'hFF;
