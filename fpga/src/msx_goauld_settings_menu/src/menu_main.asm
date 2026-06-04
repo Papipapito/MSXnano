@@ -278,12 +278,13 @@ ARR_PTR		equ	#C027			; 2 bytes: array write pointer (scan)
 BR_OLD		equ	#C029			; 1 byte: previously-selected index (partial repaint)
 BR_OLDTOP	equ	#C02A			; 1 byte: BR_TOP before ensure_visible (scroll detect)
 ENT_ARRAY	equ	#C300			; entry array: ENT_SIZE bytes each (type,cluster,name)
-ENT_SIZE	equ	64				; record: type(1)+cluster(2)+size(4)+name(57 ASCIIZ)
+ENT_SIZE	equ	80				; record: type(1)+cluster(2)+size(4)+name(73 ASCIIZ)
 NAME_OFF	equ	7				; name offset inside a record (after type+cluster+size)
-NAME_MAX	equ	56				; max name chars stored (+ NUL)
+NAME_MAX	equ	72				; max name chars stored (+ NUL) -> longer than the
+								; 59-col window so long names overflow and marquee-scroll
 NAME_WIN	equ	59				; name display window width (cols 9..67, size at 69)
 VISIBLE		equ	19				; entries per page (list rows 3..21; hdr rows 1-2, sep 22, footer 23)
-MAX_ENT		equ	144				; array capacity (144*64 = 9216 bytes -> C300..E700)
+MAX_ENT		equ	115				; array capacity (115*80 = 9200 bytes -> C300..E6F0)
 HAVE_LFN	equ	#C02B			; 1 byte: a long-file-name is being accumulated
 LFN_BUF		equ	#C02C			; 80 bytes: assembled long file name (C02C..C07B)
 CUR_CLUS	equ	#C07C			; 2 bytes: current directory cluster (0 = root)
@@ -1744,7 +1745,8 @@ browse:
 	ld   (BR_TOP), a
 	jp   .br_redraw					; full redraw of the new directory
 .br_selrom:
-	; --- selected file: detect mapper, show name + size + mapper (load = M2.2) ---
+	; --- selected file: load it straight into the megaram, then offer to launch.
+	;     No debug dump, no separate "load" step -> fastest path to launch. ---
 	ld   a, (BR_SEL)
 	call ent_addr
 	ld   (BR_REC), hl				; record (size at +3, name at +7)
@@ -1753,21 +1755,18 @@ browse:
 	inc  hl
 	ld   d, (hl)					; DE = first cluster
 	ld   (FILE_CLUS), de
-	call detect_mapper				; scans the ROM -> MAPPER_ID (fallback)
-	call override_mapper_by_name	; GoodMSX name tag wins over the code scan
-	; read the file's first sector (header) without disturbing CUR_CLUS
-	ld   hl, (CUR_CLUS)
-	push hl
-	ld   hl, (FILE_CLUS)
-	ld   (CUR_CLUS), hl
-	call set_scan_start
-	pop  hl
-	ld   (CUR_CLUS), hl
-	call sd_read_sector
+	ld   a, #FF						; mapper: prefer GoodMSX name tag (fast);
+	ld   (MAPPER_ID), a				; only run the slow code scan if there is no tag
+	call override_mapper_by_name
+	ld   a, (MAPPER_ID)
+	cp   #FF
+	jr   nz, .bsr_have
+	call detect_mapper
+.bsr_have:
 	call cls_browser
 	ld   hl, #0101
 	call POSIT
-	ld   hl, romInfoStr
+	ld   hl, romInfoStr				; "ROM seleccionada:"
 	call print_string
 	ld   hl, #0103
 	call POSIT
@@ -1787,64 +1786,17 @@ browse:
 	call print_mapper_name
 	ld   hl, #0107
 	call POSIT
-	ld   hl, romFirstStr
-	call print_string
-	ld   hl, SD_BUF
-	ld   b, 8
-.bsr_dump:
-	ld   a, (hl)
-	push hl
-	push bc
-	call print_hex_a
-	ld   a, #20
-	call CHPUT
-	pop  bc
-	pop  hl
-	inc  hl
-	djnz .bsr_dump
-	ld   hl, #0109
-	call POSIT
-	ld   hl, launchStr				; "RET=cargar a megaram   ESC=volver"
-	call print_string
-.bsr_k:
-	call browse_getkey
-	cp   #0D
-	jr   z, .bsr_load
-	cp   #1B
-	jp   z, .br_redraw
-	jr   .bsr_k
-.bsr_load:
-	ld   hl, #010B
-	call POSIT
 	ld   hl, loadingStr				; "Cargando ROM en megaram..."
 	call print_string
-	call load_rom					; A3b: full load (no reset yet)
-	ld   hl, #010C
-	call POSIT
-	ld   hl, segStr					; "Verif seg0(41 42)="
-	call print_string
-	xor  a
-	call read_megaram_seg
-	ld   a, (MEG_RB)
-	call print_hex_a
-	ld   a, (MEG_RB+1)
-	call print_hex_a
-	ld   hl, seg1Str				; "  seg1="
-	call print_string
-	ld   a, 1
-	call read_megaram_seg
-	ld   a, (MEG_RB)
-	call print_hex_a
-	ld   a, (MEG_RB+1)
-	call print_hex_a
-	ld   hl, #010E
+	call load_rom					; load now, automatically (progress bar)
+	ld   hl, #0109
 	call POSIT
 	ld   hl, launch2Str				; "RETURN=LANZAR JUEGO   ESC=volver"
 	call print_string
 .bsr_lk:
 	call browse_getkey
 	cp   #0D
-	jp   z, launch_rom				; A4: set mapper + reset to boot the game
+	jp   z, launch_rom
 	cp   #1B
 	jp   z, .br_redraw
 	jr   .bsr_lk
