@@ -24,3 +24,18 @@ fpga/src/msx_goauld_settings_menu/bin/
 fpga/src/msx_goauld_settings_menu/out/
 fpga/src/msx_goauld_settings_menu/fm_logo_menu.bin
 _menu_shot*.png
+
+# Ruflo / ruvector tool databases (regenerable, not project files)
+ruvector.db
+**/ruvector.db
+
+# Dead earlier experiment (NANOROM) + its copyrighted test ROMs / DOS system
+# files (Konami ROMs, MSXDOS2.SYS, COMMAND2.COM) — NOT redistributed.
+fpga/src/nanorom/
+
+# Stray FPGA bitstream build outputs left in the source tree
+fpga/src/rom/*.fs
+
+# Local design / scratch notes (kept on disk, not tracked)
+fpga/src/msx_goauld_settings_menu/M2_DESIGN.md
+fpga/src/msx_goauld_settings_menu/src/*.SDwork.txt

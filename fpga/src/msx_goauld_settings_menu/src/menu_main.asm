@@ -323,6 +323,18 @@ TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
 PE_ROW		equ	#C0DB			; 1 byte: partition dump display row
 PE_DW		equ	#C0DC			; 4 bytes: 32-bit value scratch for hex print
+DSK_LBA		equ	#C0E0			; 4 bytes: abs LBA of the selected .dsk first sector
+DSK_SECS	equ	#C0E4			; 2 bytes: .dsk size in 512-byte sectors
+EMU_LBA		equ	#C0E6			; 4 bytes: abs LBA of the NEXTOR.EMU data file sector
+FAT_SZ		equ	#C0EA			; 2 bytes: sectors per FAT (FATSz16)
+NUM_FATS	equ	#C0EC			; 1 byte: number of FAT copies
+NEW_CLUS	equ	#C0ED			; 2 bytes: cluster allocated for a new NEXTOR.EMU
+FFC_BASE	equ	#C0EF			; 2 bytes: base cluster of the FAT sector being scanned
+FFC_LEFT	equ	#C0F1			; 2 bytes: FAT sectors left to scan
+MCE_OFF		equ	#C0F3			; 2 bytes: byte offset of the FAT entry within its sector
+WDE_LEFT	equ	#C0F5			; 1 byte: root-dir sectors left to scan
+MCE_SEC		equ	#C0F6			; 1 byte: FAT sector offset of the cluster entry
+BR_BLINK	equ	#C0F7			; 1 byte: per-row blink-attr fill byte (dir colour)
 ; --- multi-partition support (placed at #E800, above ENT_ARRAY C300..E700) ---
 MAX_PARTS	equ	8
 PART_TBL	equ	#E800			; up to 8 entries x 4 bytes = start LBA of each FAT16 partition
@@ -616,94 +628,17 @@ select_partition:
 	or   a							; CF = 0 (success)
 	ret
 
-; dump_part_table: TEMP diagnostic. Print the 4 MBR partition-table entries
-; (type + 32-bit start LBA + 32-bit sector count) from SD_BUF (must hold the
-; MBR = sector 0). Each entry is 16 bytes starting at offset 446 (0x1BE).
-; No IX / no live BC across BIOS calls (POSIT/CHPUT clobber both).
-dump_part_table:
-	call cls_browser
-	ld   hl, #0101
-	call POSIT
-	ld   hl, partHdrStr
-	call print_string
-	ld   hl, SD_BUF + 446
-	ld   a, 1
-	call print_part_entry
-	ld   hl, SD_BUF + 462
-	ld   a, 2
-	call print_part_entry
-	ld   hl, SD_BUF + 478
-	ld   a, 3
-	call print_part_entry
-	ld   hl, SD_BUF + 494
-	ld   a, 4
-	call print_part_entry
-	ld   hl, #010A
-	call POSIT
-	ld   hl, sdWaitStr
-	call print_string
-	call browse_getkey
-	ret
-
-; print_part_entry: A = partition number (1-4), HL = ptr to its 16-byte MBR entry
-print_part_entry:
-	ld   (PE_PTR), hl
-	add  a, 2						; display row = number + 2
-	ld   (PE_ROW), a
-	ld   h, 1
-	ld   l, a
-	call POSIT
-	ld   a, 'P'
-	call CHPUT
-	ld   a, (PE_ROW)
-	sub  2
-	add  a, '0'
-	call CHPUT
-	ld   hl, partTStr				; " t="
-	call print_string
-	ld   hl, (PE_PTR)				; +4 = type
-	ld   de, 4
-	add  hl, de
-	ld   a, (hl)
-	call print_hex_a
-	ld   hl, partLStr				; " LBA="
-	call print_string
-	ld   hl, (PE_PTR)				; +8 = start LBA (4 bytes LE)
-	ld   de, 8
-	add  hl, de
-	call print_hex32_at
-	ld   hl, partSStr				; " sec="
-	call print_string
-	ld   hl, (PE_PTR)				; +12 = sector count (4 bytes LE)
-	ld   de, 12
-	add  hl, de
-	call print_hex32_at
-	ret
-
-; print_hex32_at: HL -> 4-byte little-endian value; print 8 hex digits, MSB first.
-print_hex32_at:
-	ld   de, PE_DW
-	ld   bc, 4
-	ldir							; copy the 4 bytes to scratch (HL clobbered by prints)
-	ld   a, (PE_DW+3)
-	call print_hex_a
-	ld   a, (PE_DW+2)
-	call print_hex_a
-	ld   a, (PE_DW+1)
-	call print_hex_a
-	ld   a, (PE_DW+0)
-	call print_hex_a
-	ret
-
 ; -----------------------------------------------------------------------------
 ; fat_compute_root: ROOT_LBA = PART_LBA + RsvdSecCnt + NumFATs*FATSz16.
 ; Inputs: SD_BUF = FAT16 boot sector, PART_LBA = partition start LBA.
 ; -----------------------------------------------------------------------------
 fat_compute_root:
 	ld   a, (SD_BUF+16)				; NumFATs
+	ld   (NUM_FATS), a
 	ld   b, a
 	ld   hl, 0
 	ld   de, (SD_BUF+22)			; FATSz16
+	ld   (FAT_SZ), de
 .fcr_mul:
 	add  hl, de
 	djnz .fcr_mul					; hl = NumFATs * FATSz16
@@ -846,7 +781,12 @@ scan_current:
 	jr   .scr_store
 .scr_file:
 	call ix_is_rom
-	jp   nz, .scr_drop				; not .ROM -> skip
+	jr   z, .scr_isrom
+	call ix_is_dsk
+	jp   nz, .scr_drop				; neither .ROM nor .DSK -> skip
+	ld   c, 2						; type 2 = dsk (Nextor disk image)
+	jr   .scr_store
+.scr_isrom:
 	ld   c, 1						; type 1 = rom
 .scr_store:
 	; name source: assembled LFN if any, else the 8.3 short name
@@ -1713,9 +1653,13 @@ browse:
 	jp   z, .br_key					; empty list
 	ld   a, (BR_SEL)
 	call ent_addr					; hl = record
-	ld   a, (hl)					; type (0=dir, 1=rom)
+	ld   a, (hl)					; type (0=dir, 1=rom, 2=dsk)
 	or   a
-	jr   nz, .br_selrom
+	jr   z, .br_isdir				; 0 = directory
+	dec  a
+	jp   z, .br_selrom				; 1 = rom -> load to megaram + launch
+	jp   .br_seldsk					; 2 = dsk -> Nextor disk emulation + boot
+.br_isdir:
 	; --- directory: push current cluster, descend ---
 	ld   a, (DIR_SP)
 	cp   8
@@ -1800,6 +1744,137 @@ browse:
 	cp   #1B
 	jp   z, .br_redraw
 	jr   .bsr_lk
+
+.br_seldsk:
+	; --- selected .dsk: set up Nextor disk-emulation mode and boot it ---
+	; Nextor checks RAM #A000 for the "NEXTOR_EMU_DATA" record on every boot
+	; (one-time mode). We run in the cartridge INIT (slot 3-1) DURING the cold-boot
+	; slot scan, BEFORE Nextor (slot 3-2) initialises -> we just write the record
+	; and let the boot continue; Nextor reads it and mounts the image as drive A:
+	; in MSX-DOS 1 mode, then runs its boot sector. No reset needed.
+	ld   a, (BR_SEL)
+	call ent_addr
+	ld   (BR_REC), hl
+	inc  hl
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)					; DE = first cluster of the .dsk
+	ld   (FILE_CLUS), de
+	call cls_browser
+	ld   hl, #0101
+	call POSIT
+	ld   hl, dskInfoStr				; "Disco seleccionado:"
+	call print_string
+	ld   hl, #0103
+	call POSIT
+	ld   hl, (BR_REC)
+	ld   de, NAME_OFF
+	add  hl, de
+	call print_string				; .dsk name
+	ld   hl, #0105
+	call POSIT
+	ld   hl, dskAskStr				; "RETURN=montar y lanzar   ESC=volver"
+	call print_string
+.bsd_ask:
+	call browse_getkey
+	cp   #0D
+	jr   z, .bsd_go					; RETURN -> mount + launch
+	cp   #1B
+	jp   z, .br_redraw				; ESC -> back to the browser
+	jr   .bsd_ask
+.bsd_go:
+	ld   hl, #0107
+	call POSIT
+	ld   hl, dskMountStr			; "Montando disco (Nextor) y arrancando..."
+	call print_string
+	; 1) the image must be unfragmented (Nextor maps a linear sector range)
+	call dsk_check_contig
+	jr   nc, .bsd_contig
+	ld   hl, #0107
+	call POSIT
+	ld   hl, dskFragStr
+	call print_string
+	call browse_getkey
+	jp   .br_redraw
+.bsd_contig:
+	; 2) absolute start LBA of the .dsk -> DSK_LBA
+	ld   hl, (FILE_CLUS)
+	ld   (CUR_CLUS), hl
+	call set_scan_start				; SD_LBA = abs LBA of the .dsk first cluster
+	ld   hl, (SD_LBA+0)
+	ld   (DSK_LBA+0), hl
+	ld   hl, (SD_LBA+2)
+	ld   (DSK_LBA+2), hl
+	; 3) image size in 512-byte sectors = ceil(size/512) = (size+511)>>9  (16-bit)
+	ld   hl, (BR_REC)
+	ld   de, 3
+	add  hl, de						; hl -> size dword (LE) at record+3
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	inc  hl
+	ld   c, (hl)
+	inc  hl
+	ld   b, (hl)					; bcde = 32-bit size (b=MSB, e=LSB)
+	ld   hl, #01FF					; + 511
+	add  hl, de
+	ex   de, hl
+	ld   hl, 0
+	adc  hl, bc						; hl:de = size+511 (hl = high word)
+	ld   b, h
+	ld   c, l						; bc = high word -> c = byte2, b = byte3
+	ld   l, d						; (size+511) >> 8  -> l=byte1, h=byte2 (floppy: byte3=0)
+	ld   h, c
+	srl  h							; >> 1  => >> 9 total
+	rr   l
+	ld   (DSK_SECS), hl				; sectors in the image
+	; 4) locate (or auto-create) the NEXTOR.EMU helper file in this partition's root
+	call find_emufile
+	jr   nc, .bsd_haveemu
+	call create_emufile				; not found -> create it (CF=1 on failure)
+	jr   nc, .bsd_haveemu
+	ld   hl, #0107
+	call POSIT
+	ld   hl, dskNoEmuStr
+	call print_string
+	call browse_getkey
+	jp   .br_redraw
+.bsd_haveemu:
+	; FILE_CLUS now = NEXTOR.EMU first cluster -> its abs LBA = the data-file sector
+	ld   hl, (FILE_CLUS)
+	ld   (CUR_CLUS), hl
+	call set_scan_start
+	ld   hl, (SD_LBA+0)
+	ld   (EMU_LBA+0), hl
+	ld   hl, (SD_LBA+2)
+	ld   (EMU_LBA+2), hl
+	; 5) build the emulation data file in SD_BUF and write it to NEXTOR.EMU sector 0
+	call build_emu_datafile
+	call sd_write_sector			; SD_LBA still = EMU_LBA
+	ld   a, (SD_STATUS)
+	or   a
+	jr   z, .bsd_wrok
+	ld   hl, #0107
+	call POSIT
+	ld   hl, dskWrErrStr
+	call print_string
+	call browse_getkey
+	jp   .br_redraw
+.bsd_wrok:
+	; 6) one-time pointer at #A000 -> the data file (device 1, LUN 1, EMU_LBA)
+	ld   hl, emuSig
+	ld   de, #A000
+	ld   bc, 16
+	ldir
+	ld   a, 1
+	ld   (#A010), a					; device index (WonderTANG SD) [verify if needed]
+	ld   a, 1
+	ld   (#A011), a					; LUN
+	ld   hl, (EMU_LBA+0)
+	ld   (#A012), hl
+	ld   hl, (EMU_LBA+2)
+	ld   (#A014), hl
+	jp   boot_system				; continue boot with Nextor ON -> Nextor emulates A:
 .br_back:
 	ld   a, (DIR_SP)
 	or   a
@@ -2253,11 +2328,14 @@ draw_entry:
 	ld   a, (BR_TMP)
 	call ent_addr
 	ld   (BR_REC), hl
-	ld   a, (hl)					; type
+	ld   a, (hl)					; type (0=dir, 1=rom, 2=dsk)
 	or   a
 	ld   hl, tagDirStr
-	jr   z, .de1
+	jr   z, .de1					; 0 = directory
+	dec  a
 	ld   hl, tagRomStr
+	jr   z, .de1					; 1 = rom
+	ld   hl, tagDskStr				; 2 = dsk
 .de1:
 	call print_string
 	ld   hl, (BR_REC)
@@ -2489,6 +2567,52 @@ ix_is_rom:
 	cp   'M'
 	ret
 
+; ix_is_dsk: Z set if the entry's extension (ix+8..10) is "DSK" (upper-case).
+ix_is_dsk:
+	ld   a, (ix+8)
+	cp   'D'
+	ret  nz
+	ld   a, (ix+9)
+	cp   'S'
+	ret  nz
+	ld   a, (ix+10)
+	cp   'K'
+	ret
+
+; dsk_check_contig: verify the file whose first cluster is FILE_CLUS occupies
+; CONSECUTIVE clusters (Nextor disk emulation maps a linear sector range, so the
+; image must be unfragmented). Returns CF=0 if contiguous, CF=1 if fragmented.
+dsk_check_contig:
+	ld   de, (FILE_CLUS)
+.dcc_loop:
+	ld   a, d
+	or   e
+	jr   z, .dcc_bad				; cluster 0 -> invalid chain
+	push de							; save current cluster
+	call fat_next_cluster			; DE = next cluster
+	pop  hl							; HL = current cluster
+	ld   a, d						; end of chain? (next >= 0xFFF8)
+	cp   #FF
+	jr   c, .dcc_chk
+	ld   a, e
+	cp   #F8
+	jr   nc, .dcc_ok				; >=0xFFF8 -> last cluster, contiguous so far
+.dcc_chk:
+	inc  hl							; next must equal current+1
+	ld   a, h
+	cp   d
+	jr   nz, .dcc_bad
+	ld   a, l
+	cp   e
+	jr   nz, .dcc_bad
+	jr   .dcc_loop					; DE already = next cluster, continue
+.dcc_ok:
+	or   a							; CF = 0 (contiguous)
+	ret
+.dcc_bad:
+	scf								; CF = 1 (fragmented / invalid)
+	ret
+
 ; fmt_name83: format the 11-byte 8.3 name at IX into name83 as "NAME.EXT",0
 fmt_name83:
 	ld   de, name83
@@ -2617,6 +2741,346 @@ sd_wait_idle:
 	dec  d
 	jr   nz, .swo
 	scf								; timeout
+	ret
+
+; sd_write_sector: write the 512-byte SD_BUF to the sector at SD_LBA.
+; Mirrors sd_read_sector but fills the SDC_SDATA window first and triggers
+; SDC_CMD bit1 = write. SD_STATUS: 0=OK, 1=init timeout, 3=write timeout.
+sd_write_sector:
+	di
+	xor  a
+	ld   (SD_STATUS), a
+	ld   a, SD_SLOT_32				; page 1 -> slot 3-2 (SD window)
+	ld   hl, #4000
+	call ENASLT
+	ld   a, #1
+	ld   (SDC_ENABLE), a
+	ld   a, #80						; init the card (same as read path)
+	ld   (SDC_CMD), a
+	call sd_wait_idle
+	jr   nc, .sw_init_ok
+	ld   a, #1
+	ld   (SD_STATUS), a
+	jr   .sw_done
+.sw_init_ok:
+	ld   hl, SD_BUF					; fill the 512-byte transfer window
+	ld   de, SDC_SDATA
+	ld   bc, 512
+	ldir
+	ld   a, (SD_LBA+0)
+	ld   (SDC_SADDR+0), a
+	ld   a, (SD_LBA+1)
+	ld   (SDC_SADDR+1), a
+	ld   a, (SD_LBA+2)
+	ld   (SDC_SADDR+2), a
+	ld   a, (SD_LBA+3)
+	ld   (SDC_SADDR+3), a
+	ld   a, #2						; SDC_CMD bit1 = write
+	ld   (SDC_CMD), a
+	ld   b, 0
+.sw_settle:
+	djnz .sw_settle
+	call sd_wait_idle
+	jr   nc, .sw_done
+	ld   a, #3
+	ld   (SD_STATUS), a				; write timed out
+.sw_done:
+	ld   a, SD_SLOT_31				; restore page 1 -> slot 3-1 (menu)
+	ld   hl, #4000
+	call ENASLT
+	ei
+	ret
+
+; find_emufile: search the SD ROOT directory for "NEXTOR  EMU" (8.3). On success
+; CF=0 and (FILE_CLUS) = its first cluster; on not-found / SD error CF=1.
+find_emufile:
+	xor  a
+	ld   (CUR_CLUS+0), a
+	ld   (CUR_CLUS+1), a
+	call set_scan_start				; root dir region (SD_LBA, sec_left=ROOT_SECS)
+.fe_sec:
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .fe_bad
+	ld   ix, SD_BUF
+	ld   a, 16
+	ld   (ent_in_sec), a
+.fe_ent:
+	ld   a, (ix+0)
+	or   a
+	jr   z, .fe_bad					; 0x00 = end of directory -> not found
+	cp   #E5
+	jr   z, .fe_next				; deleted entry
+	ld   a, (ix+11)
+	and  #0F
+	cp   #0F
+	jr   z, .fe_next				; LFN sub-entry
+	push ix
+	pop  hl							; hl -> 11-byte 8.3 name
+	ld   de, emuFileName
+	ld   b, 11
+.fe_cmp:
+	ld   a, (de)
+	cp   (hl)
+	jr   nz, .fe_next
+	inc  hl
+	inc  de
+	djnz .fe_cmp
+	ld   a, (ix+26)					; match -> first cluster
+	ld   (FILE_CLUS+0), a
+	ld   a, (ix+27)
+	ld   (FILE_CLUS+1), a
+	or   a							; CF=0
+	ret
+.fe_next:
+	ld   de, 32
+	add  ix, de
+	ld   a, (ent_in_sec)
+	dec  a
+	ld   (ent_in_sec), a
+	jr   nz, .fe_ent
+	call inc_sd_lba
+	ld   a, (sec_left)
+	dec  a
+	ld   (sec_left), a
+	jr   nz, .fe_sec
+.fe_bad:
+	scf
+	ret
+
+; build_emu_datafile: fill SD_BUF with a Nextor disk-emulation data file describing
+; ONE image: header (signature, 1 entry, boot entry #1) + one 8-byte entry pointing
+; at the .dsk (DSK_LBA, DSK_SECS). Uses device 0 (= same device as the data file).
+build_emu_datafile:
+	ld   hl, SD_BUF					; zero the whole 512-byte sector
+	ld   de, SD_BUF+1
+	ld   bc, 511
+	ld   (hl), 0
+	ldir
+	ld   hl, emuSig					; +0  signature (16 bytes)
+	ld   de, SD_BUF
+	ld   bc, 16
+	ldir
+	ld   a, 1
+	ld   (SD_BUF+16), a				; +16 entry count = 1
+	ld   a, 1
+	ld   (SD_BUF+17), a				; +17 1-based index of image to mount at boot
+	; +18 work area (2) = 0, +20 reserved (4) = 0  -> already zeroed
+	; entry #0 starts at +24
+	xor  a
+	ld   (SD_BUF+24), a				; entry device = 0 (same device as data file)
+	ld   a, 1
+	ld   (SD_BUF+25), a				; entry LUN = 1
+	ld   hl, (DSK_LBA+0)			; +26 absolute start sector of the .dsk (4 bytes)
+	ld   (SD_BUF+26), hl
+	ld   hl, (DSK_LBA+2)
+	ld   (SD_BUF+28), hl
+	ld   hl, (DSK_SECS)				; +30 size in sectors (2 bytes)
+	ld   (SD_BUF+30), hl
+	ret
+
+; create_emufile: create a 1-cluster file "NEXTOR.EMU" in the current partition's
+; root dir to hold the emulation data file. On success CF=0 and (FILE_CLUS) = its
+; first cluster. CF=1 on failure (no free cluster / no dir slot / SD error).
+; Only ever writes to: one FAT sector (x NUM_FATS) + one root-dir sector. It does
+; NOT touch any other file's data.
+create_emufile:
+	call find_free_cluster			; DE = free cluster, CF=1 if none
+	ret  c
+	ld   (NEW_CLUS), de
+	call mark_cluster_eof			; FAT entry -> 0xFFFF (both copies)
+	ret  c
+	call write_dir_entry			; root dir entry for NEXTOR.EMU
+	ret  c
+	ld   hl, (NEW_CLUS)
+	ld   (FILE_CLUS), hl
+	or   a							; CF=0 success
+	ret
+
+; find_free_cluster: scan FAT copy 1 for a free entry (0x0000). Returns DE = cluster,
+; CF=0; or CF=1 if none / SD error. Clusters 0 and 1 are reserved (skipped).
+find_free_cluster:
+	ld   hl, (FAT_LBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (FAT_LBA+2)
+	ld   (SD_LBA+2), hl
+	ld   hl, 0
+	ld   (FFC_BASE), hl
+	ld   hl, (FAT_SZ)
+	ld   (FFC_LEFT), hl
+.ffc_sec:
+	ld   hl, (FFC_LEFT)
+	ld   a, h
+	or   l
+	jr   z, .ffc_none
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .ffc_none
+	ld   ix, SD_BUF
+	ld   c, 0
+	ld   hl, (FFC_BASE)				; first FAT sector (base 0) holds clusters 0,1 -> skip
+	ld   a, h
+	or   l
+	jr   nz, .ffc_ent
+	ld   ix, SD_BUF+4
+	ld   c, 2
+.ffc_ent:
+	ld   a, (ix+0)
+	or   (ix+1)
+	jr   z, .ffc_found
+	inc  ix
+	inc  ix
+	inc  c
+	jr   nz, .ffc_ent				; 256 entries/sector (c wraps to 0)
+	ld   hl, (FFC_BASE)				; next sector: base += 256
+	ld   de, 256
+	add  hl, de
+	ld   (FFC_BASE), hl
+	ld   hl, (FFC_LEFT)
+	dec  hl
+	ld   (FFC_LEFT), hl
+	call inc_sd_lba
+	jr   .ffc_sec
+.ffc_found:
+	ld   hl, (FFC_BASE)
+	ld   e, c
+	ld   d, 0
+	add  hl, de
+	ex   de, hl						; DE = cluster
+	or   a							; CF=0
+	ret
+.ffc_none:
+	scf
+	ret
+
+; mark_cluster_eof: set the FAT entry for NEW_CLUS to 0xFFFF in FAT copy 1 and, if
+; NUM_FATS>=2, copy 2. CF=1 on SD error.
+mark_cluster_eof:
+	ld   hl, (NEW_CLUS)
+	ld   a, h
+	ld   (MCE_SEC), a				; FAT sector offset = cluster >> 8
+	ld   l, l						; (entry byte offset = (cluster&255)*2)
+	ld   h, 0
+	ld   a, (NEW_CLUS+0)
+	ld   l, a
+	add  hl, hl						; *2
+	ld   (MCE_OFF), hl
+	ld   hl, (FAT_LBA+0)			; SD_LBA = FAT_LBA + sector offset
+	ld   a, (MCE_SEC)
+	ld   e, a
+	ld   d, 0
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (FAT_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .mce_err
+	ld   hl, SD_BUF
+	ld   de, (MCE_OFF)
+	add  hl, de
+	ld   (hl), #FF
+	inc  hl
+	ld   (hl), #FF
+	call sd_write_sector			; FAT copy 1
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .mce_err
+	ld   a, (NUM_FATS)
+	cp   2
+	jr   c, .mce_ok					; only one FAT -> done
+	ld   hl, (SD_LBA+0)				; FAT copy 2 sector = same + FAT_SZ
+	ld   de, (FAT_SZ)
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (SD_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	call sd_write_sector			; same buffer (FAT copies are identical)
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .mce_err
+.mce_ok:
+	or   a
+	ret
+.mce_err:
+	scf
+	ret
+
+; write_dir_entry: find a free slot in the current partition's root dir and write a
+; 32-byte entry for NEXTOR.EMU (first cluster = NEW_CLUS, size = 512). CF=1 on error.
+write_dir_entry:
+	ld   hl, (ROOT_LBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (ROOT_LBA+2)
+	ld   (SD_LBA+2), hl
+	ld   a, (ROOT_SECS)
+	ld   (WDE_LEFT), a
+.wde_sec:
+	ld   a, (WDE_LEFT)
+	or   a
+	jr   z, .wde_err
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .wde_err
+	ld   ix, SD_BUF
+	ld   b, 16
+.wde_ent:
+	ld   a, (ix+0)
+	or   a
+	jr   z, .wde_found				; 0x00 = free (end of dir)
+	cp   #E5
+	jr   z, .wde_found				; deleted -> reuse
+	ld   de, 32
+	add  ix, de
+	djnz .wde_ent
+	call inc_sd_lba
+	ld   a, (WDE_LEFT)
+	dec  a
+	ld   (WDE_LEFT), a
+	jr   .wde_sec
+.wde_found:
+	push ix							; zero the 32-byte slot
+	pop  hl
+	ld   d, h
+	ld   e, l
+	inc  de
+	ld   (hl), 0
+	ld   bc, 31
+	ldir
+	push ix							; name "NEXTOR  EMU"
+	pop  hl
+	ld   de, emuFileName
+	ld   b, 11
+.wde_name:
+	ld   a, (de)
+	ld   (hl), a
+	inc  hl
+	inc  de
+	djnz .wde_name
+	ld   (ix+11), #20				; attr = archive
+	ld   hl, (NEW_CLUS)
+	ld   (ix+26), l					; first cluster low
+	ld   (ix+27), h					; first cluster high
+	ld   (ix+28), #00				; size = 512 bytes (0x00000200)
+	ld   (ix+29), #02
+	ld   (ix+30), #00
+	ld   (ix+31), #00
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .wde_err
+	or   a							; CF=0
+	ret
+.wde_err:
+	scf
 	ret
 
 ; print A as two upper-case hex digits via CHPUT
@@ -3439,16 +3903,12 @@ sdStatusStr:
 	.db "Status (00=OK 01=initTO 02=readTO): ",0
 sdTypeStr:
 	.db "Card type (1=v1 2=v2 3=SDHC): ",0
-sdSigStr:
-	.db "Sig 510,511 (espera 55AA): ",0
-sdWaitStr:
-	.db "Pulsa una tecla para volver...",0
-romHdrStr:
-	.db "Raiz SD ([DIR]=carpeta, .ROM=juego):",0
 tagDirStr:
 	.db "[DIR] ",0
 tagRomStr:
-	.db "      ",0
+	.db "[ROM] ",0
+tagDskStr:
+	.db "[DSK] ",0
 hdrTitleStr:
 	.db "MSX Nano  v1.5",0
 footerStr:
@@ -3479,8 +3939,6 @@ romClusStr:
 	.db "Tamano: ",0
 romSpcStr:
 	.db "  Mapper: ",0
-romFirstStr:
-	.db "Primeros bytes: ",0
 mapPlainStr:
 	.db "Plain (lineal)",0
 mapKonStr:
@@ -3493,34 +3951,30 @@ mapA16Str:
 	.db "ASCII16",0
 mapUnkStr:
 	.db "? (desconocido)",0
-megP42Str:
-	.db "P42=",0
-megB0Str:
-	.db "  Antes=",0
-megTestStr:
-	.db "  Desp(A5 5A)=",0
-launchStr:
-	.db "RETURN=cargar a megaram   ESC=volver",0
 loadingStr:
 	.db "Cargando ROM en megaram...",0
-segStr:
-	.db "Verif seg0(41 42)=",0
-seg1Str:
-	.db "  seg1=",0
 launch2Str:
 	.db "RETURN=LANZAR JUEGO   ESC=volver",0
+dskInfoStr:
+	.db "Disco seleccionado:",0
+dskMountStr:
+	.db "Montando disco (Nextor) y arrancando...",0
+dskFragStr:
+	.db "DSK fragmentado: copialo de nuevo. Pulsa tecla",0
+dskAskStr:
+	.db "RETURN=montar y lanzar   ESC=volver",0
+dskNoEmuStr:
+	.db "Falta NEXTOR.EMU (>=512B) en la raiz. Tecla",0
+dskWrErrStr:
+	.db "Error escribiendo en la SD. Pulsa una tecla",0
+; Nextor disk-emulation "one-time" signature (16-byte field: 15 chars + NUL)
+emuSig:
+	.db "NEXTOR_EMU_DATA",0
+; 8.3 name of the helper file that holds the emulation data file (root dir)
+emuFileName:
+	.db "NEXTOR  EMU"
 readingStr:
 	.db "Leyendo SD...",0
-partTabStr:
-	.db " TAB=cambiar",0
-partHdrStr:
-	.db "Tabla de particiones (MBR):",0
-partTStr:
-	.db " t=",0
-partLStr:
-	.db " LBA=",0
-partSStr:
-	.db " sec=",0
 noSdStr:
 	.db "No se detecta la tarjeta SD.",0
 noSdStr2:
