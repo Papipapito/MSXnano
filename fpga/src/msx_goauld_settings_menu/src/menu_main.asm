@@ -76,6 +76,17 @@ main_menu_entry:
 	ld   a, b
 	cp   #99
 	jp   z, main_action_boot		; pending boot -> continue the boot, skip the menu
+	; Wipe any stale Nextor disk-emulation pointer in RAM (#A000). The one-time
+	; record we write for .dsk launch survives a WARM reset, so without this a plain
+	; "arrancar sistema" (ESC) after a previous .dsk would make Nextor re-enter
+	; emulation and hang. Only the .dsk launch path re-writes it, later than here.
+	ld   hl, #A000
+	ld   de, #A001
+	ld   bc, 15
+	ld   (hl), 0
+	ldir							; zero the 16-byte "NEXTOR_EMU_DATA" signature
+	ld   a, 2
+	ld   (FILTER), a				; default tab = ALL
 	xor  a
 	ld   (var_mainSel), a			; start with first option highlighted
 
@@ -283,7 +294,7 @@ NAME_OFF	equ	7				; name offset inside a record (after type+cluster+size)
 NAME_MAX	equ	72				; max name chars stored (+ NUL) -> longer than the
 								; 59-col window so long names overflow and marquee-scroll
 NAME_WIN	equ	59				; name display window width (cols 9..67, size at 69)
-VISIBLE		equ	19				; entries per page (list rows 3..21; hdr rows 1-2, sep 22, footer 23)
+VISIBLE		equ	18				; entries per page (list rows 4..21; hdr 1, tabs 2, line 3, sep 22, footer 23)
 MAX_ENT		equ	115				; array capacity (115*80 = 9200 bytes -> C300..E6F0)
 HAVE_LFN	equ	#C02B			; 1 byte: a long-file-name is being accumulated
 LFN_BUF		equ	#C02C			; 80 bytes: assembled long file name (C02C..C07B)
@@ -335,6 +346,7 @@ MCE_OFF		equ	#C0F3			; 2 bytes: byte offset of the FAT entry within its sector
 WDE_LEFT	equ	#C0F5			; 1 byte: root-dir sectors left to scan
 MCE_SEC		equ	#C0F6			; 1 byte: FAT sector offset of the cluster entry
 BR_BLINK	equ	#C0F7			; 1 byte: per-row blink-attr fill byte (dir colour)
+FILTER		equ	#C0F8			; 1 byte: active tab filter (0=ROM, 1=DSK, 2=ALL)
 ; --- multi-partition support (placed at #E800, above ENT_ARRAY C300..E700) ---
 MAX_PARTS	equ	8
 PART_TBL	equ	#E800			; up to 8 entries x 4 bytes = start LBA of each FAT16 partition
@@ -789,6 +801,17 @@ scan_current:
 .scr_isrom:
 	ld   c, 1						; type 1 = rom
 .scr_store:
+	; active-tab filter: dirs (c=0) always kept; files filtered by type.
+	ld   a, c
+	or   a
+	jr   z, .scr_fltok				; directory -> keep
+	ld   a, (FILTER)
+	cp   2
+	jr   z, .scr_fltok				; ALL -> keep
+	inc  a							; FILTER 0->1 (rom), 1->2 (dsk)
+	cp   c							; c = type (1=rom, 2=dsk)
+	jp   nz, .scr_drop				; type doesn't match the active tab -> skip
+.scr_fltok:
 	; name source: assembled LFN if any, else the 8.3 short name
 	ld   a, (HAVE_LFN)
 	or   a
@@ -1556,12 +1579,41 @@ browse:
 	jp   z, .br_help
 	cp   #68						; 'h'
 	jp   z, .br_help
+	cp   #52						; 'R' -> filter: ROMs only
+	jp   z, .br_from
+	cp   #72						; 'r'
+	jp   z, .br_from
+	cp   #44						; 'D' -> filter: disks only
+	jp   z, .br_fdsk
+	cp   #64						; 'd'
+	jp   z, .br_fdsk
+	cp   #41						; 'A' -> filter: all
+	jp   z, .br_fall
+	cp   #61						; 'a'
+	jp   z, .br_fall
 	cp   #1B						; ESC -> arrancar sistema (boot the OS)
 	jp   z, boot_system
 	jr   .br_key
 .br_help:
 	call help_screen
 	jp   .br_redraw
+.br_from:
+	xor  a							; FILTER = 0 (ROM)
+	jr   .br_setfilter
+.br_fdsk:
+	ld   a, 1						; FILTER = 1 (DSK)
+	jr   .br_setfilter
+.br_fall:
+	ld   a, 2						; FILTER = 2 (ALL)
+.br_setfilter:
+	ld   (FILTER), a
+	call scan_current				; re-scan current dir applying the new filter
+	xor  a
+	ld   (BR_SEL), a
+	ld   (BR_TOP), a
+	call draw_tabs					; update active-tab highlight
+	call refresh_list				; soft repaint (no full-screen flicker)
+	jp   .br_key
 .br_nextpart:
 	ld   a, (PART_CNT)
 	cp   2
@@ -1687,7 +1739,8 @@ browse:
 	xor  a
 	ld   (BR_SEL), a
 	ld   (BR_TOP), a
-	jp   .br_redraw					; full redraw of the new directory
+	call refresh_list				; soft repaint of the new directory (no flicker)
+	jp   .br_key
 .br_selrom:
 	; --- selected file: load it straight into the megaram, then offer to launch.
 	;     No debug dump, no separate "load" step -> fastest path to launch. ---
@@ -1833,6 +1886,7 @@ browse:
 	jr   nc, .bsd_haveemu
 	call create_emufile				; not found -> create it (CF=1 on failure)
 	jr   nc, .bsd_haveemu
+.bsd_noemu:
 	ld   hl, #0107
 	call POSIT
 	ld   hl, dskNoEmuStr
@@ -1840,8 +1894,17 @@ browse:
 	call browse_getkey
 	jp   .br_redraw
 .bsd_haveemu:
-	; FILE_CLUS now = NEXTOR.EMU first cluster -> its abs LBA = the data-file sector
+	; FILE_CLUS now = NEXTOR.EMU first cluster -> its abs LBA = the data-file sector.
+	; Safety net: never write with cluster < 2 (set_scan_start(0/1) would target the
+	; root dir / reserved area and corrupt the filesystem).
 	ld   hl, (FILE_CLUS)
+	ld   a, h
+	or   a
+	jr   nz, .bsd_clok
+	ld   a, l
+	cp   2
+	jp   c, .bsd_noemu				; invalid cluster -> abort, do NOT write
+.bsd_clok:
 	ld   (CUR_CLUS), hl
 	call set_scan_start
 	ld   hl, (SD_LBA+0)
@@ -1894,7 +1957,8 @@ browse:
 	xor  a
 	ld   (BR_SEL), a
 	ld   (BR_TOP), a
-	jp   .br_redraw
+	call refresh_list				; soft repaint of the parent directory (no flicker)
+	jp   .br_key
 
 ; print_rom_kb: print the selected ROM's size in KB (decimal) from BR_REC.
 print_rom_kb:
@@ -2068,102 +2132,80 @@ read_joy_code:
 	ld   a, #08
 	ret
 
-; draw_hline: A = row (1-based). Draw a 78-char separator line ('=').
+; draw_hline: A = row (1-based). Draw a thin horizontal line using the custom glyph
+; (char 0x10) written straight into the name table — CHPUT would interpret control
+; codes, so we FILVRM the code into VRAM (name table at 0x0000, 80 cols/row).
 draw_hline:
-	ld   h, 1
+	dec  a							; physical row (0-based)
 	ld   l, a
-	call POSIT
-	ld   b, 78
-.dhl_loop:
-	ld   a, '='						; separator line
-	push bc
-	call CHPUT
-	pop  bc
-	djnz .dhl_loop
+	ld   h, 0
+	add  hl, hl						; *2
+	add  hl, hl						; *4
+	add  hl, hl						; *8
+	add  hl, hl						; *16
+	ld   d, h
+	ld   e, l						; DE = row*16
+	add  hl, hl						; *32
+	add  hl, hl						; *64
+	add  hl, de						; HL = row*80 (name-table offset)
+	ld   a, #10						; thin-line glyph
+	ld   bc, 78
+	call FILVRM
 	ret
 
-; read_clock: read the RTC (RP-5C01 at ports B4/B5, block 0) into CLK_STR = "HH:MM:SS".
-read_clock:
+; load_font: (re)load our custom glyphs into the TEXT2 pattern table (VRAM 0x1000).
+; Must run after every INITXT (which reloads the BIOS font). Char 0x10 = thin line.
+load_font:
 	di
-	ld   a, #0D
-	out  (#B4), a					; point to mode register
-	in   a, (#B5)
-	and  #0C						; keep timer/alarm enables, select block 0
-	out  (#B5), a
-	ld   a, 5
-	out  (#B4), a
-	in   a, (#B5)
-	and  #03
-	add  a, '0'
-	ld   (CLK_STR+0), a				; hours tens
-	ld   a, 4
-	out  (#B4), a
-	in   a, (#B5)
-	and  #0F
-	add  a, '0'
-	ld   (CLK_STR+1), a				; hours units
-	ld   a, 3
-	out  (#B4), a
-	in   a, (#B5)
-	and  #07
-	add  a, '0'
-	ld   (CLK_STR+3), a				; minutes tens
-	ld   a, 2
-	out  (#B4), a
-	in   a, (#B5)
-	and  #0F
-	add  a, '0'
-	ld   (CLK_STR+4), a				; minutes units
-	ld   a, 1
-	out  (#B4), a
-	in   a, (#B5)
-	and  #07
-	add  a, '0'
-	ld   (CLK_STR+6), a				; seconds tens
-	xor  a
-	out  (#B4), a
-	in   a, (#B5)
-	and  #0F
-	add  a, '0'
-	ld   (CLK_STR+7), a				; seconds units
-	ld   a, ':'
-	ld   (CLK_STR+2), a
-	ld   (CLK_STR+5), a
-	xor  a
-	ld   (CLK_STR+8), a				; terminator
+	ld   a, #80						; VRAM write addr = 0x1080 (0x1000 + 0x10*8)
+	out  (#99), a
+	ld   a, #50						; high 0x10 | write bit 0x40 -> char 0x10
+	out  (#99), a
+	ld   hl, font_pat
+	ld   b, 8
+.lf_loop:
+	ld   a, (hl)
+	out  (#98), a
+	inc  hl
+	djnz .lf_loop
 	ei
 	ret
+font_pat:
+	.db #00,#00,#00,#00,#FF,#00,#00,#00	; 0x10 thin horizontal line (row 4)
 
-; draw_clock: print the clock at the top-right of the header (row 1, X=72).
-draw_clock:
-	call read_clock
-	ld   hl, #4801					; X=72, Y=1
+; draw_tabs: row 2 filter tabs "[R]OM [D]SK [A]LL"; active one inverse via blink.
+draw_tabs:
+	ld   hl, #0102					; X=1, Y=2
 	call POSIT
-	ld   hl, CLK_STR
+	ld   hl, tabRStr
 	call print_string
-	ret
-
-; clock_tick: called from the input wait loop; refresh the clock once per second.
-clock_tick:
-	ld   a, (BROWSING)				; only while the browser is on screen
-	or   a
-	ret  z
-	di
-	ld   a, #0D
-	out  (#B4), a
-	in   a, (#B5)
-	and  #0C
-	out  (#B5), a
+	ld   hl, #0902					; X=9, Y=2
+	call POSIT
+	ld   hl, tabDStr
+	call print_string
+	ld   hl, #1102					; X=17, Y=2
+	call POSIT
+	ld   hl, tabAStr
+	call print_string
+	; blink table: row 2 is physical row 1 -> base 0x0800 + 1*10 = 0x080A.
+	; Tab cells live in bytes 0,1,2 of that row (cols 0-7, 8-15, 16-23).
 	xor  a
-	out  (#B4), a
-	in   a, (#B5)
-	and  #0F						; seconds units
-	ei
-	ld   hl, CLK_LAST
-	cp   (hl)
-	ret  z							; same second -> no redraw
-	ld   (hl), a
-	jp   draw_clock
+	ld   bc, 3
+	ld   hl, #080A
+	call FILVRM						; clear the 3 tab attr bytes
+	ld   a, (FILTER)				; active tab byte = FILTER (0=ROM,1=DSK,2=ALL)
+	ld   e, a
+	ld   d, 0
+	ld   hl, #080A
+	add  hl, de
+	ld   a, #FF
+	ld   bc, 1
+	call FILVRM						; inverse-highlight the active tab
+	; thin baseline under the tabs (row 3), with a gap under the active tab so it
+	; "connects" into the list below (folder-tab look)
+	ld   a, 3
+	call draw_hline					; full thin line under the tabs (no gap; the active
+	ret								; tab is already shown highlighted in inverse)
 
 ; draw_footer: bottom shortcut bar (row 23) with the partition indicator.
 draw_footer:
@@ -2246,7 +2288,11 @@ help_screen:
 ; refresh_list: repaint ONLY the list area (rows 3..21) + the footer partition
 ; indicator, leaving the header/clock and separator lines untouched (no flash).
 refresh_list:
-	ld   a, 3
+	xor  a							; clear the list rows' blink attrs first, so rows
+	ld   bc, 180					; that become empty don't keep a stale inverse bar
+	ld   hl, #081E					; 0x0800 + physical row 3 * 10 (18 rows * 10 bytes)
+	call FILVRM
+	ld   a, 4
 .rl_clear:
 	push af
 	ld   h, 1
@@ -2262,6 +2308,7 @@ refresh_list:
 	jr   c, .rl_clear
 	call draw_rows
 	call draw_footer
+	call draw_counter
 	ret
 
 ; draw_browser: full repaint (clear + header), then fall into draw_rows.
@@ -2270,14 +2317,13 @@ draw_browser:
 	; --- header row 1: title + build (left), live clock (right) ---
 	ld   hl, #0101					; X=1, Y=1
 	call POSIT
-	ld   hl, hdrTitleStr			; "MSX Nano  v1.5"
+	ld   hl, hdrTitleStr			; "MSX Nano  v1.6"
 	call print_string
-	; --- separator lines (rows 2 and 22) + footer (row 23) ---
-	ld   a, 2
-	call draw_hline
+	call draw_tabs					; row 2: filter tabs (active inverse)
 	ld   a, 22
-	call draw_hline
+	call draw_hline					; thin separator above the footer
 	call draw_footer
+	call draw_counter				; "sel/total" centred on the bottom line
 	; --- file list (rows 3..21) ---
 	call draw_rows
 	ret
@@ -2307,11 +2353,41 @@ draw_rows:
 ; draw_entry: A = entry index. Print marker + [DIR]/file tag + name at its row.
 draw_entry:
 	ld   (BR_TMP), a
+	; --- full-width inverse highlight on the SELECTED row (File-Hunter "hover") ---
+	; A = idx on entry; set this row's 10 TEXT2 blink-attr bytes (VRAM 0x0800+Y*10)
+	; to 0xFF when selected (-> R12 inverse colour), 0x00 otherwise.
+	ld   hl, BR_SEL
+	cp   (hl)
+	ld   a, #FF
+	jr   z, .de_blsel
+	xor  a
+.de_blsel:
+	ld   (BR_BLINK), a
+	ld   a, (BR_TMP)				; physical row (0-based) = 2 + (idx - BR_TOP)
+	ld   c, a						; (POSIT row is 1-based Y=3; blink table is 0-based)
+	ld   a, (BR_TOP)
+	neg
+	add  a, c
+	add  a, 3
+	ld   l, a
+	ld   h, 0
+	ld   c, l
+	ld   b, h
+	add  hl, hl
+	add  hl, hl
+	add  hl, bc
+	add  hl, hl						; HL = row*10 (10 attr bytes per 80-col line)
+	ld   bc, #0800
+	add  hl, bc						; HL = 0x0800 + row*10
+	ld   a, (BR_BLINK)
+	ld   bc, 10
+	call FILVRM						; paint the row's blink attribute
+	ld   a, (BR_TMP)
 	ld   c, a						; idx
 	ld   a, (BR_TOP)
 	neg
 	add  a, c						; rel = idx - BR_TOP (0..21)
-	add  a, 3						; Y = 3 + rel (list rows 3..21)
+	add  a, 4						; Y = 4 + rel (list rows 4..21)
 	ld   l, a
 	ld   h, 1						; X = 1
 	call POSIT
@@ -2328,39 +2404,33 @@ draw_entry:
 	ld   a, (BR_TMP)
 	call ent_addr
 	ld   (BR_REC), hl
-	ld   a, (hl)					; type (0=dir, 1=rom, 2=dsk)
-	or   a
-	ld   hl, tagDirStr
-	jr   z, .de1					; 0 = directory
-	dec  a
-	ld   hl, tagRomStr
-	jr   z, .de1					; 1 = rom
-	ld   hl, tagDskStr				; 2 = dsk
-.de1:
-	call print_string
-	ld   hl, (BR_REC)
+	; --- name (no type tag; HL already = record) ---
 	ld   de, NAME_OFF
 	add  hl, de
 	ld   b, NAME_WIN
 	call print_name_win				; the name (record+7), padded to NAME_WIN
 	ld   a, #1B						; ESC
 	call CHPUT
-	ld   a, 'K'						; VT-52 "erase to end of line": self-clear leftovers
+	ld   a, 'K'						; VT-52 "erase to end of line"
 	call CHPUT
-	; --- file size in KB, right side (ROMs only) ---
-	ld   hl, (BR_REC)
-	ld   a, (hl)					; type
-	or   a
-	ret  z							; directory -> no size
-	ld   a, (BR_TMP)				; reposition cursor to the size column
+	; --- right column (X=69): "[DIR]" for directories, size in KB for files ---
+	ld   a, (BR_TMP)
 	ld   c, a
 	ld   a, (BR_TOP)
 	neg
 	add  a, c
-	add  a, 3
+	add  a, 4
 	ld   l, a
-	ld   h, 69						; X = 69 (size column, moved right)
+	ld   h, 69						; X = 69 (right column)
 	call POSIT
+	ld   hl, (BR_REC)
+	ld   a, (hl)					; type
+	or   a
+	jr   nz, .de_size				; file -> show KB size
+	ld   hl, tagDirStr				; directory -> "[DIR]" in the right column
+	call print_string
+	ret
+.de_size:
 	; KB = (size>>16)*64 + (size_byte1 >> 2)
 	ld   hl, (BR_REC)
 	ld   de, 4
@@ -2514,14 +2584,14 @@ marquee_tick:
 ; draw_sel_name_window: redraw the selected row's name window at offset MQ_OFF
 ; (leaves the marker, tag and size columns intact).
 draw_sel_name_window:
-	ld   a, (BR_SEL)				; screen row = 2 + (BR_SEL - BR_TOP)
+	ld   a, (BR_SEL)				; screen row = 4 + (BR_SEL - BR_TOP)
 	ld   c, a
 	ld   a, (BR_TOP)
 	neg
 	add  a, c
-	add  a, 3
+	add  a, 4
 	ld   l, a
-	ld   h, 9						; X = name column
+	ld   h, 3						; X = name column (no type tag now)
 	call POSIT
 	ld   a, (BR_SEL)
 	call ent_addr
@@ -2549,10 +2619,32 @@ ent_addr:
 ; cls_browser: SCREEN 0 + clear the TEXT2 blink colour table (removes the white bar).
 cls_browser:
 	call INITXT
+	call load_font					; INITXT reloads the BIOS font -> restore our glyphs
 	ld   a, 0
 	ld   bc, 240
 	ld   hl, #0800
 	call FILVRM
+	ret
+
+; draw_counter: show "sel/total" centred over the bottom separator line (row 22).
+draw_counter:
+	ld   hl, #2316					; X=35, Y=22 (roughly centred on 80 cols)
+	call POSIT
+	ld   a, ' '
+	call CHPUT
+	ld   a, (BR_SEL)
+	inc  a
+	ld   l, a
+	ld   h, 0
+	call print_dec16
+	ld   a, '/'
+	call CHPUT
+	ld   a, (ENT_COUNT)
+	ld   l, a
+	ld   h, 0
+	call print_dec16
+	ld   a, ' '
+	call CHPUT
 	ret
 
 ; ix_is_rom: Z set if the entry's extension (ix+8..10) is "ROM" (upper-case).
@@ -2827,6 +2919,16 @@ find_emufile:
 	inc  hl
 	inc  de
 	djnz .fe_cmp
+	; name matches -> require first cluster >= 2. A 0-byte file has cluster 0, and
+	; set_scan_start(0) points at the ROOT DIR, so writing the data file there would
+	; CORRUPT the root directory. Skip such an entry and keep searching.
+	ld   a, (ix+27)
+	or   a
+	jr   nz, .fe_take
+	ld   a, (ix+26)
+	cp   2
+	jr   c, .fe_next				; cluster 0 or 1 -> unusable
+.fe_take:
 	ld   a, (ix+26)					; match -> first cluster
 	ld   (FILE_CLUS+0), a
 	ld   a, (ix+27)
@@ -3910,9 +4012,15 @@ tagRomStr:
 tagDskStr:
 	.db "[DSK] ",0
 hdrTitleStr:
-	.db "MSX Nano  v1.5",0
+	.db "MSX Nano  v1.6",0
+tabRStr:
+	.db "[R]OM",0
+tabDStr:
+	.db "[D]SK",0
+tabAStr:
+	.db "[A]LL",0
 footerStr:
-	.db "W=WiFi  ESC=Boot  S=Settings  TAB=Particion  H=Ayuda",0
+	.db "R/D/A=Filtro  ESC=Boot  S=Set  W=WiFi  TAB=Part  H=Ayuda",0
 helpTitleStr:
 	.db "MSXnano - AYUDA",0
 help1Str:
