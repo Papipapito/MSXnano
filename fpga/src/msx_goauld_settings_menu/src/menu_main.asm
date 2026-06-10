@@ -1115,42 +1115,6 @@ copy_name:
 	ld   (de), a
 	ret
 
-; print_hex32le: imprime el dword LE en (HL) como 8 digitos hex (MSB primero).
-print_hex32le:
-	push hl
-	ld   de, 3
-	add  hl, de
-	ld   b, 4
-.ph32:
-	ld   a, (hl)
-	push bc
-	push hl
-	call print_hex8
-	pop  hl
-	pop  bc
-	dec  hl
-	djnz .ph32
-	pop  hl
-	ret
-
-; print_hex8: imprime A como 2 digitos hex.
-print_hex8:
-	push af
-	rrca
-	rrca
-	rrca
-	rrca
-	call .ph_nib
-	pop  af
-.ph_nib:
-	and  #0F
-	add  a, '0'
-	cp   '9'+1
-	jr   c, .ph_put
-	add  a, 7
-.ph_put:
-	jp   CHPUT
-
 ; inc16: HL = address of a 16-bit counter -> increment it.
 inc16:
 	inc  (hl)
@@ -1902,41 +1866,6 @@ browse:
 	ld   hl, loadingStr				; "Cargando ROM en megaram..."
 	call print_string
 	call load_rom					; load now, automatically (progress bar)
-	; --- DBG FAT32: C=cluster L=LBA F=fs S=shift P=mapper M=megaram[0..1] ---
-	ld   hl, #010B
-	call POSIT
-	ld   a, 'C'
-	call CHPUT
-	ld   hl, FILE_CLUS
-	call print_hex32le
-	ld   a, 'L'
-	call CHPUT
-	ld   hl, FILE_CLUS				; recomputar LBA del primer cluster
-	ld   de, W_TMP
-	call w_copy
-	call clus2lba
-	ld   hl, SD_LBA
-	call print_hex32le
-	ld   a, 'R'
-	call CHPUT
-	ld   hl, PART_LBA				; inicio absoluto de la particion
-	call print_hex32le
-	ld   a, 'T'
-	call CHPUT
-	call sd_read_sector				; leer el sector L: 2 primeros bytes
-	ld   a, (SD_BUF+0)
-	call print_hex8
-	ld   a, (SD_BUF+1)
-	call print_hex8
-	ld   a, 'A'						; test de ALIAS: mismo LBA con byte3=0
-	call CHPUT
-	xor  a
-	ld   (SD_LBA+3), a
-	call sd_read_sector
-	ld   a, (SD_BUF+0)
-	call print_hex8
-	ld   a, (SD_BUF+1)
-	call print_hex8
 	ld   hl, #0109
 	call POSIT
 	ld   hl, launch2Str				; "RETURN=LANZAR JUEGO   ESC=volver"
