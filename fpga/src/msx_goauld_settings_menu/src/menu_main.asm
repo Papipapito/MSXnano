@@ -1923,32 +1923,19 @@ browse:
 	call print_hex32le
 	ld   a, 'T'
 	call CHPUT
-	call sd_read_sector				; leer el sector L y mostrar sus 2 primeros bytes
+	call sd_read_sector				; leer el sector L: 2 primeros bytes
 	ld   a, (SD_BUF+0)
 	call print_hex8
 	ld   a, (SD_BUF+1)
 	call print_hex8
-	ld   a, 'M'
+	ld   a, 'A'						; test de ALIAS: mismo LBA con byte3=0
 	call CHPUT
-	di								; releer megaram seg 0: cabecera de la ROM ("AB")
-	ld   a, MEG_SLOT
-	ld   hl, #4000
-	call ENASLT
 	xor  a
-	ld   (#7FFE), a					; write-protect = modo cartucho normal
-	xor  a
-	ld   (#5000), a					; banco 0 en 4000-5FFF (bank-write estilo SCC)
-	ld   a, (#4000)
-	ld   b, a
-	ld   a, (#4001)
-	ld   c, a
-	ld   a, #87						; page 1 de vuelta al menu (slot 3-1)
-	ld   hl, #4000
-	call ENASLT
-	ei
-	ld   a, b
+	ld   (SD_LBA+3), a
+	call sd_read_sector
+	ld   a, (SD_BUF+0)
 	call print_hex8
-	ld   a, c
+	ld   a, (SD_BUF+1)
 	call print_hex8
 	ld   hl, #0109
 	call POSIT
