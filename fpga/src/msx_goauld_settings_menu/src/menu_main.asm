@@ -762,8 +762,13 @@ scan_current:
 	ld   hl, ENT_ARRAY
 	ld   (ARR_PTR), hl
 	call set_scan_start
+	ld   hl, (CUR_CLUS)
+	ld   (SCAN_CLUS), hl			; working cluster for FAT-chain walk (subdirs)
 .scr_sec:
 	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jp   nz, .scr_done				; SD read failed -> stop, keep entries gathered so far
 	ld   ix, SD_BUF
 	ld   a, 16
 	ld   (ent_in_sec), a
@@ -875,7 +880,58 @@ scan_current:
 	dec  a
 	ld   (sec_left), a
 	jp   nz, .scr_sec
+	call scan_next_cluster			; subdir spanning >1 cluster: follow FAT chain
+	jp   c, .scr_sec				; CF=1 -> a new cluster is ready, keep scanning
 .scr_done:
+	ret
+
+; scan_next_cluster: advance the directory scan to the next cluster of the current
+; subdirectory by following the FAT chain. Returns CF=1 if a new valid cluster was
+; set up (SD_LBA + sec_left ready), CF=0 if there is no next cluster (root dir, end
+; of chain, bad cluster, or SD error). Destroys SD_BUF.
+scan_next_cluster:
+	ld   hl, (CUR_CLUS)
+	ld   a, h
+	or   l
+	jr   z, .snc_none				; root directory has no FAT chain
+	ld   de, (SCAN_CLUS)
+	call fat_next_cluster			; DE = next cluster (reads a FAT sector into SD_BUF)
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .snc_none				; FAT read failed -> stop
+	ld   a, d
+	cp   #FF
+	jr   z, .snc_none				; 0xFFxx -> end of chain (treat reserved as EOC)
+	or   a							; cluster high byte != 0 -> >= 256, valid
+	jr   nz, .snc_use
+	ld   a, e
+	cp   2
+	jr   c, .snc_none				; cluster 0/1 -> invalid
+.snc_use:
+	ld   (SCAN_CLUS), de
+	call set_scan_from_de			; SD_LBA + sec_left for cluster in DE
+	scf
+	ret
+.snc_none:
+	or   a							; CF=0
+	ret
+
+; set_scan_from_de: DE = data cluster; set SD_LBA = DATA_LBA + (cluster-2)*SEC_PER_CLUS
+; and sec_left = SEC_PER_CLUS. (Cluster-addressed variant of set_scan_start's data path.)
+set_scan_from_de:
+	ld   hl, (DATA_LBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (DATA_LBA+2)
+	ld   (SD_LBA+2), hl
+	dec  de
+	dec  de							; cluster - 2
+	ld   a, (SEC_PER_CLUS)
+	ld   b, a
+.ssd_loop:
+	call add32_de
+	djnz .ssd_loop
+	ld   a, (SEC_PER_CLUS)
+	ld   (sec_left), a
 	ret
 
 ; lfn_accumulate: place the 13 chars of this LFN entry (IX) into LFN_BUF at
@@ -1345,25 +1401,6 @@ load_rom:
 .lro_done:
 	pop  hl
 	ld   (CUR_CLUS), hl
-	ret
-
-; read_megaram_seg: A = segment; read its first 8 bytes from the megaram into MEG_RB.
-read_megaram_seg:
-	push af
-	ld   a, MEG_SLOT
-	ld   hl, #4000
-	call ENASLT
-	xor  a
-	ld   (#7FFE), a					; write-disable so the bank register accepts the write
-	pop  af
-	ld   (#5000), a					; megaram_reg0 = segment
-	ld   hl, #4000
-	ld   de, MEG_RB
-	ld   bc, 8
-	ldir
-	ld   a, #87
-	ld   hl, #4000
-	call ENASLT
 	ret
 
 ; override_mapper_by_name: if the selected file's name contains a GoodMSX mapper
@@ -3063,8 +3100,7 @@ mark_cluster_eof:
 	ld   hl, (NEW_CLUS)
 	ld   a, h
 	ld   (MCE_SEC), a				; FAT sector offset = cluster >> 8
-	ld   l, l						; (entry byte offset = (cluster&255)*2)
-	ld   h, 0
+	ld   h, 0						; (entry byte offset = (cluster&255)*2)
 	ld   a, (NEW_CLUS+0)
 	ld   l, a
 	add  hl, hl						; *2
@@ -3995,16 +4031,6 @@ mainOpt4Str:
 	.db "4. Ajustes",0
 mainHintStr:
 	.db "Flechas para mover - ENTER/ESPACIO para elegir",0
-msgSoonM2Str:
-	.db "Lanzar ROM de la SD: Proximamente (M2). Pulsa una tecla...",0
-msgSoonM3Str:
-	.db "Configuracion WiFi: Proximamente (M3). Pulsa una tecla...",0
-sdTestStr:
-	.db "SD READ TEST - sector 0",0
-sdStatusStr:
-	.db "Status (00=OK 01=initTO 02=readTO): ",0
-sdTypeStr:
-	.db "Card type (1=v1 2=v2 3=SDHC): ",0
 tagDirStr:
 	.db "[DIR] ",0
 tagRomStr:
@@ -4087,28 +4113,6 @@ noSdStr:
 	.db "No se detecta la tarjeta SD.",0
 noSdStr2:
 	.db "RETURN=Boot MSX   S=Settings   W=WiFi",0
-brSelStr:
-	.db "Sel: ",0
-partTypeStr:
-	.db "Ptype=",0
-partLbaStr:
-	.db " pLBA=",0
-bpbBpsStr:
-	.db "BPS=",0
-bpbSpcStr:
-	.db " SPC=",0
-bpbRsvStr:
-	.db " RSV=",0
-bpbNfatStr:
-	.db "NFAT=",0
-bpbRentStr:
-	.db " REnt=",0
-bpbFs16Str:
-	.db " FS16=",0
-bpbFs32Str:
-	.db "FS32=",0
-bpbRclusStr:
-	.db " RtClus=",0
 
 menuTitleStr:
 	.db "MSX Goa'uld Settings Menu v1.23",0
