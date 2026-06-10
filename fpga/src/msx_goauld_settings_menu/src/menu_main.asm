@@ -1115,6 +1115,42 @@ copy_name:
 	ld   (de), a
 	ret
 
+; print_hex32le: imprime el dword LE en (HL) como 8 digitos hex (MSB primero).
+print_hex32le:
+	push hl
+	ld   de, 3
+	add  hl, de
+	ld   b, 4
+.ph32:
+	ld   a, (hl)
+	push bc
+	push hl
+	call print_hex8
+	pop  hl
+	pop  bc
+	dec  hl
+	djnz .ph32
+	pop  hl
+	ret
+
+; print_hex8: imprime A como 2 digitos hex.
+print_hex8:
+	push af
+	rrca
+	rrca
+	rrca
+	rrca
+	call .ph_nib
+	pop  af
+.ph_nib:
+	and  #0F
+	add  a, '0'
+	cp   '9'+1
+	jr   c, .ph_put
+	add  a, 7
+.ph_put:
+	jp   CHPUT
+
 ; inc16: HL = address of a 16-bit counter -> increment it.
 inc16:
 	inc  (hl)
@@ -1866,6 +1902,57 @@ browse:
 	ld   hl, loadingStr				; "Cargando ROM en megaram..."
 	call print_string
 	call load_rom					; load now, automatically (progress bar)
+	; --- DBG FAT32: C=cluster L=LBA F=fs S=shift P=mapper M=megaram[0..1] ---
+	ld   hl, #010B
+	call POSIT
+	ld   a, 'C'
+	call CHPUT
+	ld   hl, FILE_CLUS
+	call print_hex32le
+	ld   a, 'L'
+	call CHPUT
+	ld   hl, FILE_CLUS				; recomputar LBA del primer cluster
+	ld   de, W_TMP
+	call w_copy
+	call clus2lba
+	ld   hl, SD_LBA
+	call print_hex32le
+	ld   a, 'F'
+	call CHPUT
+	ld   a, (FS32)
+	add  a, '0'
+	call CHPUT
+	ld   a, 'S'
+	call CHPUT
+	ld   a, (SPC_SHIFT)
+	add  a, '0'
+	call CHPUT
+	ld   a, 'P'
+	call CHPUT
+	ld   a, (MAPPER_ID)
+	call print_hex8
+	ld   a, 'M'
+	call CHPUT
+	di								; releer megaram seg 0: cabecera de la ROM ("AB")
+	ld   a, MEG_SLOT
+	ld   hl, #4000
+	call ENASLT
+	xor  a
+	ld   (#7FFE), a					; write-protect = modo cartucho normal
+	xor  a
+	ld   (#5000), a					; banco 0 en 4000-5FFF (bank-write estilo SCC)
+	ld   a, (#4000)
+	ld   b, a
+	ld   a, (#4001)
+	ld   c, a
+	ld   a, #87						; page 1 de vuelta al menu (slot 3-1)
+	ld   hl, #4000
+	call ENASLT
+	ei
+	ld   a, b
+	call print_hex8
+	ld   a, c
+	call print_hex8
 	ld   hl, #0109
 	call POSIT
 	ld   hl, launch2Str				; "RETURN=LANZAR JUEGO   ESC=volver"
