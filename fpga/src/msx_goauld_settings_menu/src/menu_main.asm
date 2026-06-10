@@ -2007,7 +2007,11 @@ browse:
 .bsd_build:
 	; 5) build the emulation data file in SD_BUF and write it to the EMU_LBA sector
 	call build_emu_datafile
-	call sd_write_sector			; SD_LBA still = EMU_LBA
+	ld   hl, (EMU_LBA+0)			; destino EXPLICITO (no confiar en SD_LBA residual:
+	ld   (SD_LBA+0), hl				; en el camino FAT32 SD_LBA traia el sector del .dsk
+	ld   hl, (EMU_LBA+2)			; y la escritura corrompia la imagen)
+	ld   (SD_LBA+2), hl
+	call sd_write_sector
 	ld   a, (SD_STATUS)
 	or   a
 	jr   z, .bsd_wrok
@@ -3669,6 +3673,13 @@ ENDIF ;ENABLE_SDCARD
 	rlca
 	rlca							; bit5 -> bit0
 	ld   (var_stereo), a
+	ld   a, b
+	and  #10						; Bit 4: pantalla 16:9
+	rrca
+	rrca
+	rrca
+	rrca							; bit4 -> bit0
+	ld   (var_aspct), a
 
 	ei
 
@@ -3716,6 +3727,11 @@ ONOFF_Y = ONOFF_Y + 2
 
 	ld   hl,#2b00 + ONOFF_Y			; Print Stereo Sound
 	ld   a,(var_stereo)
+	call print_on_off
+ONOFF_Y = ONOFF_Y + 2
+
+	ld   hl,#2b00 + ONOFF_Y			; Print Pantalla 16:9
+	ld   a,(var_aspct)
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 
@@ -3839,6 +3855,10 @@ selected_slowdevice:
 
 selected_stereo:
 	ld   hl, var_stereo
+	jp   .selected_on_off
+
+selected_aspect:
+	ld   hl, var_aspct
 	jp   .selected_on_off
 
 selected_slot1Ghost:
@@ -4053,6 +4073,13 @@ ENDIF
 	rrca
 	rrca							; bit0 -> bit5
 	or   b
+	ld   b, a
+	ld   a, (var_aspct)				; #42 Bit 4: pantalla 16:9
+	rlca
+	rlca
+	rlca
+	rlca							; bit0 -> bit4
+	or   b
 	or   #40						; Bit 6: save config in flash
 	ld   b, a
 
@@ -4222,6 +4249,8 @@ slowDeviceStr:
 	.db "Compatible Mode",0
 stereoStr:
 	.db "Stereo Sound",0
+aspectStr:
+	.db "Pantalla 16:9",0
 saveExitStr:
 	.db "Save & Exit",0
 saveResetStr:
@@ -4312,16 +4341,25 @@ POS_Y = POS_Y + 2
 struct_Stereo:
 	.db 21, POS_Y+1
 	.dw stereoStr
-	.dw struct_SlowDevice, struct_SaveExit, struct_Stereo
+	.dw struct_SlowDevice, struct_Aspect, struct_Stereo
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_stereo
 POS_Y = POS_Y + 2
 
+struct_Aspect:
+	.db 21, POS_Y+1
+	.dw aspectStr
+	.dw struct_Stereo, struct_SaveExit, struct_Aspect
+	.dw #0800 + POS_Y*10 + 2
+	.db 4
+	.dw selected_aspect
+POS_Y = POS_Y + 2
+
 struct_SaveExit:
 	.db 21, POS_Y+1
 	.dw saveExitStr
-	.dw struct_Stereo, struct_SaveReset, struct_SaveExit
+	.dw struct_Aspect, struct_SaveReset, struct_SaveExit
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_saveExit
@@ -4387,6 +4425,7 @@ ENDIF
 	var_mapslt: ds 1
 	var_slowdv: ds 1
 	var_stereo: ds 1
+	var_aspct: ds 1
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
