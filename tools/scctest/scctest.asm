@@ -26,6 +26,18 @@ start:
     ld   de, sHello
     call prtstr
 
+    ; Activar la megaram en modo SCC-I, igual que hace el menu al lanzar una ROM
+    ; (en un arranque normal nadie emite este SWIO y la megaram/SCC1 esta inactiva,
+    ; por eso un test en DOS no encontraria nada). OCM: dev 212 + smart cmd #0F.
+    di
+    ld   a, #D4
+    out  (#40), a
+    ld   a, #0F
+    out  (#41), a
+    ei
+    ld   de, sSwio
+    call prtstr
+
     ld   b, 1
 slot_loop:
     push bc
@@ -223,8 +235,11 @@ resCode:
     .db 0
 
 sHello:
-    .db 13,10,"SCCTEST - MSXnano SCC/SCC+ checker",13,10
-    .db "(Stereo ON: SCC megaram=IZQ, 2o SCC=DER)",13,10,13,10,"$"
+    .db 13,10,"SCCTEST v2 - MSXnano SCC/SCC+ checker",13,10
+    .db "(Stereo ON: SCC megaram=IZQ, 2o SCC=DER)",13,10
+    .db "(2o SCC: activar 'Second SCC' en Ajustes)",13,10,13,10,"$"
+sSwio:
+    .db "SWIO #D4/#0F: megaram -> SCC-I slot 2",13,10,13,10,"$"
 sSlot:
     .db "Slot "
 sSlotN:
