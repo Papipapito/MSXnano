@@ -2462,18 +2462,10 @@ memory_ctrl mem1 (
 //        .boot_ok( )
 //    );
 
-    timing_debug debug1(
-        .clk_27m(clk_27m),
-        .clk_108m(clk_108m),
-        .reset_n(bus_reset_n),
-        .bus_iorq_n(ex_bus_iorq_n),
-        .bus_mreq_n(ex_bus_mreq_n),
-        .bus_rd_n(ex_bus_rd_n),
-        .bus_wr_n(ex_bus_wr_n),
-        .send(send),
-
-        .uart_tx(usb_uart_tx)
-    );
+    // timing_debug debug1 removed for production: it registered high-fanout bus
+    // strobes + a UART, costing area/routing at 91% CLS for a dev-only feature.
+    // Re-add temporarily if bus timing needs probing over the USB-C UART.
+    assign usb_uart_tx = 1'b1;      // UART idle
 
     // ===== STANDALONE MERGE: discrete status LEDs (active low) — from MSXnano =====
     // LED[5] TURBO: solid = turbo ON (~4.13MHz); blink (~1.8Hz) = real-MSX speed (also "alive"). LED[4] SD busy;

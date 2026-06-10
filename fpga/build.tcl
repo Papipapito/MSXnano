@@ -127,6 +127,9 @@ add_file tang9k.cst
 add_file Z80_goauld.sdc
 
 set_option -use_sspi_as_gpio 1 -use_mspi_as_gpio 1 -top_module top -verilog_std sysv2017 -include_path src
+# CLS ~91%: higher PnR effort to recover routing-congestion timing on clk_54m
+set_option -place_option 2
+set_option -route_option 2
 
 run syn
 run pnr
