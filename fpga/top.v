@@ -1142,6 +1142,7 @@ assign keyboard_addr = ppi_port_c[3:0];
 
         .audio_sample   (audio_sample),
         .audio_sample_r (audio_sample_r),
+        .aspect_16_9    (config_enable_16_9),
 
         .adc_clk  (),
         .adc_cs   (),
@@ -1704,13 +1705,18 @@ memory_ctrl mem1 (
 `endif
 
     //kanji data
-    wire kanji_data_req_r;
-    wire kanji_data_req_w;
+    // Strobes REGISTRADOS a clk_27m: el decode combinacional desde IORQ formaba la
+    // ruta critica (IORQ -> decode kanji -> mux ram_addr) a 54MHz. El ciclo I/O del
+    // Z80 dura decenas de ciclos, asi que 1 ciclo extra de latencia es inocuo.
+    reg kanji_data_req_r;
+    reg kanji_data_req_w;
     wire kanji_data_ram_req;
     reg [7:0] kanji_data_dout;
     wire [17:0] kanji_data_ram_addr;
-    assign kanji_data_req_w = (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1 : 0; // I/O:B4-B5h   / I/O:D8-DBh / Kanji-data
-    assign kanji_data_req_r = (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1 : 0; // I/O:B4-B5h   / I/O:D8-DBh / Kanji-data
+    always @ (posedge clk_27m) begin
+        kanji_data_req_w <= (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1 : 0; // I/O:D8-DBh / Kanji-data
+        kanji_data_req_r <= (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1 : 0; // I/O:D8-DBh / Kanji-data
+    end
 
     kanji kanji1(
         .clk21m(clk_27m),
@@ -1765,6 +1771,7 @@ memory_ctrl mem1 (
     reg config_enable_sdcard;
     wire config_enable_wait;
     wire config_enable_stereo;
+    wire config_enable_16_9;
     reg config_reset_ff;
     reg config_flash_write_ff;
     reg config_update;
@@ -1856,6 +1863,7 @@ memory_ctrl mem1 (
     //assign config_keyboard = config2_ff[4:3];
     assign config_enable_wait = config2_ff[3];
     assign config_enable_stereo = config2_ff[5];
+    assign config_enable_16_9 = config2_ff[4];
     assign config_req = (bus_addr[7:4] == 4'h4 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
     assign config_dout = ( bus_addr[3:0] == 4'h0 ) ? config0_ff :
                          ( bus_addr[3:0] == 4'h1 ) ? config1_ff :
@@ -1910,6 +1918,8 @@ memory_ctrl mem1 (
     assign config_enable_wait = 0;
     wire config_enable_stereo;
     assign config_enable_stereo = 0;
+    wire config_enable_16_9;
+    assign config_enable_16_9 = 0;
 
 `endif
 

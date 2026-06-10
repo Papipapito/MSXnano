@@ -25,6 +25,7 @@ module v9958_top(
 
     input [15:0] audio_sample,      // left (and legacy mono)
     input [15:0] audio_sample_r,    // right
+    input aspect_16_9,              // AVI InfoFrame: 0 = 4:3, 1 = 16:9
 
     output  adc_clk,
     output  adc_cs,
@@ -468,6 +469,7 @@ module v9958_top(
           .rgb({dvi_r, dvi_g, dvi_b}), 
           .reset( hdmi_reset ),
           .audio_sample_word(audio_sample_word_w),
+          .aspect_16_9(aspect_16_9),
           .cx(cx_ntsc), 
           .cy(cy_ntsc),
           .tmds_internal(tmds_ntsc)
@@ -494,6 +496,7 @@ module v9958_top(
           .rgb({dvi_r, dvi_g, dvi_b}), 
           .reset( hdmi_reset ),
           .audio_sample_word(audio_sample_word_w),
+          .aspect_16_9(aspect_16_9),
           .cx(cx_pal), 
           .cy(cy_pal),
           .tmds_internal(tmds_pal)
