@@ -21,6 +21,59 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * WiFi UART pins aligned with the wiring diagram (`uart_rx` → pin 77, `uart_tx` → pin 73).
 * **Claude (Anthropic)** collaborated on this release.
 
+## What's new in the `MSXNano_Menu` branch (v1.6 preview)
+
+### 🗂️ Boot menu: SD file browser
+The boot menu is now a full SD file browser (File-Hunter style) that starts before the OS:
+
+![SD browser](/pics/menu_browser.jpg)
+
+* **Launch `.ROM` games** straight into the megaram: mapper auto-detection (code scan)
+  plus GoodMSX filename tags (`[KonamiSCC]`, `[ASCII8]`, `[ASCII16]`, ...), progress bar
+  and confirm screen with size/mapper.
+* **Launch `.DSK` images** via Nextor disk emulation — fully automatic, with a
+  fragmentation check. The emulation helper sector is invisible (FAT32: a reserved
+  sector of the partition; FAT16: an auto-created hidden file).
+* **FAT16 + FAT32** support, auto-detected per partition from the BPB. Hybrid cards
+  (e.g. FAT16 + FAT32) work; switch partitions with **TAB**. Long filenames (LFN) with
+  marquee scrolling for long names, subdirectories (multi-cluster chains), filter tabs
+  **[R]OM / [D]SK / [A]LL**, and entry counter.
+* Keys: arrows + RETURN to navigate/launch, BS to go back, R/D/A filters, TAB partition,
+  S settings, W WiFi, ESC boots the system (Nextor/MSX-DOS).
+
+### ⚙️ Settings menu (S)
+Cleaned up and extended — the always-required goauld toggles (mapper/megaram/SD) are
+now forced on and removed from the UI:
+
+![Settings](/pics/menu_settings.jpg)
+
+| Option | What it does |
+|--------|--------------|
+| **Second SCC** | Enables a second SCC+ sound chip in the free slot (for dual-SCC players/trackers) |
+| **Scanlines** | CRT-style scanlines on the HDMI output |
+| **Compatible Mode** | Extra wait-states for picky software |
+| **Stereo Sound** | HDMI stereo: PSG1+SCC1+OPLL left / PSG2+SCC2+OPLL right (off = mono on both) |
+| **Pantalla 16:9** | HDMI AVI InfoFrame aspect signalling: 4:3 (off) or 16:9 (on). The TV decides pillarbox vs stretch |
+| Slots | Mapper / MegaRam / SD slot selection (as before) |
+
+### 🔊 Sound: SCC+ done right (and doubled)
+* **Real SCC+ (SCC-I) mode**: B800h window, mode register at BFFEh, independent
+  channel-5 waveform — Snatcher-class software works. Wave-RAM read-back fixed
+  (software SCC detection used to read 0xFF).
+* **Second SCC+**: a sound-only SCC-I "cartridge" in the other free slot, so software
+  that drives two SCC cartridges finds both. Toggle in settings.
+* **Second PSG** at ports 10h/11h/12h (OCM 2nd-gen standard) with register read-back.
+* **HDMI stereo**: true L/R audio over HDMI (see settings table above).
+* `tools/scctest/SCCTEST.COM`: detection + sound test for SCC/SCC+ per slot, dual PSG
+  and FM, with stereo placement check.
+
+### 🧰 Other
+* Critical timing closure improvements in the FPGA (54 MHz domain now closes with
+  positive slack; SD-companion CDC constraints documented in the SDC).
+* `build.bat` now bundles the new boot menu into the BIOS pack automatically.
+* Z80-level emulation test harness for the menu's FAT code
+  (`tools/scctest/opcheck/fat32_emu_test.py`).
+
 ---
 
 ## 🔌 Connection diagram

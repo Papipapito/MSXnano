@@ -16,13 +16,12 @@ fpga/src/rom/goauld_rom_int_SDTEST.bin
 fpga/src/rom/fm_logo_menu.bin
 
 # Boot-menu build temporaries / logs
-fpga/src/msx_goauld_settings_menu/~tmppre.*
+fpga/src/msxnano_menu/~tmppre.*
 fpga/autofire_build.log
 
 # Settings/boot menu ROM: host build tools (binaries) + build outputs
-fpga/src/msx_goauld_settings_menu/bin/
-fpga/src/msx_goauld_settings_menu/out/
-fpga/src/msx_goauld_settings_menu/fm_logo_menu.bin
+fpga/src/msxnano_menu/bin/
+fpga/src/msxnano_menu/out/
 _menu_shot*.png
 
 # Ruflo / ruvector tool databases (regenerable, not project files)
@@ -37,6 +36,6 @@ fpga/src/nanorom/
 fpga/src/rom/*.fs
 
 # Local design / scratch notes (kept on disk, not tracked)
-fpga/src/msx_goauld_settings_menu/M2_DESIGN.md
-fpga/src/msx_goauld_settings_menu/src/*.SDwork.txt
+fpga/src/msxnano_menu/M2_DESIGN.md
+fpga/src/msxnano_menu/src/*.SDwork.txt
 fpga/midi_build.log

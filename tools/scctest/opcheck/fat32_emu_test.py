@@ -5,7 +5,7 @@ import struct, re, sys, os
 
 SEC = 512
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, '..', '..', '..', 'fpga', 'src', 'msx_goauld_settings_menu', 'out')
+OUT = os.path.join(HERE, '..', '..', '..', 'fpga', 'src', 'msxnano_menu', 'out')
 
 
 def mk32(spc=64, nfats=2, rsvd=32, fatsecs=2048, part_lba=1000000):
