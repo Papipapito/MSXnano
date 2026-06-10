@@ -1960,7 +1960,25 @@ browse:
 	srl  h							; >> 1  => >> 9 total
 	rr   l
 	ld   (DSK_SECS), hl				; sectors in the image
-	; 4) locate (or auto-create) the NEXTOR.EMU helper file in this partition's root
+	; 4) sector del data-file de emulacion:
+	;    FAT32 -> sector reservado de la particion (FAT_LBA-2): los reservados
+	;    (>=32 en FAT32) solo usan 0/1/6/7, asi que rsvd-2 esta libre, es
+	;    invisible para el PC y no requiere crear ningun fichero.
+	;    FAT16 -> fichero NEXTOR.EMU en la raiz (rsvd=1, no hay hueco), oculto.
+	ld   a, (FS32)
+	or   a
+	jr   z, .bsd_emu16
+	ld   hl, (FAT_LBA+0)			; EMU_LBA = FAT_LBA - 2 (32-bit)
+	ld   de, 2
+	or   a
+	sbc  hl, de
+	ld   (EMU_LBA+0), hl
+	ld   hl, (FAT_LBA+2)
+	ld   de, 0
+	sbc  hl, de
+	ld   (EMU_LBA+2), hl
+	jp   .bsd_build
+.bsd_emu16:
 	call find_emufile
 	jr   nc, .bsd_haveemu
 	call create_emufile				; not found -> create it (CF=1 on failure)
@@ -1986,7 +2004,8 @@ browse:
 	ld   (EMU_LBA+0), hl
 	ld   hl, (SD_LBA+2)
 	ld   (EMU_LBA+2), hl
-	; 5) build the emulation data file in SD_BUF and write it to NEXTOR.EMU sector 0
+.bsd_build:
+	; 5) build the emulation data file in SD_BUF and write it to the EMU_LBA sector
 	call build_emu_datafile
 	call sd_write_sector			; SD_LBA still = EMU_LBA
 	ld   a, (SD_STATUS)
@@ -3284,7 +3303,7 @@ write_dir_entry:
 	inc  hl
 	inc  de
 	djnz .wde_name
-	ld   (ix+11), #20				; attr = archive
+	ld   (ix+11), #26				; attr = archive+hidden+system (invisible en el PC)
 	ld   hl, (NEW_CLUS)
 	ld   (ix+26), l					; first cluster low
 	ld   (ix+27), h					; first cluster high
