@@ -69,6 +69,54 @@ slot_loop:
     cp   4
     jr   c, slot_loop
 
+    ; =========================================================================
+    ; Chips de I/O: PSG1 (A0h), PSG2 (10h, deteccion + tono), FM OPLL (7Ch)
+    ; =========================================================================
+    ld   de, sPsg1
+    call prtstr
+    di
+    ld   c, #A0
+    call play_psg
+    ei
+    ld   de, sTone
+    call prtstr
+
+    ld   de, sPsg2
+    call prtstr
+    di
+    ld   a, 2               ; deteccion: reg 2 (8 bits) read-back en puerto 12h
+    out  (#10), a
+    ld   a, #5A
+    out  (#11), a
+    in   a, (#12)
+    cp   #5A
+    jr   nz, .no_psg2
+    ld   a, #A5
+    out  (#11), a
+    in   a, (#12)
+    cp   #A5
+    jr   nz, .no_psg2
+    xor  a                  ; limpiar reg 2 y tocar
+    out  (#11), a
+    ld   c, #10
+    call play_psg
+    ei
+    ld   de, sTone2
+    call prtstr
+    jr   .fm
+.no_psg2:
+    ei
+    ld   de, sNone2
+    call prtstr
+.fm:
+    ld   de, sFm
+    call prtstr
+    di
+    call play_fm
+    ei
+    ld   de, sTone
+    call prtstr
+
     ld   de, sBye
     call prtstr
     ret                     ; volver a DOS
@@ -229,13 +277,99 @@ play_tone:
     ld   (hl), #00          ; volumen 0
     ret
 
+; ----------------------------------------------------------------------------
+; psgw: escribe registro PSG. C = puerto base (A0h o 10h), D = reg, E = valor.
+; ----------------------------------------------------------------------------
+psgw:
+    ld   a, d
+    out  (c), a             ; seleccion de registro (base)
+    inc  c
+    ld   a, e
+    out  (c), a             ; dato (base+1)
+    dec  c
+    ret
+
+; ----------------------------------------------------------------------------
+; play_psg: tono ~440Hz en canal A del PSG con base de puertos en C, ~0.5s.
+; Restaura volumen y mixer al terminar. Mantiene R7 bits 7:6 = 10 (joysticks).
+; ----------------------------------------------------------------------------
+play_psg:
+    ld   d, 0
+    ld   e, #FE             ; periodo lo: 1789772/(16*440) ~ 254
+    call psgw
+    ld   d, 1
+    ld   e, 0               ; periodo hi
+    call psgw
+    ld   d, 7
+    ld   e, #BE             ; mixer: solo tono A (bits joystick estandar 10)
+    call psgw
+    ld   d, 8
+    ld   e, #0F             ; volumen A max
+    call psgw
+    call delay_half
+    ld   d, 8
+    ld   e, 0               ; silencio
+    call psgw
+    ld   d, 7
+    ld   e, #BF             ; todo off
+    call psgw
+    ret
+
+; ----------------------------------------------------------------------------
+; oplw: escribe registro OPLL (7Ch=reg, 7Dh=dato) con settle entre accesos.
+; ----------------------------------------------------------------------------
+oplw:
+    ld   a, d
+    out  (#7C), a
+    push af
+    pop  af                 ; ~21T de settle (el YM2413 real lo pide)
+    ld   a, e
+    out  (#7D), a
+    push af
+    pop  af
+    push af
+    pop  af
+    ret
+
+; ----------------------------------------------------------------------------
+; play_fm: nota A4 (~440Hz) en canal 0 del OPLL, instrumento piano, ~0.5s.
+; fnum = 440*2^18/(49716*2^(block-1)) con block 4 -> 290 = 0x122.
+; ----------------------------------------------------------------------------
+play_fm:
+    ld   d, #30
+    ld   e, #30             ; ch0: instrumento 3 (piano), volumen max (0)
+    call oplw
+    ld   d, #10
+    ld   e, #22             ; fnum bits 7:0
+    call oplw
+    ld   d, #20
+    ld   e, #19             ; key ON (bit4) | block 4 (bits 3:1) | fnum bit8=1
+    call oplw
+    call delay_half
+    ld   d, #20
+    ld   e, #09             ; key OFF
+    call oplw
+    ret
+
+; ----------------------------------------------------------------------------
+delay_half:                 ; ~0.5s con DI (65536 x ~28T @3.58MHz)
+    push de
+    ld   de, 0
+.dh_loop:
+    dec  de
+    ld   a, d
+    or   e
+    jr   nz, .dh_loop
+    pop  de
+    ret
+
 saveA8:
     .db 0
 resCode:
     .db 0
 
 sHello:
-    .db 13,10,"SCCTEST v2 - MSXnano SCC/SCC+ checker",13,10
+    .db 13,10,"SCCTEST v3 - MSXnano SCC+/PSG2/FM checker",13,10
     .db "(Stereo ON: SCC megaram=IZQ, 2o SCC=DER)",13,10
     .db "(2o SCC: activar 'Second SCC' en Ajustes)",13,10,13,10,"$"
 sSwio:
@@ -250,5 +384,17 @@ sScc:
     .db "SCC   <tono>",13,10,"$"
 sNone:
     .db "---",13,10,"$"
+sPsg1:
+    .db 13,10,"PSG 1 (A0h):  $"
+sPsg2:
+    .db "PSG 2 (10h):  $"
+sFm:
+    .db "FM OPLL (7Ch): $"
+sTone:
+    .db "<tono>",13,10,"$"
+sTone2:
+    .db "OK <tono>  (DER en stereo)",13,10,"$"
+sNone2:
+    .db "--- no detectado",13,10,"$"
 sBye:
     .db 13,10,"Listo.",13,10,"$"
