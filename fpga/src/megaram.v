@@ -14,13 +14,17 @@ module megaram_scc(
     output wire megaram_wrt,
     output wire [20:0] megaram_addr,
 
-    output wire scc_sound_disable
+    output wire scc_sound_disable,
+    output wire scc_mode_plus,      // SCC-I mode reg (BFFE) bit5: 1 = SCC+ layout
+    output wire sccplus_win_en      // SCC+ sound window B800-B8FF active (mode bit5 + bank3 bit7)
 
 );
 
 	//`default_nettype none
 
     assign scc_sound_disable = megaram_mode_b[4];
+    assign scc_mode_plus = megaram_mode_b[5];
+    assign sccplus_win_en = ( megaram_mode_b[5] == 1 && megaram_reg3[7] == 1 ) ? 1 : 0;
 
     //Mapped I/O port access on 7FFE-7FFFh / BFFE-BFFFh ... Write protect / SPC mode register
     wire megaram_3fe;

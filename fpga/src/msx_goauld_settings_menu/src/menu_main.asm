@@ -3576,11 +3576,18 @@ IFDEF ENABLE_SDCARD
 ENDIF ;ENABLE_SDCARD
 
 	in   a, (#42)
+	ld   b, a
 	and  #08						; Bit 3: slow device
 	rrca
 	rrca
 	rrca
 	ld   (var_slowdv), a
+	ld   a, b
+	and  #20						; Bit 5: stereo sound
+	rlca
+	rlca
+	rlca							; bit5 -> bit0
+	ld   (var_stereo), a
 
 	ei
 
@@ -3623,6 +3630,11 @@ ONOFF_Y = ONOFF_Y + 2
 
 	ld   hl,#2b00 + ONOFF_Y			; Print Slow Device
 	ld   a,(var_slowdv)
+	call print_on_off
+ONOFF_Y = ONOFF_Y + 2
+
+	ld   hl,#2b00 + ONOFF_Y			; Print Stereo Sound
+	ld   a,(var_stereo)
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 
@@ -3743,6 +3755,10 @@ selected_slowdevice:
 	ld   hl, var_slowdv
 	call .selected_on_off
 	ret
+
+selected_stereo:
+	ld   hl, var_stereo
+	jp   .selected_on_off
 
 selected_slot1Ghost:
 	ld   hl, var_ghtscc
@@ -3950,6 +3966,12 @@ ENDIF
 	rlca
 	rlca
 	or   b
+	ld   b, a
+	ld   a, (var_stereo)			; #42 Bit 5: stereo sound
+	rrca
+	rrca
+	rrca							; bit0 -> bit5
+	or   b
 	or   #40						; Bit 6: save config in flash
 	ld   b, a
 
@@ -4127,11 +4149,13 @@ enableSDStr:
 	.db "Enable SD",0
 ENDIF ;ENABLE_SDCARD
 slot1GhostStr:
-	.db "Ghost SCC",0
+	.db "Second SCC",0			; config1 bit2 (former ghost SCC): SCC+ nr.2 in the free slot
 enableScanlinesStr:
 	.db "Enable Scanlines",0
 slowDeviceStr:
 	.db "Compatible Mode",0
+stereoStr:
+	.db "Stereo Sound",0
 saveExitStr:
 	.db "Save & Exit",0
 saveResetStr:
@@ -4213,16 +4237,25 @@ POS_Y = POS_Y + 2
 struct_SlowDevice:
 	.db 21, POS_Y+1
 	.dw slowDeviceStr
-	.dw struct_EnableScanlines, struct_SaveExit, struct_SlowDevice
+	.dw struct_EnableScanlines, struct_Stereo, struct_SlowDevice
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_slowdevice
 POS_Y = POS_Y + 2
 
+struct_Stereo:
+	.db 21, POS_Y+1
+	.dw stereoStr
+	.dw struct_SlowDevice, struct_SaveExit, struct_Stereo
+	.dw #0800 + POS_Y*10 + 2
+	.db 4
+	.dw selected_stereo
+POS_Y = POS_Y + 2
+
 struct_SaveExit:
 	.db 21, POS_Y+1
 	.dw saveExitStr
-	.dw struct_SlowDevice, struct_SaveReset, struct_SaveExit
+	.dw struct_Stereo, struct_SaveReset, struct_SaveExit
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_saveExit
@@ -4287,6 +4320,7 @@ ENDIF
 	var_scanln: ds 1
 	var_mapslt: ds 1
 	var_slowdv: ds 1
+	var_stereo: ds 1
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF

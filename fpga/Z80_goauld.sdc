@@ -13,7 +13,7 @@ create_generated_clock -name clock_54m -source [get_nets {clk_27m}] -master_cloc
 create_generated_clock -name clock_108m -source [get_nets {clk_27m}] -master_clock clock_27m -multiply_by 4 [get_ports {O_sdram_clk}] -add //[get_nets {clk_108m}] -add
 create_generated_clock -name clock_VideoDHClk -source [get_nets {clk_27m}] -master_clock clock_27m -divide_by 2 [get_nets {VideoDHClk}] -add
 create_generated_clock -name clock_VideoDLClk -source [get_nets {clk_27m}] -master_clock clock_27m -divide_by 4 [get_nets {VideoDLClk}] -add
-set_clock_groups -asynchronous -group [get_clocks {clock_108m clock_54m clock_VideoDHClk clock_VideoDLClk clock_27m }] -group [get_clocks {clock_reset }] -group [get_clocks {clock_env_reset }] 
+set_clock_groups -asynchronous -group [get_clocks {clock_108m clock_54m clock_VideoDHClk clock_VideoDLClk clock_27m }] -group [get_clocks {clock_reset }] -group [get_clocks {clock_env_reset clock_env_reset2 }]
 
 set_multicycle_path -from [get_clocks {clock_54m}] -to [get_pins {cpu1/?*?/D}] -setup -end 2
 set_multicycle_path -from [get_clocks {clock_54m}] -to [get_pins {cpu1/u0/Regs/?*?/?*}] -setup -end 2
@@ -36,6 +36,10 @@ set_multicycle_path -from [get_clocks {clock_54m}] -to [get_pins {cpu1/u0/Regs/R
     set_false_path -from [get_clocks {clock_27m}] -to [get_pins {psg1/?*?/?*}]
     set_false_path -from [get_clocks {clock_54m}] -to [get_pins {psg1/?*?/?*}]
     set_false_path -from [get_clocks {clock_54m}] -to [get_pins {opll/?*?/?*?/CE}]
+    // second PSG: same internal env_reset gated clock + same exemptions as psg1
+    create_clock -name clock_env_reset2 -period 277.778 -waveform {0 138.889} [get_nets {psg2/env_reset}] -add
+    set_false_path -from [get_clocks {clock_27m}] -to [get_pins {psg2/?*?/?*}]
+    set_false_path -from [get_clocks {clock_54m}] -to [get_pins {psg2/?*?/?*}]
 
 set_false_path -from [get_clocks {clock_108m}] -to [get_pins {rtc1/?*?/?*}]
 set_false_path -from [get_clocks {clock_54m}] -to [get_pins {rtc1/?*?/?*}]
