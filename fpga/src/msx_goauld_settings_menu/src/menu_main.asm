@@ -87,8 +87,6 @@ main_menu_entry:
 	ldir							; zero the 16-byte "NEXTOR_EMU_DATA" signature
 	ld   a, 2
 	ld   (FILTER), a				; default tab = ALL
-	xor  a
-	ld   (var_mainSel), a			; start with first option highlighted
 
 ; Re-entry point used by the placeholders (M2/M3): re-init the screen and
 ; redraw WITHOUT re-capturing the BIOS context (which is only valid on the
@@ -101,132 +99,6 @@ main_menu_restart:
 	; every "return to menu" land here. ESC in the browser = boot the system,
 	; 'A' = settings. The old 4-option menu below is kept but no longer reached.
 	jp   main_action_sdrom
-
-main_menu_redraw:
-	; Title "MSXnano" centered in the top white box
-	ld   hl, #1c02					; X=28, Y=2
-	call POSIT						; BIOS setCursor
-	ld   hl, mainTitleStr
-	call print_string
-	; clear text area below the header box
-	ld   a, #00
-	ld   bc, 240
-	ld   hl, #0800
-	call FILVRM
-	; Top header line (white box like the config menu)
-	ld   a, #ff
-	ld   bc, 30
-	ld   hl, #0800
-	call FILVRM						; BIOS fill VRAM
-
-	; Print the 4 main-menu option strings
-	ld   hl, #1c06					; X=28
-	call POSIT
-	ld   hl, mainOpt1Str
-	call print_string
-	ld   hl, #1c08
-	call POSIT
-	ld   hl, mainOpt2Str
-	call print_string
-	ld   hl, #1c0a
-	call POSIT
-	ld   hl, mainOpt3Str
-	call print_string
-	ld   hl, #1c0c
-	call POSIT
-	ld   hl, mainOpt4Str
-	call print_string
-	; Hint line at the bottom
-	ld   hl, #1216
-	call POSIT
-	ld   hl, mainHintStr
-	call print_string
-
-main_menu_loop:
-	; Draw the selection highlight (inverse video) on the current option row
-	call main_draw_selection
-
-main_menu_wait:
-	; Read a key via the BIOS keyboard (ei/halt/CHSNS/CHGET, see browse_getkey).
-	; This delivers the cursor keys (rows the direct PPI scan missed) so the main
-	; menu can be driven with cursors + ENTER, just like the SD browser. The
-	; numeric 1..4 shortcuts still work (CHGET returns the same codes).
-	call browse_getkey				; A = key code (cursors 1E/1F, RETURN 0D, etc.)
-	or   a
-	jr   z, main_menu_wait
-
-	cp   VT_UP
-	jr   z, main_menu_up
-	cp   VT_DOWN
-	jr   z, main_menu_down
-	cp   VT_RETURN
-	jr   z, main_menu_select
-	cp   VT_SPACE
-	jr   z, main_menu_select
-	; numeric shortcuts 1..4 (direct selection: the user expects this)
-	cp   '1'
-	jr   z, main_sel_set0
-	cp   '2'
-	jr   z, main_sel_set1
-	cp   '3'
-	jr   z, main_sel_set2
-	cp   '4'
-	jr   z, main_sel_set3
-	jr   main_menu_wait				; any other key: ignore, keep waiting
-
-main_sel_set0:
-	xor  a
-	jr   main_set_and_select
-main_sel_set1:
-	ld   a, 1
-	jr   main_set_and_select
-main_sel_set2:
-	ld   a, 2
-	jr   main_set_and_select
-main_sel_set3:
-	ld   a, 3
-main_set_and_select:
-	; A = new selection index. Clear the OLD highlight first (uses the old
-	; var_mainSel), then store the new index. NOTE: main_clear_selection
-	; destroys A, so preserve it across the call.
-	push af
-	call main_clear_selection		; remove highlight from the previously-selected row
-	pop  af
-	ld   (var_mainSel), a			; commit the new selection
-	jr   main_menu_select_now
-
-main_menu_up:
-	call main_clear_selection
-	ld   a, (var_mainSel)
-	or   a
-	jr   nz, .mu_dec
-	ld   a, MAIN_OPT_COUNT			; wrap from top to bottom
-.mu_dec:
-	dec  a
-	ld   (var_mainSel), a
-	jr   main_menu_loop
-
-main_menu_down:
-	call main_clear_selection
-	ld   a, (var_mainSel)
-	inc  a
-	cp   MAIN_OPT_COUNT				; wrap from bottom to top
-	jr   c, .md_store
-	xor  a
-.md_store:
-	ld   (var_mainSel), a
-	jr   main_menu_loop
-
-main_menu_select:
-main_menu_select_now:
-	ld   a, (var_mainSel)
-	or   a
-	jr   z, main_action_boot		; 0 -> Arrancar sistema
-	dec  a
-	jp   z, main_action_sdrom		; 1 -> Lanzar ROM de la SD
-	dec  a
-	jp   z, main_action_wifi		; 2 -> Configuracion WiFi (placeholder)
-	jp   config_menu_entry			; 3 -> Ajustes (existing config menu)
 
 ; --- Option 1: continue the normal MSX boot ---------------------------------
 ; Behaves EXACTLY like the proven "Save & Exit" of the config menu (known to
@@ -290,24 +162,22 @@ BR_OLD		equ	#C029			; 1 byte: previously-selected index (partial repaint)
 BR_OLDTOP	equ	#C02A			; 1 byte: BR_TOP before ensure_visible (scroll detect)
 ENT_ARRAY	equ	#C300			; entry array: ENT_SIZE bytes each (type,cluster,name)
 ENT_SIZE	equ	80				; record: type(1)+cluster(2)+size(4)+name(73 ASCIIZ)
-NAME_OFF	equ	7				; name offset inside a record (after type+cluster+size)
-NAME_MAX	equ	72				; max name chars stored (+ NUL) -> longer than the
+NAME_OFF	equ	9				; name offset inside a record (type1+cluster4+size4)
+SIZE_OFF	equ	5				; file-size dword offset inside a record
+NAME_MAX	equ	70				; max name chars stored (+ NUL) -> longer than the
 								; 59-col window so long names overflow and marquee-scroll
 NAME_WIN	equ	59				; name display window width (cols 9..67, size at 69)
 VISIBLE		equ	18				; entries per page (list rows 4..21; hdr 1, tabs 2, line 3, sep 22, footer 23)
 MAX_ENT		equ	115				; array capacity (115*80 = 9200 bytes -> C300..E6F0)
 HAVE_LFN	equ	#C02B			; 1 byte: a long-file-name is being accumulated
 LFN_BUF		equ	#C02C			; 80 bytes: assembled long file name (C02C..C07B)
-CUR_CLUS	equ	#C07C			; 2 bytes: current directory cluster (0 = root)
 DIR_SP		equ	#C07E			; 1 byte: folder back-stack depth
 DATA_LBA	equ	#C090			; 4 bytes: FAT data region start LBA
 SEC_PER_CLUS equ #C094			; 1 byte: sectors per cluster
 ROOT_SECS	equ	#C095			; 1 byte: root-directory sector count
 JOY_PREV	equ	#C096			; 1 byte: previous joystick code (edge detect)
 FAT_LBA		equ	#C097			; 4 bytes: FAT table start LBA
-FILE_CLUS	equ	#C09B			; 2 bytes: selected file's first cluster
 CHAIN_CNT	equ	#C09D			; 2 bytes: file cluster-chain length
-DIR_STACK	equ	#C0A0			; 8 x 2 bytes: parent-cluster back stack
 BOOT_SP		equ	#C0B0			; 2 bytes: saved BIOS cartridge-INIT SP (page-3, stable)
 MQ_OFF		equ	#C0B2			; 1 byte: marquee scroll offset of the selected name
 MQ_SEL		equ	#C0B3			; 1 byte: entry index currently being marquee-scrolled
@@ -317,7 +187,6 @@ MAP_SCC		equ	#C0B6			; 2 bytes: Konami-SCC bank-write count
 MAP_KON		equ	#C0B8			; 2 bytes: Konami bank-write count
 MAP_A8		equ	#C0BA			; 2 bytes: ASCII8 bank-write count
 MAP_A16		equ	#C0BC			; 2 bytes: ASCII16 bank-write count
-SCAN_CLUS	equ	#C0BE			; 2 bytes: cluster being scanned
 SSEC_LEFT	equ	#C0C0			; 1 byte: sectors left in current cluster (scan)
 SCAN_N		equ	#C0C1			; 2 bytes: sectors scanned so far
 MAPPER_ID	equ	#C0C3			; 1 byte: detected mapper id
@@ -327,7 +196,6 @@ MEG_P42		equ	#C0C6			; 1 byte: SWIO port 0x42 readback (Slot2Mode in bits 4,5)
 MEG_B0		equ	#C0C7			; 1 byte: megaram byte 0 BEFORE the write
 LOAD_SEG	equ	#C0C8			; 1 byte: current 8K megaram segment being loaded
 LOAD_OFF	equ	#C0C9			; 2 bytes: byte offset within the current 8K segment
-LOAD_CLUS	equ	#C0CB			; 2 bytes: cluster being loaded (chain walk)
 MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
@@ -337,9 +205,20 @@ PE_DW		equ	#C0DC			; 4 bytes: 32-bit value scratch for hex print
 DSK_LBA		equ	#C0E0			; 4 bytes: abs LBA of the selected .dsk first sector
 DSK_SECS	equ	#C0E4			; 2 bytes: .dsk size in 512-byte sectors
 EMU_LBA		equ	#C0E6			; 4 bytes: abs LBA of the NEXTOR.EMU data file sector
-FAT_SZ		equ	#C0EA			; 2 bytes: sectors per FAT (FATSz16)
+FAT_SZ		equ	#C0EA			; 2 bytes: sectors per FAT (FATSz16 o FATSz32 low16)
 NUM_FATS	equ	#C0EC			; 1 byte: number of FAT copies
-NEW_CLUS	equ	#C0ED			; 2 bytes: cluster allocated for a new NEXTOR.EMU
+NEW_CLUS	equ	#C0ED			; 2 bytes: cluster allocated for a new NEXTOR.EMU (FAT16 path)
+; --- FAT32: clusters anchos (4 bytes LE) en pagina-3 alta, zona libre #E840+ ---
+CUR_CLUS	equ	#E840			; 4 bytes: current directory cluster (FAT16: 0 = root)
+SCAN_CLUS	equ	#E844			; 4 bytes: cluster being scanned (dir chain walk)
+FILE_CLUS	equ	#E848			; 4 bytes: selected file's first cluster
+LOAD_CLUS	equ	#E84C			; 4 bytes: cluster being loaded (ROM chain walk)
+W_TMP		equ	#E850			; 4 bytes: wide-cluster scratch (fatnext/clus2lba)
+W_SAVE		equ	#E854			; 4 bytes: CUR_CLUS save/restore (scan_rom/load_rom)
+FS32		equ	#E858			; 1 byte: 0 = FAT16, 1 = FAT32 (per selected partition)
+SPC_SHIFT	equ	#E859			; 1 byte: log2(SEC_PER_CLUS)
+ROOT_CLUS	equ	#E85C			; 4 bytes: FAT32 root directory first cluster
+DIR_STACK	equ	#E860			; 8 x 4 bytes: parent-cluster back stack (#E860..#E87F)
 FFC_BASE	equ	#C0EF			; 2 bytes: base cluster of the FAT sector being scanned
 FFC_LEFT	equ	#C0F1			; 2 bytes: FAT sectors left to scan
 MCE_OFF		equ	#C0F3			; 2 bytes: byte offset of the FAT entry within its sector
@@ -448,8 +327,8 @@ sd_not_present:
 ; =====================================================================
 ; Multi-partition support
 ; =====================================================================
-; is_fat16: A = MBR/EBR partition type byte. CF=1 if it is a FAT12/16 type we
-; can browse (0x01/0x04/0x06/0x0E). CF=0 otherwise. A preserved.
+; is_fat16: A = MBR/EBR partition type byte. CF=1 if it is a FAT12/16/32 type
+; we can browse (0x01/0x04/0x06/0x0E FAT16, 0x0B/0x0C FAT32). CF=0 otherwise.
 is_fat16:
 	cp   #01
 	jr   z, .if_yes
@@ -458,6 +337,10 @@ is_fat16:
 	cp   #06
 	jr   z, .if_yes
 	cp   #0E
+	jr   z, .if_yes
+	cp   #0B						; FAT32 CHS
+	jr   z, .if_yes
+	cp   #0C						; FAT32 LBA
 	jr   z, .if_yes
 	or   a							; CF = 0
 	ret
@@ -641,31 +524,51 @@ select_partition:
 	ret
 
 ; -----------------------------------------------------------------------------
-; fat_compute_root: ROOT_LBA = PART_LBA + RsvdSecCnt + NumFATs*FATSz16.
-; Inputs: SD_BUF = FAT16 boot sector, PART_LBA = partition start LBA.
+; fat_compute_root: parse the BPB (SD_BUF) of the selected partition and derive
+; FAT_LBA / DATA_LBA / root geometry. FAT32 is detected by FATSz16 == 0.
+; FAT16: ROOT_LBA = fixed region, ROOT_SECS sectors, FS32=0.
+; FAT32: root = cluster chain at ROOT_CLUS, FS32=1 (no fixed root region).
 ; -----------------------------------------------------------------------------
 fat_compute_root:
+	ld   a, (SD_BUF+13)				; sectors per cluster (power of 2)
+	ld   (SEC_PER_CLUS), a
+	ld   b, 0						; SPC_SHIFT = log2(SPC)
+.fcr_sh:
+	rrca
+	jr   c, .fcr_shdone
+	inc  b
+	jr   .fcr_sh
+.fcr_shdone:
+	ld   a, b
+	ld   (SPC_SHIFT), a
 	ld   a, (SD_BUF+16)				; NumFATs
 	ld   (NUM_FATS), a
-	ld   b, a
-	ld   hl, 0
-	ld   de, (SD_BUF+22)			; FATSz16
-	ld   (FAT_SZ), de
-.fcr_mul:
+	; FAT_LBA = PART_LBA + RsvdSecCnt (first FAT table sector)
+	ld   hl, (SD_BUF+14)
+	ld   de, (PART_LBA+0)
 	add  hl, de
-	djnz .fcr_mul					; hl = NumFATs * FATSz16
-	ld   de, (SD_BUF+14)			; RsvdSecCnt
-	add  hl, de						; hl = relative root-dir sector
-	ld   de, (PART_LBA+0)			; + partition start (low word)
+	ld   (FAT_LBA+0), hl
+	ld   hl, (PART_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (FAT_LBA+2), hl
+	; FATSz16 == 0 -> FAT32
+	ld   hl, (SD_BUF+22)
+	ld   a, h
+	or   l
+	jr   z, .fcr32
+	; ---------- FAT16 ----------
+	xor  a
+	ld   (FS32), a
+	ld   (FAT_SZ), hl
+	call .fcr_fatmul				; DE = NumFATs * FAT_SZ
+	ld   hl, (FAT_LBA+0)			; ROOT_LBA = FAT_LBA + NumFATs*FATSz16
 	add  hl, de
 	ld   (ROOT_LBA+0), hl
-	ld   hl, (PART_LBA+2)			; high word + carry (ld does not affect carry)
+	ld   hl, (FAT_LBA+2)
 	ld   de, 0
 	adc  hl, de
 	ld   (ROOT_LBA+2), hl
-	; --- also derive data-region geometry for subdirectory access ---
-	ld   a, (SD_BUF+13)				; sectors per cluster
-	ld   (SEC_PER_CLUS), a
 	ld   hl, (SD_BUF+17)			; RootEntCnt
 	srl  h
 	rr   l
@@ -674,7 +577,7 @@ fat_compute_root:
 	srl  h
 	rr   l
 	srl  h
-	rr   l							; HL = RootEntCnt/16 = root-dir sectors (32B entries, 512B/sec)
+	rr   l							; HL = RootEntCnt/16 = root-dir sectors
 	ld   a, l
 	ld   (ROOT_SECS), a
 	ld   d, 0						; DATA_LBA = ROOT_LBA + ROOT_SECS
@@ -686,27 +589,52 @@ fat_compute_root:
 	ld   de, 0
 	adc  hl, de
 	ld   (DATA_LBA+2), hl
-	; FAT_LBA = PART_LBA + RsvdSecCnt (first FAT table sector)
-	ld   hl, (SD_BUF+14)			; RsvdSecCnt
-	ld   de, (PART_LBA+0)
+	ret
+.fcr32:
+	; ---------- FAT32 ----------
+	ld   a, 1
+	ld   (FS32), a
+	ld   hl, (SD_BUF+36)			; FATSz32 (tomamos los 16 bits bajos; cubre <=512GB)
+	ld   (FAT_SZ), hl
+	call .fcr_fatmul				; DE = NumFATs * FAT_SZ
+	ld   hl, (FAT_LBA+0)			; DATA_LBA = FAT_LBA + NumFATs*FATSz32 (sin root fijo)
 	add  hl, de
-	ld   (FAT_LBA+0), hl
-	ld   hl, (PART_LBA+2)
+	ld   (DATA_LBA+0), hl
+	ld   hl, (FAT_LBA+2)
 	ld   de, 0
 	adc  hl, de
-	ld   (FAT_LBA+2), hl
+	ld   (DATA_LBA+2), hl
+	ld   hl, SD_BUF+44				; RootClus (dword)
+	ld   de, ROOT_CLUS
+	ld   bc, 4
+	ldir
+	xor  a
+	ld   (ROOT_SECS), a
+	ret
+.fcr_fatmul:						; DE = NumFATs * FAT_SZ (16-bit)
+	ld   a, (NUM_FATS)
+	ld   b, a
+	ld   hl, 0
+	ld   de, (FAT_SZ)
+.fcr_mul:
+	add  hl, de
+	djnz .fcr_mul
+	ex   de, hl
 	ret
 
 ; -----------------------------------------------------------------------------
 ; set_scan_start: set SD_LBA (first sector) and sec_left (sector limit) for the
-; directory whose cluster is CUR_CLUS (0 = the fixed root-dir region).
+; directory whose cluster is CUR_CLUS (FAT16: 0 = the fixed root-dir region).
 ; -----------------------------------------------------------------------------
 set_scan_start:
-	ld   hl, (CUR_CLUS)
+	ld   a, (FS32)
+	or   a
+	jr   nz, .sss_data				; FAT32: la raiz tambien es una cadena de clusters
+	ld   hl, (CUR_CLUS+0)
 	ld   a, h
 	or   l
 	jr   nz, .sss_data
-	ld   hl, (ROOT_LBA+0)			; root: fixed region after the FATs
+	ld   hl, (ROOT_LBA+0)			; FAT16 root: fixed region after the FATs
 	ld   (SD_LBA+0), hl
 	ld   hl, (ROOT_LBA+2)
 	ld   (SD_LBA+2), hl
@@ -714,35 +642,195 @@ set_scan_start:
 	ld   (sec_left), a
 	ret
 .sss_data:
-	; SD_LBA = DATA_LBA + (CUR_CLUS-2) * SEC_PER_CLUS
-	ld   hl, (DATA_LBA+0)
+	ld   hl, CUR_CLUS				; SD_LBA + sec_left desde el cluster (ancho)
+	ld   de, W_TMP
+	call w_copy
+	jp   clus2lba
+
+; -----------------------------------------------------------------------------
+; Wide-cluster (FAT32) helpers. Clusters viven en RAM como dwords LE.
+; -----------------------------------------------------------------------------
+; w_copy: copia 4 bytes (HL) -> (DE).
+w_copy:
+	ld   bc, 4
+	ldir
+	ret
+
+; w_zero: pone a 0 los 4 bytes en (HL).
+w_zero:
+	xor  a
+	ld   (hl), a
+	inc  hl
+	ld   (hl), a
+	inc  hl
+	ld   (hl), a
+	inc  hl
+	ld   (hl), a
+	ret
+
+; cur_root: CUR_CLUS = raiz (FAT16: 0 / FAT32: ROOT_CLUS).
+cur_root:
+	ld   a, (FS32)
+	or   a
+	jr   z, .cr16
+	ld   hl, ROOT_CLUS
+	ld   de, CUR_CLUS
+	jp   w_copy
+.cr16:
+	ld   hl, CUR_CLUS
+	jp   w_zero
+
+; clus2lba: SD_LBA = DATA_LBA + ((W_TMP-2) << SPC_SHIFT); sec_left = SPC.
+; Destruye W_TMP.
+clus2lba:
+	ld   hl, (W_TMP+0)				; W_TMP -= 2 (32-bit)
+	ld   de, 2
+	or   a
+	sbc  hl, de
+	ld   (W_TMP+0), hl
+	ld   hl, (W_TMP+2)
+	ld   de, 0
+	sbc  hl, de
+	ld   (W_TMP+2), hl
+	ld   a, (SPC_SHIFT)				; << SPC_SHIFT (32-bit)
+	or   a
+	jr   z, .c2l_add
+.c2l_sh:
+	ld   hl, (W_TMP+0)
+	add  hl, hl
+	ld   (W_TMP+0), hl
+	ld   hl, (W_TMP+2)
+	adc  hl, hl
+	ld   (W_TMP+2), hl
+	dec  a
+	jr   nz, .c2l_sh
+.c2l_add:
+	ld   hl, (DATA_LBA+0)			; SD_LBA = DATA_LBA + W_TMP
+	ld   de, (W_TMP+0)
+	add  hl, de
 	ld   (SD_LBA+0), hl
 	ld   hl, (DATA_LBA+2)
+	ld   de, (W_TMP+2)
+	adc  hl, de
 	ld   (SD_LBA+2), hl
-	ld   hl, (CUR_CLUS)
-	dec  hl
-	dec  hl							; cluster - 2
-	ex   de, hl						; DE = cluster-2
-	ld   a, (SEC_PER_CLUS)
-	ld   b, a
-.sss_loop:
-	call add32_de					; SD_LBA += (cluster-2), SEC_PER_CLUS times
-	djnz .sss_loop
 	ld   a, (SEC_PER_CLUS)
 	ld   (sec_left), a
 	ret
 
-; add32_de: SD_LBA (32-bit) += DE (16-bit). DE preserved.
-add32_de:
-	push de
-	ld   hl, (SD_LBA+0)
+; fat_seek_read: SD_LBA = FAT_LBA + DE (16-bit), lee el sector. CF=1 si error SD.
+fat_seek_read:
+	ld   hl, (FAT_LBA+0)
 	add  hl, de
 	ld   (SD_LBA+0), hl
-	ld   hl, (SD_LBA+2)
+	ld   hl, (FAT_LBA+2)
 	ld   de, 0
 	adc  hl, de
 	ld   (SD_LBA+2), hl
-	pop  de
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	ret  z							; CF=0 ok
+	scf
+	ret
+
+; fatnext: W_TMP = FAT[W_TMP]. FAT16 normaliza su EOC a 0x0FFFFFF8 para que
+; w_is_eoc valga para ambos. CF=1 si error SD. Destruye SD_BUF.
+fatnext:
+	ld   a, (FS32)
+	or   a
+	jr   nz, .fn32
+	; FAT16: sector = clus>>8, entrada = (clus&255)*2
+	ld   a, (W_TMP+1)
+	ld   e, a
+	ld   d, 0
+	call fat_seek_read
+	ret  c
+	ld   a, (W_TMP+0)
+	ld   l, a
+	ld   h, 0
+	add  hl, hl
+	ld   de, SD_BUF
+	add  hl, de
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	ld   (W_TMP+0), de
+	ld   hl, 0
+	ld   (W_TMP+2), hl
+	ld   a, d						; normalizar EOC/bad (>= 0xFFF7)
+	cp   #FF
+	jr   nz, .fn_ok
+	ld   a, e
+	cp   #F7
+	jr   c, .fn_ok
+	ld   hl, #FFF8					; -> 0x0FFFFFF8 canonico
+	ld   (W_TMP+0), hl
+	ld   hl, #0FFF
+	ld   (W_TMP+2), hl
+.fn_ok:
+	or   a							; CF=0
+	ret
+.fn32:
+	; FAT32: sector = clus>>7, entrada = (clus&127)*4 (mascara 28 bits)
+	ld   hl, (W_TMP+0)
+	ld   a, (W_TMP+2)
+	add  hl, hl						; (A:HL) << 1; DE = bytes [2:1] == clus>>7
+	rla
+	ld   e, h
+	ld   d, a
+	call fat_seek_read
+	ret  c
+	ld   a, (W_TMP+0)
+	and  #7F
+	ld   l, a
+	ld   h, 0
+	add  hl, hl
+	add  hl, hl						; *4
+	ld   de, SD_BUF
+	add  hl, de
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)
+	ld   (W_TMP+0), de
+	inc  hl
+	ld   e, (hl)
+	inc  hl
+	ld   a, (hl)
+	and  #0F						; entradas FAT32 son de 28 bits
+	ld   d, a
+	ld   (W_TMP+2), de
+	or   a							; CF=0
+	ret
+
+; w_is_eoc: CF=1 si W_TMP es fin de cadena/bad (>= 0x0FFFFFF7) o invalido (< 2).
+w_is_eoc:
+	ld   a, (W_TMP+3)
+	cp   #0F
+	jr   nz, .we_low
+	ld   a, (W_TMP+2)
+	cp   #FF
+	jr   nz, .we_low
+	ld   a, (W_TMP+1)
+	cp   #FF
+	jr   nz, .we_low
+	ld   a, (W_TMP+0)
+	cp   #F7
+	jr   nc, .we_yes				; >= 0x0FFFFFF7 -> fin
+.we_low:
+	ld   a, (W_TMP+1)
+	ld   hl, W_TMP+2
+	or   (hl)
+	inc  hl
+	or   (hl)
+	jr   nz, .we_no					; >= 0x100 -> valido
+	ld   a, (W_TMP+0)
+	cp   2
+	jr   c, .we_yes					; 0/1 -> invalido
+.we_no:
+	or   a
+	ret
+.we_yes:
+	scf
 	ret
 
 ; -----------------------------------------------------------------------------
@@ -751,9 +839,8 @@ add32_de:
 ; scan_root resets to the root; scan_current rescans whatever CUR_CLUS points to.
 ; -----------------------------------------------------------------------------
 scan_root:
+	call cur_root					; CUR_CLUS = raiz (0 en FAT16, ROOT_CLUS en FAT32)
 	xor  a
-	ld   (CUR_CLUS+0), a
-	ld   (CUR_CLUS+1), a
 	ld   (DIR_SP), a
 scan_current:
 	xor  a
@@ -762,8 +849,9 @@ scan_current:
 	ld   hl, ENT_ARRAY
 	ld   (ARR_PTR), hl
 	call set_scan_start
-	ld   hl, (CUR_CLUS)
-	ld   (SCAN_CLUS), hl			; working cluster for FAT-chain walk (subdirs)
+	ld   hl, CUR_CLUS				; working cluster for FAT-chain walk
+	ld   de, SCAN_CLUS
+	call w_copy
 .scr_sec:
 	call sd_read_sector
 	ld   a, (SD_STATUS)
@@ -833,24 +921,40 @@ scan_current:
 	ld   hl, (ARR_PTR)
 	ld   (hl), c					; +0 type
 	inc  hl
-	ld   a, (ix+26)					; +1 cluster low
+	ld   a, (ix+26)					; +1 cluster byte 0
 	ld   (hl), a
 	inc  hl
-	ld   a, (ix+27)					; +2 cluster high
+	ld   a, (ix+27)					; +2 cluster byte 1
 	ld   (hl), a
 	inc  hl
-	ld   a, (ix+28)					; +3 file size byte 0 (LE dword)
+	ld   a, (FS32)
+	or   a
+	jr   nz, .scr_hi32
+	xor  a							; FAT16: bytes altos = 0
 	ld   (hl), a
 	inc  hl
-	ld   a, (ix+29)					; +4 file size byte 1
+	jr   .scr_hi_done
+.scr_hi32:
+	ld   a, (ix+20)					; +3 cluster byte 2 (FAT32: word alto en +20)
 	ld   (hl), a
 	inc  hl
-	ld   a, (ix+30)					; +5 file size byte 2
+	ld   a, (ix+21)					; +4 cluster byte 3
+	and  #0F
+.scr_hi_done:
 	ld   (hl), a
 	inc  hl
-	ld   a, (ix+31)					; +6 file size byte 3
+	ld   a, (ix+28)					; +5 file size byte 0 (LE dword)
 	ld   (hl), a
-	inc  hl							; hl = record+7 (name destination)
+	inc  hl
+	ld   a, (ix+29)					; +6 file size byte 1
+	ld   (hl), a
+	inc  hl
+	ld   a, (ix+30)					; +7 file size byte 2
+	ld   (hl), a
+	inc  hl
+	ld   a, (ix+31)					; +8 file size byte 3
+	ld   (hl), a
+	inc  hl							; hl = record+9 (name destination)
 	ex   de, hl						; de = dest
 	pop  hl							; hl = name source
 	call copy_name					; copy up to NAME_MAX, NUL-terminated
@@ -890,48 +994,29 @@ scan_current:
 ; set up (SD_LBA + sec_left ready), CF=0 if there is no next cluster (root dir, end
 ; of chain, bad cluster, or SD error). Destroys SD_BUF.
 scan_next_cluster:
-	ld   hl, (CUR_CLUS)
+	ld   a, (FS32)
+	or   a
+	jr   nz, .snc_walk				; FAT32: la raiz tambien encadena
+	ld   hl, (CUR_CLUS+0)
 	ld   a, h
 	or   l
-	jr   z, .snc_none				; root directory has no FAT chain
-	ld   de, (SCAN_CLUS)
-	call fat_next_cluster			; DE = next cluster (reads a FAT sector into SD_BUF)
-	ld   a, (SD_STATUS)
-	or   a
-	jr   nz, .snc_none				; FAT read failed -> stop
-	ld   a, d
-	cp   #FF
-	jr   z, .snc_none				; 0xFFxx -> end of chain (treat reserved as EOC)
-	or   a							; cluster high byte != 0 -> >= 256, valid
-	jr   nz, .snc_use
-	ld   a, e
-	cp   2
-	jr   c, .snc_none				; cluster 0/1 -> invalid
-.snc_use:
-	ld   (SCAN_CLUS), de
-	call set_scan_from_de			; SD_LBA + sec_left for cluster in DE
+	jr   z, .snc_none				; FAT16 root: region fija, sin cadena
+.snc_walk:
+	ld   hl, SCAN_CLUS
+	ld   de, W_TMP
+	call w_copy
+	call fatnext					; W_TMP = FAT[W_TMP] (lee un sector FAT a SD_BUF)
+	jr   c, .snc_none				; SD error -> stop
+	call w_is_eoc
+	jr   c, .snc_none				; fin de cadena / cluster invalido
+	ld   hl, W_TMP
+	ld   de, SCAN_CLUS
+	call w_copy
+	call clus2lba					; SD_LBA + sec_left (destruye W_TMP)
 	scf
 	ret
 .snc_none:
 	or   a							; CF=0
-	ret
-
-; set_scan_from_de: DE = data cluster; set SD_LBA = DATA_LBA + (cluster-2)*SEC_PER_CLUS
-; and sec_left = SEC_PER_CLUS. (Cluster-addressed variant of set_scan_start's data path.)
-set_scan_from_de:
-	ld   hl, (DATA_LBA+0)
-	ld   (SD_LBA+0), hl
-	ld   hl, (DATA_LBA+2)
-	ld   (SD_LBA+2), hl
-	dec  de
-	dec  de							; cluster - 2
-	ld   a, (SEC_PER_CLUS)
-	ld   b, a
-.ssd_loop:
-	call add32_de
-	djnz .ssd_loop
-	ld   a, (SEC_PER_CLUS)
-	ld   (sec_left), a
 	ret
 
 ; lfn_accumulate: place the 13 chars of this LFN entry (IX) into LFN_BUF at
@@ -1030,34 +1115,6 @@ copy_name:
 	ld   (de), a
 	ret
 
-; fat_next_cluster: DE = current cluster -> DE = next cluster (>=0xFFF8 = end).
-; FAT16: entry at FAT_LBA + cluster/256, byte offset (cluster&255)*2.
-fat_next_cluster:
-	ld   a, d						; cluster/256 = high byte
-	ld   hl, (FAT_LBA+0)
-	push de
-	ld   d, 0
-	ld   e, a
-	add  hl, de
-	ld   (SD_LBA+0), hl
-	ld   hl, (FAT_LBA+2)
-	ld   de, 0
-	adc  hl, de
-	ld   (SD_LBA+2), hl
-	pop  de
-	push de							; preserve cluster across sd_read_sector
-	call sd_read_sector				; read the FAT sector into SD_BUF
-	pop  de
-	ld   l, e						; byte offset = (cluster&255)*2
-	ld   h, 0
-	add  hl, hl
-	ld   de, SD_BUF
-	add  hl, de
-	ld   e, (hl)
-	inc  hl
-	ld   d, (hl)					; DE = next cluster
-	ret
-
 ; inc16: HL = address of a 16-bit counter -> increment it.
 inc16:
 	inc  (hl)
@@ -1142,14 +1199,14 @@ scan_rom:
 	ld   (MAP_A8), hl
 	ld   (MAP_A16), hl
 	ld   (SCAN_N), hl
-	ld   hl, (CUR_CLUS)
-	push hl
-	ld   hl, (FILE_CLUS)
-	ld   (SCAN_CLUS), hl
+	ld   hl, FILE_CLUS
+	ld   de, SCAN_CLUS
+	call w_copy
 .sr_clus:
-	ld   hl, (SCAN_CLUS)
-	ld   (CUR_CLUS), hl
-	call set_scan_start
+	ld   hl, SCAN_CLUS				; SD_LBA + sec_left para el cluster actual
+	ld   de, W_TMP
+	call w_copy
+	call clus2lba
 	ld   a, (SEC_PER_CLUS)
 	ld   (SSEC_LEFT), a
 .sr_sec:
@@ -1166,23 +1223,18 @@ scan_rom:
 	dec  a
 	ld   (SSEC_LEFT), a
 	jr   nz, .sr_sec
-	ld   de, (SCAN_CLUS)
-	call fat_next_cluster
-	ld   a, d
-	cp   #FF
-	jr   nz, .sr_more
-	ld   a, e
-	cp   #F8
-	jr   nc, .sr_done
-.sr_more:
-	ld   a, d
-	or   e
-	jr   z, .sr_done
-	ld   (SCAN_CLUS), de
+	ld   hl, SCAN_CLUS				; siguiente cluster de la cadena
+	ld   de, W_TMP
+	call w_copy
+	call fatnext
+	jr   c, .sr_done
+	call w_is_eoc
+	jr   c, .sr_done
+	ld   hl, W_TMP
+	ld   de, SCAN_CLUS
+	call w_copy
 	jr   .sr_clus
 .sr_done:
-	pop  hl
-	ld   (CUR_CLUS), hl
 	ret
 
 ; sig_ok: HL = a counter -> CF=1 if it reaches MAP_THRESH (a real signature).
@@ -1238,14 +1290,14 @@ decide_mapper:
 ; scan the content. Uses the file size in the record (BR_REC+3 dword) for the rule.
 detect_mapper:
 	ld   hl, (BR_REC)
-	ld   de, 5
+	ld   de, SIZE_OFF+2
 	add  hl, de
 	ld   a, (hl)					; size byte 2
 	inc  hl
 	or   (hl)						; | size byte 3
 	jr   nz, .det_scan				; > 64 KB -> scan
 	ld   hl, (BR_REC)
-	ld   de, 4
+	ld   de, SIZE_OFF+1
 	add  hl, de
 	ld   a, (hl)					; size byte 1 (x256)
 	cp   #80						; < 0x8000 (32 KB)?
@@ -1356,14 +1408,14 @@ load_rom:
 	ld   (LOAD_SEG), a
 	ld   hl, 0
 	ld   (LOAD_OFF), hl
-	ld   hl, (CUR_CLUS)
-	push hl
-	ld   hl, (FILE_CLUS)
-	ld   (LOAD_CLUS), hl
+	ld   hl, FILE_CLUS
+	ld   de, LOAD_CLUS
+	call w_copy
 .lro_clus:
-	ld   hl, (LOAD_CLUS)
-	ld   (CUR_CLUS), hl
-	call set_scan_start
+	ld   hl, LOAD_CLUS				; SD_LBA + sec_left para el cluster actual
+	ld   de, W_TMP
+	call w_copy
+	call clus2lba
 	ld   a, (SEC_PER_CLUS)
 	ld   (SSEC_LEFT), a
 .lro_sec:
@@ -1384,23 +1436,18 @@ load_rom:
 	dec  a
 	ld   (SSEC_LEFT), a
 	jr   nz, .lro_sec
-	ld   de, (LOAD_CLUS)
-	call fat_next_cluster
-	ld   a, d
-	cp   #FF
-	jr   nz, .lro_more
-	ld   a, e
-	cp   #F8
-	jr   nc, .lro_done
-.lro_more:
-	ld   a, d
-	or   e
-	jr   z, .lro_done
-	ld   (LOAD_CLUS), de
+	ld   hl, LOAD_CLUS				; siguiente cluster de la cadena
+	ld   de, W_TMP
+	call w_copy
+	call fatnext
+	jr   c, .lro_done
+	call w_is_eoc
+	jr   c, .lro_done
+	ld   hl, W_TMP
+	ld   de, LOAD_CLUS
+	call w_copy
 	jr   .lro_clus
 .lro_done:
-	pop  hl
-	ld   (CUR_CLUS), hl
 	ret
 
 ; override_mapper_by_name: if the selected file's name contains a GoodMSX mapper
@@ -1753,25 +1800,23 @@ browse:
 	ld   a, (DIR_SP)
 	cp   8
 	jp   nc, .br_key				; stack full -> ignore
-	ld   e, a						; DIR_STACK[DIR_SP] = CUR_CLUS
+	add  a, a						; DIR_STACK[DIR_SP] = CUR_CLUS (4 bytes/nivel)
+	add  a, a
+	ld   e, a
 	ld   d, 0
 	ld   hl, DIR_STACK
 	add  hl, de
-	add  hl, de
-	ld   de, (CUR_CLUS)
-	ld   (hl), e
-	inc  hl
-	ld   (hl), d
+	ex   de, hl
+	ld   hl, CUR_CLUS
+	call w_copy
 	ld   a, (DIR_SP)
 	inc  a
 	ld   (DIR_SP), a
 	ld   a, (BR_SEL)				; CUR_CLUS = selected dir's first cluster
 	call ent_addr
-	inc  hl
-	ld   e, (hl)					; record+1 cluster low
-	inc  hl
-	ld   d, (hl)					; record+2 cluster high
-	ld   (CUR_CLUS), de
+	inc  hl							; record+1 = cluster (dword)
+	ld   de, CUR_CLUS
+	call w_copy
 	call scan_current
 	xor  a
 	ld   (BR_SEL), a
@@ -1783,12 +1828,10 @@ browse:
 	;     No debug dump, no separate "load" step -> fastest path to launch. ---
 	ld   a, (BR_SEL)
 	call ent_addr
-	ld   (BR_REC), hl				; record (size at +3, name at +7)
-	inc  hl
-	ld   e, (hl)
-	inc  hl
-	ld   d, (hl)					; DE = first cluster
-	ld   (FILE_CLUS), de
+	ld   (BR_REC), hl				; record (size at +SIZE_OFF, name at +NAME_OFF)
+	inc  hl							; record+1 = cluster (dword)
+	ld   de, FILE_CLUS
+	call w_copy
 	ld   a, #FF						; mapper: prefer GoodMSX name tag (fast);
 	ld   (MAPPER_ID), a				; only run the slow code scan if there is no tag
 	call override_mapper_by_name
@@ -1845,11 +1888,9 @@ browse:
 	ld   a, (BR_SEL)
 	call ent_addr
 	ld   (BR_REC), hl
-	inc  hl
-	ld   e, (hl)
-	inc  hl
-	ld   d, (hl)					; DE = first cluster of the .dsk
-	ld   (FILE_CLUS), de
+	inc  hl							; record+1 = first cluster of the .dsk (dword)
+	ld   de, FILE_CLUS
+	call w_copy
 	call cls_browser
 	ld   hl, #0101
 	call POSIT
@@ -1888,17 +1929,18 @@ browse:
 	jp   .br_redraw
 .bsd_contig:
 	; 2) absolute start LBA of the .dsk -> DSK_LBA
-	ld   hl, (FILE_CLUS)
-	ld   (CUR_CLUS), hl
-	call set_scan_start				; SD_LBA = abs LBA of the .dsk first cluster
+	ld   hl, FILE_CLUS
+	ld   de, W_TMP
+	call w_copy
+	call clus2lba					; SD_LBA = abs LBA of the .dsk first cluster
 	ld   hl, (SD_LBA+0)
 	ld   (DSK_LBA+0), hl
 	ld   hl, (SD_LBA+2)
 	ld   (DSK_LBA+2), hl
 	; 3) image size in 512-byte sectors = ceil(size/512) = (size+511)>>9  (16-bit)
 	ld   hl, (BR_REC)
-	ld   de, 3
-	add  hl, de						; hl -> size dword (LE) at record+3
+	ld   de, SIZE_OFF
+	add  hl, de						; hl -> size dword (LE) at record+SIZE_OFF
 	ld   e, (hl)
 	inc  hl
 	ld   d, (hl)
@@ -1932,18 +1974,14 @@ browse:
 	jp   .br_redraw
 .bsd_haveemu:
 	; FILE_CLUS now = NEXTOR.EMU first cluster -> its abs LBA = the data-file sector.
-	; Safety net: never write with cluster < 2 (set_scan_start(0/1) would target the
-	; root dir / reserved area and corrupt the filesystem).
-	ld   hl, (FILE_CLUS)
-	ld   a, h
-	or   a
-	jr   nz, .bsd_clok
-	ld   a, l
-	cp   2
+	; Safety net: never write with cluster < 2 (would target the root dir /
+	; reserved area and corrupt the filesystem).
+	ld   hl, FILE_CLUS
+	ld   de, W_TMP
+	call w_copy
+	call w_is_eoc					; CF=1 si cluster < 2 o reservado
 	jp   c, .bsd_noemu				; invalid cluster -> abort, do NOT write
-.bsd_clok:
-	ld   (CUR_CLUS), hl
-	call set_scan_start
+	call clus2lba					; (W_TMP intacto tras w_is_eoc)
 	ld   hl, (SD_LBA+0)
 	ld   (EMU_LBA+0), hl
 	ld   hl, (SD_LBA+2)
@@ -1981,15 +2019,14 @@ browse:
 	jp   z, .br_key					; already at root
 	dec  a
 	ld   (DIR_SP), a
-	ld   e, a						; CUR_CLUS = DIR_STACK[DIR_SP]
+	add  a, a						; CUR_CLUS = DIR_STACK[DIR_SP] (4 bytes/nivel)
+	add  a, a
+	ld   e, a
 	ld   d, 0
 	ld   hl, DIR_STACK
 	add  hl, de
-	add  hl, de
-	ld   e, (hl)
-	inc  hl
-	ld   d, (hl)
-	ld   (CUR_CLUS), de
+	ld   de, CUR_CLUS
+	call w_copy
 	call scan_current
 	xor  a
 	ld   (BR_SEL), a
@@ -2000,14 +2037,14 @@ browse:
 ; print_rom_kb: print the selected ROM's size in KB (decimal) from BR_REC.
 print_rom_kb:
 	ld   hl, (BR_REC)
-	ld   de, 4
+	ld   de, SIZE_OFF+1
 	add  hl, de
 	ld   a, (hl)					; size byte 1
 	srl  a
 	srl  a
 	ld   c, a
 	ld   hl, (BR_REC)
-	ld   de, 5
+	ld   de, SIZE_OFF+2
 	add  hl, de
 	ld   e, (hl)
 	inc  hl
@@ -2470,14 +2507,14 @@ draw_entry:
 .de_size:
 	; KB = (size>>16)*64 + (size_byte1 >> 2)
 	ld   hl, (BR_REC)
-	ld   de, 4
+	ld   de, SIZE_OFF+1
 	add  hl, de
 	ld   a, (hl)					; size byte 1
 	srl  a
 	srl  a
 	ld   c, a
 	ld   hl, (BR_REC)
-	ld   de, 5
+	ld   de, SIZE_OFF+2
 	add  hl, de
 	ld   e, (hl)					; size byte 2
 	inc  hl
@@ -2712,29 +2749,40 @@ ix_is_dsk:
 ; CONSECUTIVE clusters (Nextor disk emulation maps a linear sector range, so the
 ; image must be unfragmented). Returns CF=0 if contiguous, CF=1 if fragmented.
 dsk_check_contig:
-	ld   de, (FILE_CLUS)
+	ld   hl, FILE_CLUS
+	ld   de, SCAN_CLUS				; SCAN_CLUS = cluster actual de la cadena
+	call w_copy
 .dcc_loop:
-	ld   a, d
-	or   e
-	jr   z, .dcc_bad				; cluster 0 -> invalid chain
-	push de							; save current cluster
-	call fat_next_cluster			; DE = next cluster
-	pop  hl							; HL = current cluster
-	ld   a, d						; end of chain? (next >= 0xFFF8)
-	cp   #FF
-	jr   c, .dcc_chk
-	ld   a, e
-	cp   #F8
-	jr   nc, .dcc_ok				; >=0xFFF8 -> last cluster, contiguous so far
-.dcc_chk:
-	inc  hl							; next must equal current+1
+	ld   hl, SCAN_CLUS
+	ld   de, W_TMP
+	call w_copy
+	call w_is_eoc
+	jr   c, .dcc_bad				; cluster < 2 / reservado -> cadena invalida
+	call fatnext					; W_TMP = siguiente cluster
+	jr   c, .dcc_bad				; error SD
+	call w_is_eoc
+	jr   c, .dcc_ok					; fin de cadena -> contiguo hasta aqui
+	ld   hl, (SCAN_CLUS+0)			; siguiente debe ser actual+1 (32-bit)
+	inc  hl
+	ld   (SCAN_CLUS+0), hl
 	ld   a, h
-	cp   d
+	or   l
+	jr   nz, .dcc_nc
+	ld   hl, (SCAN_CLUS+2)
+	inc  hl
+	ld   (SCAN_CLUS+2), hl
+.dcc_nc:
+	ld   hl, (SCAN_CLUS+0)
+	ld   de, (W_TMP+0)
+	or   a
+	sbc  hl, de
 	jr   nz, .dcc_bad
-	ld   a, l
-	cp   e
+	ld   hl, (SCAN_CLUS+2)
+	ld   de, (W_TMP+2)
+	or   a
+	sbc  hl, de
 	jr   nz, .dcc_bad
-	jr   .dcc_loop					; DE already = next cluster, continue
+	jr   .dcc_loop					; SCAN_CLUS ya = siguiente, continuar
 .dcc_ok:
 	or   a							; CF = 0 (contiguous)
 	ret
@@ -2923,22 +2971,23 @@ sd_write_sector:
 ; find_emufile: search the SD ROOT directory for "NEXTOR  EMU" (8.3). On success
 ; CF=0 and (FILE_CLUS) = its first cluster; on not-found / SD error CF=1.
 find_emufile:
-	xor  a
-	ld   (CUR_CLUS+0), a
-	ld   (CUR_CLUS+1), a
-	call set_scan_start				; root dir region (SD_LBA, sec_left=ROOT_SECS)
+	call cur_root					; CUR_CLUS = raiz (FAT16: region fija / FAT32: cadena)
+	call set_scan_start
+	ld   hl, CUR_CLUS
+	ld   de, SCAN_CLUS
+	call w_copy						; para seguir la cadena de la raiz FAT32
 .fe_sec:
 	call sd_read_sector
 	ld   a, (SD_STATUS)
 	or   a
-	jr   nz, .fe_bad
+	jp   nz, .fe_bad
 	ld   ix, SD_BUF
 	ld   a, 16
 	ld   (ent_in_sec), a
 .fe_ent:
 	ld   a, (ix+0)
 	or   a
-	jr   z, .fe_bad					; 0x00 = end of directory -> not found
+	jp   z, .fe_bad					; 0x00 = end of directory -> not found
 	cp   #E5
 	jr   z, .fe_next				; deleted entry
 	ld   a, (ix+11)
@@ -2956,20 +3005,42 @@ find_emufile:
 	inc  hl
 	inc  de
 	djnz .fe_cmp
-	; name matches -> require first cluster >= 2. A 0-byte file has cluster 0, and
-	; set_scan_start(0) points at the ROOT DIR, so writing the data file there would
-	; CORRUPT the root directory. Skip such an entry and keep searching.
+	; name matches -> require first cluster >= 2. A 0-byte file has cluster 0,
+	; and writing the data file there would CORRUPT the filesystem. Skip such an
+	; entry and keep searching.
 	ld   a, (ix+27)
 	or   a
 	jr   nz, .fe_take
+	ld   a, (FS32)					; FAT32: el word alto (+20/21) tambien cuenta
+	or   a
+	jr   z, .fe_lo
+	ld   a, (ix+20)
+	or   a
+	jr   nz, .fe_take
+	ld   a, (ix+21)
+	and  #0F
+	jr   nz, .fe_take
+.fe_lo:
 	ld   a, (ix+26)
 	cp   2
 	jr   c, .fe_next				; cluster 0 or 1 -> unusable
 .fe_take:
-	ld   a, (ix+26)					; match -> first cluster
+	ld   a, (ix+26)					; match -> first cluster (dword)
 	ld   (FILE_CLUS+0), a
 	ld   a, (ix+27)
 	ld   (FILE_CLUS+1), a
+	xor  a
+	ld   (FILE_CLUS+2), a
+	ld   (FILE_CLUS+3), a
+	ld   a, (FS32)
+	or   a
+	jr   z, .fe_done
+	ld   a, (ix+20)
+	ld   (FILE_CLUS+2), a
+	ld   a, (ix+21)
+	and  #0F
+	ld   (FILE_CLUS+3), a
+.fe_done:
 	or   a							; CF=0
 	ret
 .fe_next:
@@ -2978,12 +3049,14 @@ find_emufile:
 	ld   a, (ent_in_sec)
 	dec  a
 	ld   (ent_in_sec), a
-	jr   nz, .fe_ent
+	jp   nz, .fe_ent
 	call inc_sd_lba
 	ld   a, (sec_left)
 	dec  a
 	ld   (sec_left), a
-	jr   nz, .fe_sec
+	jp   nz, .fe_sec
+	call scan_next_cluster			; raiz FAT32 multi-cluster: seguir la cadena
+	jp   c, .fe_sec
 .fe_bad:
 	scf
 	ret
@@ -3025,6 +3098,12 @@ build_emu_datafile:
 ; Only ever writes to: one FAT sector (x NUM_FATS) + one root-dir sector. It does
 ; NOT touch any other file's data.
 create_emufile:
+	ld   a, (FS32)					; la creacion escribe estructuras FAT16; en FAT32
+	or   a							; el usuario copia un NEXTOR.EMU (>=512B) desde DOS
+	jr   z, .ce_fat16
+	scf
+	ret
+.ce_fat16:
 	call find_free_cluster			; DE = free cluster, CF=1 if none
 	ret  c
 	ld   (NEW_CLUS), de
@@ -3033,7 +3112,9 @@ create_emufile:
 	call write_dir_entry			; root dir entry for NEXTOR.EMU
 	ret  c
 	ld   hl, (NEW_CLUS)
-	ld   (FILE_CLUS), hl
+	ld   (FILE_CLUS+0), hl
+	ld   hl, 0
+	ld   (FILE_CLUS+2), hl
 	or   a							; CF=0 success
 	ret
 
@@ -3406,25 +3487,6 @@ wait_all_released:
 	ret
 .war_busy:
 	jr   .war_loop
-
-; Draws (#ff) the inverse-video highlight bar on the current main-menu row.
-main_draw_selection:
-	ld   a, '>'						; draw the selection marker
-	jr   main_selection_common
-; Clears the selection marker on the current main-menu row.
-main_clear_selection:
-	ld   a, ' '
-main_selection_common:
-	ld   (var_selColor), a			; marker char ('>' or ' ')
-	ld   a, (var_mainSel)
-	add  a, a						; sel*2
-	add  a, 6						; Y = 6 + sel*2 (options are at rows 6,8,10,12)
-	ld   l, a						; L = Y
-	ld   h, 26						; H = X (column 26, just left of the option text)
-	call POSIT
-	ld   a, (var_selColor)
-	call CHPUT						; print '>' (or ' ' to clear)
-	ret
 
 ; Shared screen initialization: SCREEN 0 / 80 columns + blink mode ON, with a
 ; DETERMINISTIC palette so the menu looks EXACTLY the same on cold boot and on
@@ -4038,21 +4100,6 @@ print_selection:
 
 ; ############## Constants
 
-; ----- Main menu (MSXnano) strings -----
-MAIN_OPT_COUNT	equ		4				; number of main-menu options
-
-mainTitleStr:
-	.db "MSXnano",0
-mainOpt1Str:
-	.db "1. Arrancar sistema",0
-mainOpt2Str:
-	.db "2. Lanzar ROM de la SD",0
-mainOpt3Str:
-	.db "3. Configuracion WiFi",0
-mainOpt4Str:
-	.db "4. Ajustes",0
-mainHintStr:
-	.db "Flechas para mover - ENTER/ESPACIO para elegir",0
 tagDirStr:
 	.db "[DIR] ",0
 tagRomStr:
