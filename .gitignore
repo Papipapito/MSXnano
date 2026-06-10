@@ -39,3 +39,4 @@ fpga/src/rom/*.fs
 # Local design / scratch notes (kept on disk, not tracked)
 fpga/src/msx_goauld_settings_menu/M2_DESIGN.md
 fpga/src/msx_goauld_settings_menu/src/*.SDwork.txt
+fpga/midi_build.log
