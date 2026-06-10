@@ -26,7 +26,7 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 ### 🗂️ Boot menu: SD file browser
 The boot menu is now a full SD file browser (File-Hunter style) that starts before the OS:
 
-![SD browser](/pics/menu_browser.jpg)
+![SD browser](/pics/menu_browser.png)
 
 * **Launch `.ROM` games** straight into the megaram: mapper auto-detection (code scan)
   plus GoodMSX filename tags (`[KonamiSCC]`, `[ASCII8]`, `[ASCII16]`, ...), progress bar
@@ -45,7 +45,7 @@ The boot menu is now a full SD file browser (File-Hunter style) that starts befo
 Cleaned up and extended — the always-required goauld toggles (mapper/megaram/SD) are
 now forced on and removed from the UI:
 
-![Settings](/pics/menu_settings.jpg)
+![Settings](/pics/menu_settings.png)
 
 | Option | What it does |
 |--------|--------------|
