@@ -1917,19 +1917,16 @@ browse:
 	call clus2lba
 	ld   hl, SD_LBA
 	call print_hex32le
-	ld   a, 'F'
+	ld   a, 'R'
 	call CHPUT
-	ld   a, (FS32)
-	add  a, '0'
+	ld   hl, PART_LBA				; inicio absoluto de la particion
+	call print_hex32le
+	ld   a, 'T'
 	call CHPUT
-	ld   a, 'S'
-	call CHPUT
-	ld   a, (SPC_SHIFT)
-	add  a, '0'
-	call CHPUT
-	ld   a, 'P'
-	call CHPUT
-	ld   a, (MAPPER_ID)
+	call sd_read_sector				; leer el sector L y mostrar sus 2 primeros bytes
+	ld   a, (SD_BUF+0)
+	call print_hex8
+	ld   a, (SD_BUF+1)
 	call print_hex8
 	ld   a, 'M'
 	call CHPUT
