@@ -27,7 +27,7 @@ ADDRESS = 0x4760
 ADDRESSBIN_2 = $(shell echo "$$(( $(ADDRESS) - 0x4000 ))" | bc)
 ADDRESSBIN = 1888
 
-rom: cleanrom $(ROMBIN)
+rom: clean $(ROMBIN)
 
 orig: $(DIRSRC)/menu_orig.asm
 	@echo "$(COL_WHITE)###### Compiling $@$(COL_RESET)"

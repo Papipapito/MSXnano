@@ -11,3 +11,31 @@ fpga/build_log.txt
 # Build it locally from your own ROMs with fpga/src/rom/build.bat, then flash at 0x200000.
 fpga/src/rom/goauld_rom_int.bin
 fpga/src/rom/goauld_rom_japan.bin
+fpga/src/rom/goauld_rom_int_menu.bin
+fpga/src/rom/goauld_rom_int_SDTEST.bin
+fpga/src/rom/fm_logo_menu.bin
+
+# Boot-menu build temporaries / logs
+fpga/src/msxnano_menu/~tmppre.*
+fpga/autofire_build.log
+
+# Settings/boot menu ROM: host build tools (binaries) + build outputs
+fpga/src/msxnano_menu/bin/
+fpga/src/msxnano_menu/out/
+_menu_shot*.png
+
+# Ruflo / ruvector tool databases (regenerable, not project files)
+ruvector.db
+**/ruvector.db
+
+# Dead earlier experiment (NANOROM) + its copyrighted test ROMs / DOS system
+# files (Konami ROMs, MSXDOS2.SYS, COMMAND2.COM) — NOT redistributed.
+fpga/src/nanorom/
+
+# Stray FPGA bitstream build outputs left in the source tree
+fpga/src/rom/*.fs
+
+# Local design / scratch notes (kept on disk, not tracked)
+fpga/src/msxnano_menu/M2_DESIGN.md
+fpga/src/msxnano_menu/src/*.SDwork.txt
+fpga/midi_build.log

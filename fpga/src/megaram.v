@@ -14,13 +14,17 @@ module megaram_scc(
     output wire megaram_wrt,
     output wire [20:0] megaram_addr,
 
-    output wire scc_sound_disable
+    output wire scc_sound_disable,
+    output wire scc_mode_plus,      // SCC-I mode reg (BFFE) bit5: 1 = SCC+ layout
+    output wire sccplus_win_en      // SCC+ sound window B800-B8FF active (mode bit5 + bank3 bit7)
 
 );
 
 	//`default_nettype none
 
     assign scc_sound_disable = megaram_mode_b[4];
+    assign scc_mode_plus = megaram_mode_b[5];
+    assign sccplus_win_en = ( megaram_mode_b[5] == 1 && megaram_reg3[7] == 1 ) ? 1 : 0;
 
     //Mapped I/O port access on 7FFE-7FFFh / BFFE-BFFFh ... Write protect / SPC mode register
     wire megaram_3fe;
@@ -28,13 +32,14 @@ module megaram_scc(
     assign megaram_3fe = ( bus_addr[10:1] == 10'b1111111111) ? 1 : 0;
     assign megaram_1ffe = ( megaram_3fe == 1 && bus_addr[12:11] == 2'b11 ) ? 1 : 0;
 
-    //Mapped I/O port access on 9800-9FFFh ... Wave memory
+    //Mapped I/O port access on 9800-9FFFh ... Wave memory (solo modo SCC: en
+    //Konami4/ASCII un banco 0x3F en reg2 NO debe abrir la ventana de sonido)
     wire megaram_scc_a;
-    assign megaram_scc_a = ( bus_addr[15:11] == 5'b10011 && megaram_mode_b[5] == 0 && megaram_reg2[5:0] == 6'b111111  ) ? 1 : 0;
+    assign megaram_scc_a = ( map_sel == 2'b10 && bus_addr[15:11] == 5'b10011 && megaram_mode_b[5] == 0 && megaram_reg2[5:0] == 6'b111111  ) ? 1 : 0;
 
     //Mapped I/O port access on B800-BFFFh ... Wave memory
     wire megaram_scc_b;
-    assign megaram_scc_b = ( bus_addr[15:11] == 5'b10111 && megaram_mode_b[5] == 1 && megaram_reg3[7] == 1  ) ? 1 : 0;
+    assign megaram_scc_b = ( map_sel == 2'b10 && bus_addr[15:11] == 5'b10111 && megaram_mode_b[5] == 1 && megaram_reg3[7] == 1  ) ? 1 : 0;
 
     //SCC address decoder
     wire megaram_sel_wave;
@@ -78,7 +83,27 @@ module megaram_scc(
             megaram_mode_b  <= 8'h00;
         end
         else if (scc_wrt == 1) begin
-            if (map_sel[0] == 0) begin
+            if (map_sel == 2'b00) begin
+                //Konami4 (sin SCC): regs de banco 6000/8000/A000, banco 0 FIJO
+                //en 4000-5FFF. Sin regs de modo (7FFE/BFFE ignorados = ROM pura,
+                //inmune a los pokes anticopia de Konami). Slot2Mode=00 via SWIO
+                //smart command #0D (Ext1+Ext2); el por-defecto tras reset.
+                case (bus_addr[15:11])
+                    //Mapped I/O port access on 6000-67FFh ... Bank register write
+                    5'b01100: begin
+                        megaram_reg1 <= cpu_dout;
+                    end
+                    //Mapped I/O port access on 8000-87FFh ... Bank register write
+                    5'b10000: begin
+                        megaram_reg2 <= cpu_dout;
+                    end
+                    //Mapped I/O port access on A000-A7FFh ... Bank register write
+                    5'b10100: begin
+                        megaram_reg3 <= cpu_dout;
+                    end
+                endcase
+            end
+            else if (map_sel == 2'b10) begin
                 case (bus_addr[15:11])
                     //Mapped I/O port access on 5000-57FFh ... Bank register write
                     5'b01010: begin

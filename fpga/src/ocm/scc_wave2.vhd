@@ -87,7 +87,9 @@ entity scc_wave2 is
         adr         : in    std_logic_vector( 7 downto 0 );
         dbi         : out   std_logic_vector( 7 downto 0 );
         dbo         : in    std_logic_vector( 7 downto 0 );
-        wave        : out   std_logic_vector( 14 downto 0 )
+        wave        : out   std_logic_vector( 14 downto 0 );
+        sccplus     : in    std_logic   -- 0 = SCC compat (regs at x80-x9F, ch.E mirrors ch.D)
+                                        -- 1 = SCC+ (ch.E own wave at x80-x9F, regs at xA0-xBF)
     );
 end scc_wave2;
 
@@ -191,8 +193,10 @@ begin
             ff_rst_ch_e     <= '0';
 
         elsif (clk21m'event and clk21m = '1') then
-            -- mapped i/o port access on b8a0-b8afh (9880-988fh) ... register write
-            if( req = '1' and ff_req_dl = '0' and adr(7 downto 5) = "100" and wrt = '1' )then
+            -- register write: 9880-989Fh (compat, adr x80-x9F) / B8A0-B8BFh (SCC+, adr xA0-xBF)
+            if( req = '1' and ff_req_dl = '0' and wrt = '1' and
+                ((sccplus = '0' and adr(7 downto 5) = "100") or
+                 (sccplus = '1' and adr(7 downto 5) = "101")) )then
                 case adr(3 downto 0) is
                     when "0000" => reg_freq_ch_a(  7 downto 0 ) <= dbo( 7 downto 0 ); ff_rst_ch_a <= reg_mode_sel(5);
                     when "0001" => reg_freq_ch_a( 11 downto 8 ) <= dbo( 3 downto 0 ); ff_rst_ch_a <= reg_mode_sel(5);
@@ -320,7 +324,8 @@ begin
                 ("001" & ff_ptr_ch_b)   when( ff_ch_num = "001" )else
                 ("010" & ff_ptr_ch_c)   when( ff_ch_num = "010" )else
                 ("011" & ff_ptr_ch_d)   when( ff_ch_num = "011" )else
-                ("011" & ff_ptr_ch_e);
+                ("100" & ff_ptr_ch_e)   when( sccplus = '1'     )else  -- SCC+: ch.E own wave
+                ("011" & ff_ptr_ch_e);                                 -- compat: ch.E mirrors ch.D
 
     wavemem : ram
     port map(

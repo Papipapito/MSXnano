@@ -23,7 +23,9 @@ module v9958_top(
     output   [7:0] cdi,
     input    [7:0] cdo,
 
-    input [15:0] audio_sample,
+    input [15:0] audio_sample,      // left (and legacy mono)
+    input [15:0] audio_sample_r,    // right
+    input aspect_16_9,              // AVI InfoFrame: 0 = 4:3, 1 = 16:9
 
     output  adc_clk,
     output  adc_cs,
@@ -432,13 +434,15 @@ module v9958_top(
 
 
     wire [15:0] sample_w;
+    wire [15:0] sample_r_w;
     assign sample_w = audio_sample;
+    assign sample_r_w = audio_sample_r;
 
     reg [15:0] audio_sample_word [1:0], audio_sample_word0 [1:0];
     always @(posedge clk_w) begin       // crossing clock domain
         audio_sample_word0[0] <= sample_w;
         audio_sample_word[0] <= audio_sample_word0[0];
-        audio_sample_word0[1] <= sample_w;
+        audio_sample_word0[1] <= sample_r_w;
         audio_sample_word[1] <= audio_sample_word0[1];
     end
     wire [15:0] audio_sample_word_w [1:0];
@@ -465,6 +469,7 @@ module v9958_top(
           .rgb({dvi_r, dvi_g, dvi_b}), 
           .reset( hdmi_reset ),
           .audio_sample_word(audio_sample_word_w),
+          .aspect_16_9(aspect_16_9),
           .cx(cx_ntsc), 
           .cy(cy_ntsc),
           .tmds_internal(tmds_ntsc)
@@ -491,6 +496,7 @@ module v9958_top(
           .rgb({dvi_r, dvi_g, dvi_b}), 
           .reset( hdmi_reset ),
           .audio_sample_word(audio_sample_word_w),
+          .aspect_16_9(aspect_16_9),
           .cx(cx_pal), 
           .cy(cy_pal),
           .tmds_internal(tmds_pal)

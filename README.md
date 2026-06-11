@@ -21,6 +21,88 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * WiFi UART pins aligned with the wiring diagram (`uart_rx` → pin 77, `uart_tx` → pin 73).
 * **Claude (Anthropic)** collaborated on this release.
 
+## What's new in v1.7
+
+### 🎮 Konami mapper (without SCC) — new compatibility
+Classic Konami games that use the plain Konami mapper (Nemesis 1, Penguin Adventure,
+The Maze of Galious, ...) now load and run from the boot menu: the megaram gained a
+true **Konami4 mode** (bank registers at 6000h/8000h/A000h, fixed bank 0, pure-ROM
+behaviour immune to Konami's anti-copy pokes).
+
+### 🕹️ Two-stage Konami boots fixed (Metal Gear 2, SD Snatcher)
+Games whose cartridge INIT hooks **H.STKE** and returns to the BIOS (expecting the
+boot to call them back) used to come up half-booted with garbled tiles. The launcher
+now CALLs the cartridge INIT the way the BIOS does and, if the game hooked H.STKE,
+invokes the hook itself. Metal Gear 2 boots and plays with full SCC sound.
+
+### 🔎 Browser: search and manual mapper override
+* **`/` search**: type part of a name (case-insensitive), ENTER jumps to the next
+  match in the current folder; press `/` + ENTER again for the following one.
+* **`M` on the confirm screen** cycles the mapper (plain → Konami → KonamiSCC →
+  ASCII8 → ASCII16) for ROMs the auto-detection gets wrong — no file renaming needed.
+* **Mapper auto-detection aligned with openMSX** `guessRomType`: full credit table
+  (including the 77FFh ASCII16 register) and highest-score decision with openMSX
+  tie-breaking.
+
+### 🧹 Settings menu cleanup
+The slot selectors (Mapper/MegaRam/SD) are gone from the UI — the system layout is
+fixed by design (megaram in slot 2, SD in 3-2) and the saved values are preserved.
+
+---
+
+## What's new in the `MSXNano_Menu` branch (v1.6 preview)
+
+### 🗂️ Boot menu: SD file browser
+The boot menu is now a full SD file browser (File-Hunter style) that starts before the OS:
+
+![SD browser](/pics/menu_browser.png)
+
+* **Launch `.ROM` games** straight into the megaram: mapper auto-detection (code scan)
+  plus GoodMSX filename tags (`[KonamiSCC]`, `[ASCII8]`, `[ASCII16]`, ...), progress bar
+  and confirm screen with size/mapper.
+* **Launch `.DSK` images** via Nextor disk emulation — fully automatic, with a
+  fragmentation check. The emulation helper sector is invisible (FAT32: a reserved
+  sector of the partition; FAT16: an auto-created hidden file).
+* **FAT16 + FAT32** support, auto-detected per partition from the BPB. Hybrid cards
+  (e.g. FAT16 + FAT32) work; switch partitions with **TAB**. Long filenames (LFN) with
+  marquee scrolling for long names, subdirectories (multi-cluster chains), filter tabs
+  **[R]OM / [D]SK / [A]LL**, and entry counter.
+* Keys: arrows + RETURN to navigate/launch, BS to go back, R/D/A filters, TAB partition,
+  S settings, W WiFi, ESC boots the system (Nextor/MSX-DOS).
+
+### ⚙️ Settings menu (S)
+Cleaned up and extended — the always-required goauld toggles (mapper/megaram/SD) are
+now forced on and removed from the UI:
+
+![Settings](/pics/menu_settings.png)
+
+| Option | What it does |
+|--------|--------------|
+| **Second SCC** | Enables a second SCC+ sound chip in the free slot (for dual-SCC players/trackers) |
+| **Scanlines** | CRT-style scanlines on the HDMI output |
+| **Compatible Mode** | Extra wait-states for picky software |
+| **Stereo Sound** | HDMI stereo: PSG1+SCC1+OPLL left / PSG2+SCC2+OPLL right (off = mono on both) |
+| **Pantalla 16:9** | HDMI AVI InfoFrame aspect signalling: 4:3 (off) or 16:9 (on). The TV decides pillarbox vs stretch |
+| Slots | Mapper / MegaRam / SD slot selection (removed in v1.7 — fixed layout) |
+
+### 🔊 Sound: SCC+ done right (and doubled)
+* **Real SCC+ (SCC-I) mode**: B800h window, mode register at BFFEh, independent
+  channel-5 waveform — Snatcher-class software works. Wave-RAM read-back fixed
+  (software SCC detection used to read 0xFF).
+* **Second SCC+**: a sound-only SCC-I "cartridge" in the other free slot, so software
+  that drives two SCC cartridges finds both. Toggle in settings.
+* **Second PSG** at ports 10h/11h/12h (OCM 2nd-gen standard) with register read-back.
+* **HDMI stereo**: true L/R audio over HDMI (see settings table above).
+* `tools/scctest/SCCTEST.COM`: detection + sound test for SCC/SCC+ per slot, dual PSG
+  and FM, with stereo placement check.
+
+### 🧰 Other
+* Critical timing closure improvements in the FPGA (54 MHz domain now closes with
+  positive slack; SD-companion CDC constraints documented in the SDC).
+* `build.bat` now bundles the new boot menu into the BIOS pack automatically.
+* Z80-level emulation test harness for the menu's FAT code
+  (`tools/scctest/opcheck/fat32_emu_test.py`).
+
 ---
 
 ## 🔌 Connection diagram

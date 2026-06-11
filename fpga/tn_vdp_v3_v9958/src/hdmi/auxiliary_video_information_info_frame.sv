@@ -21,6 +21,7 @@ module auxiliary_video_information_info_frame
     parameter bit [3:0] PIXEL_REPETITION = 4'b0000 // None
 )
 (
+    input wire aspect_16_9,             // 0 = 4:3 (VIC base), 1 = 16:9 (VIC+1)
     output logic [23:0] header,
     output logic [55:0] sub [3:0]
 );
@@ -40,9 +41,9 @@ logic [7:0] packet_bytes [27:0];
 
 assign packet_bytes[0] = 8'd1 + ~(header[23:16] + header[15:8] + header[7:0] + packet_bytes[13] + packet_bytes[12] + packet_bytes[11] + packet_bytes[10] + packet_bytes[9] + packet_bytes[8] + packet_bytes[7] + packet_bytes[6] + packet_bytes[5] + packet_bytes[4] + packet_bytes[3] + packet_bytes[2] + packet_bytes[1]);
 assign packet_bytes[1] = {1'b0, VIDEO_FORMAT, ACTIVE_FORMAT_INFO_PRESENT, BAR_INFO, SCAN_INFO};
-assign packet_bytes[2] = {COLORIMETRY, PICTURE_ASPECT_RATIO, ACTIVE_FORMAT_ASPECT_RATIO};
+assign packet_bytes[2] = {COLORIMETRY, (aspect_16_9 ? 2'b10 : 2'b01), ACTIVE_FORMAT_ASPECT_RATIO};
 assign packet_bytes[3] = {IT_CONTENT, EXTENDED_COLORIMETRY, RGB_QUANTIZATION_RANGE, NON_UNIFORM_PICTURE_SCALING};
-assign packet_bytes[4] = {1'b0, 7'(VIDEO_ID_CODE)};
+assign packet_bytes[4] = {1'b0, 7'(VIDEO_ID_CODE) + 7'(aspect_16_9)};  // 2->3 / 17->18
 assign packet_bytes[5] = {YCC_QUANTIZATION_RANGE, CONTENT_TYPE, PIXEL_REPETITION};
 
 genvar i;

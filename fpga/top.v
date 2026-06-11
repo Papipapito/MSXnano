@@ -501,10 +501,36 @@ always @(posedge clk_54m or negedge bus_reset_n) begin
         psg_reg15_joy_sel <= cpu_dout[7:6];
 end
 
+// ===== AUTOFIRE (turbo) on the otherwise-unused joystick buttons 3 & 4 =====
+// The FPGA-Companion joy byte uses bits 0-5 (dirs + A + B); bits 6/7 carry the
+// extra pad buttons 3/4 (unused by the MSX 2-button joystick). While button 3
+// is held it pulses TrigA, button 4 pulses TrigB, at ~10 Hz (50 ms ON / 50 ms
+// OFF). Each phase must outlast one MSX PSG scan (~1 frame @50/60 Hz) so every
+// press AND release is sampled; 50 ms = 2.5-3 frames is safe even on PAL.
+// Ported from the goauld+RP2040 fork (there it lived in firmware; here, no
+// RP2040 -> it lives in the FPGA on the PSG joystick-injection path).
+//   54 MHz * 0.050 s = 2,700,000 cycles per half period.
+reg        af_phase = 1'b0;
+reg [21:0] af_cnt   = 22'd0;
+always @(posedge clk_54m) begin
+    if (af_cnt >= 22'd2700000) begin
+        af_cnt   <= 22'd0;
+        af_phase <= ~af_phase;
+    end else begin
+        af_cnt   <= af_cnt + 22'd1;
+    end
+end
+// fire = manual press OR (autofire button held AND square-wave high). If the pad
+// has no button 3/4 (bits 6/7 stay 0) this reduces to the original behaviour.
+wire af_fa0 = joystick0[4] | (joystick0[6] & af_phase);   // joy0 TrigA: manual + btn3 turbo
+wire af_fb0 = joystick0[5] | (joystick0[7] & af_phase);   // joy0 TrigB: manual + btn4 turbo
+wire af_fa1 = joystick1[4] | (joystick1[6] & af_phase);   // joy1 TrigA
+wire af_fb1 = joystick1[5] | (joystick1[7] & af_phase);   // joy1 TrigB
+
 // Companion joy byte (active-high): bit0=Right, bit1=Left, bit2=Down, bit3=Up, bit4=A, bit5=B
 // MSX PSG Port A (active-low):      bit0=Up,    bit1=Down,  bit2=Left, bit3=Right, bit4=TrigA, bit5=TrigB
-wire [7:0] joy0_msx = {2'b11, ~joystick0[5], ~joystick0[4], ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
-wire [7:0] joy1_msx = {2'b11, ~joystick1[5], ~joystick1[4], ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
+wire [7:0] joy0_msx = {2'b11, ~af_fb0, ~af_fa0, ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
+wire [7:0] joy1_msx = {2'b11, ~af_fb1, ~af_fa1, ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
 wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? joy0_msx :
                           (!psg_reg15_joy_sel[1]) ? joy1_msx :
                           8'hFF;
@@ -529,6 +555,9 @@ assign keyboard_addr = ppi_port_c[3:0];
     always @ (posedge clk_54m) begin
         cpu_din <=
                 ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
+                `ifdef ENABLE_SOUND
+                     ( psg2_req_r == 1 ) ? psg2_dout :
+                `endif
                 ( ppi_portb_req_r == 1 ) ? keyboard_data :
                 `ifdef ENABLE_V9958
                      ( vdp_csr_n == 0) ? vdp_dout :
@@ -549,8 +578,9 @@ assign keyboard_addr = ppi_port_c[3:0];
                      //( slot3_req_r == 1) ? 8'hff :
                  `endif
                 `ifdef ENABLE_SOUND
-                     //( scc_req3_r == 1 ) ? scc_dout:
                      ( megaram_req == 1 ) ? ram_dout:
+                     ( scc_rd_r == 1 ) ? scc_dout:
+                     ( scc2x_rd_r == 1 ) ? scc2x_dout:
                 `endif
                 `ifdef ENABLE_CONFIG
                      ( config_req == 1 && config_ok == 1) ? config_dout :
@@ -1111,6 +1141,8 @@ assign keyboard_addr = ppi_port_c[3:0];
         .cdo     (cpu_dout),
 
         .audio_sample   (audio_sample),
+        .audio_sample_r (audio_sample_r),
+        .aspect_16_9    (config_enable_16_9),
 
         .adc_clk  (),
         .adc_cs   (),
@@ -1385,6 +1417,52 @@ memory_ctrl mem1 (
         .data_out (psgSound3)
     );
 
+    // ===== Second PSG (OCM 2nd-gen standard): I/O 10h=latch, 11h=write, 12h=read =====
+    wire psg2Bdir;
+    wire psg2Bc1;
+    assign psg2Bdir = ( bus_addr[7:2] == 6'b000100 && iorq_wr_n == 0 && bus_addr[1] == 0 ) ? 1 : 0;
+    assign psg2Bc1  = ( bus_addr[7:2] == 6'b000100 && ((iorq_rd_n == 0 && bus_addr[1] == 1) || (bus_addr[1] == 0 && iorq_wr_n == 0 && bus_addr[0] == 0)) ) ? 1 : 0;
+
+    wire [7:0] psg2Sound1;
+    wire [7:0] psg2_dout;
+
+    YM2149 psg2 (
+        .I_DA(cpu_dout),
+        .O_DA(psg2_dout),
+        .O_DA_OE_L(),
+        .I_A9_L(0),
+        .I_A8(1),
+        .I_BDIR(psg2Bdir),
+        .I_BC2(1),
+        .I_BC1(psg2Bc1),
+        .I_SEL_L(1),
+        .O_AUDIO(psg2Sound1),
+        .I_IOA(8'hff),
+        .O_IOA(),
+        .O_IOA_OE_L(),
+        .I_IOB(8'hff),
+        .O_IOB(),
+        .O_IOB_OE_L(),
+
+        .ENA(clk_enable_1m8),
+        .RESET_L(bus_reset_n),
+        .CLK(clk_27m),
+        .clkHigh(clk_27m),
+        .debug ()
+    );
+
+    wire [7:0] psg2Sound3;
+    psg_filter filter2 (
+        .clk_27m (clk_27m),
+        .reset (~bus_reset_n),
+        .data_in (psg2Sound1),
+        .data_out (psg2Sound3)
+    );
+
+    // PSG2 register read-back at port 12h (detection by players/trackers)
+    wire psg2_req_r;
+    assign psg2_req_r = ( bus_addr[7:0] == 8'h12 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0 ) ? 1 : 0;
+
     //opll
     wire opll_req_n; 
     wire [9:0] opll_mo;
@@ -1418,9 +1496,15 @@ memory_ctrl mem1 (
     wire scc_wrt;
     
     reg x98h;
+    reg xb8h;
     always @ (posedge clk_27m) begin
         x98h <= ( bus_addr[15:8] == 8'h98 ) ? 1 : 0;
+        xb8h <= ( bus_addr[15:8] == 8'hB8 ) ? 1 : 0;
     end
+
+    // SCC-I mode signals (from megaram1, declared here as they gate the sound window)
+    wire scc_mode_plus;     // BFFE bit5: 1 = SCC+ layout active
+    wire sccplus_win_en;    // SCC+ window enabled (mode bit5 + bank3 bit7)
 
     reg [7:0] scc_bank2;
     reg scc_enable_req3;
@@ -1445,13 +1529,23 @@ memory_ctrl mem1 (
     wire scc_enable;
     assign scc_enable = ( scc_bank2 == 8'h3f ) ? 1 : 0;
 
+    // Sound window: compat = 9800-98FF (bank2==3F, mode bit5=0);
+    // SCC+ = B800-B8FF (mode bit5=1 + bank3 bit7, sound not disabled)
+    wire scc_win;
+    assign scc_win = ( scc_mode_plus == 0 ) ? ( scc_enable & x98h )
+                                            : ( sccplus_win_en & xb8h & ~scc_sound_disable );
+
     always @ (posedge clk_27m) begin
-        scc_req3 <= ( config_enable_megaram3 == 1 && scc_enable == 1 && x98h == 1 && bus_mreq_n == 0 && (bus_wr_n == 0 || bus_rd_n == 0 ) && pri_slot == config_megaram_slot && exp_slotx_num[3] == 1  ) ? 1 : 0;
-        scc_req12 <= ( config_enable_megaram12 == 1 && scc_sound_disable == 0 && scc_enable == 1 && x98h == 1 && bus_mreq_n == 0 && (bus_wr_n == 0 || bus_rd_n == 0 ) && pri_slot == config_megaram_slot ) ? 1 : 0;
+        scc_req3 <= ( config_enable_megaram3 == 1 && scc_win == 1 && bus_mreq_n == 0 && (bus_wr_n == 0 || bus_rd_n == 0 ) && pri_slot == config_megaram_slot && exp_slotx_num[3] == 1  ) ? 1 : 0;
+        scc_req12 <= ( config_enable_megaram12 == 1 && (scc_sound_disable == 0 || scc_mode_plus == 1) && scc_win == 1 && bus_mreq_n == 0 && (bus_wr_n == 0 || bus_rd_n == 0 ) && pri_slot == config_megaram_slot ) ? 1 : 0;
     end
     assign scc_req = scc_req3 | scc_req12;
     assign scc_req3_r = ( scc_req3 == 1 && bus_rd_n == 0 ) ? 1 : 0;
     assign scc_wrt = ( scc_req == 1 && bus_wr_n == 0 ) ? 1 : 0;
+
+    // Wave-RAM read-back (SCC detection by trackers/SCC+ software). Any-window read strobe.
+    wire scc_rd_r;
+    assign scc_rd_r = ( scc_req == 1 && bus_rd_n == 0 ) ? 1 : 0;
 
     scc_wave2 SccCh (
         .clk21m (clk_27m),
@@ -1463,7 +1557,8 @@ memory_ctrl mem1 (
         .adr (bus_addr[7:0]),
         .dbi (scc_dout),
         .dbo (cpu_dout),
-        .wave (scc_wav)
+        .wave (scc_wav),
+        .sccplus (scc_mode_plus)
     );
 
     reg scc2_req3;
@@ -1479,8 +1574,10 @@ memory_ctrl mem1 (
     wire megaram_enabled;
 
     always @ (posedge clk_54m) begin
-        scc2_req3 <= ( config_enable_ghost_scc == 0 && config_enable_megaram3 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot == config_megaram_slot && exp_slotx_num[3] == 1  && xffff == 0) ? 1 : 0;
-        scc2_req12 <= ( config_enable_ghost_scc == 0 && config_enable_megaram12 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot == config_megaram_slot ) ? 1 : 0;
+        // NOTE: config1_ff[2] ("ghost SCC", vestigial in standalone) is repurposed below
+        // as the SECOND SCC+ enable; it no longer gates the megaram banking path.
+        scc2_req3 <= ( config_enable_megaram3 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot == config_megaram_slot && exp_slotx_num[3] == 1  && xffff == 0) ? 1 : 0;
+        scc2_req12 <= ( config_enable_megaram12 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot == config_megaram_slot ) ? 1 : 0;
         //scc2_req <= ( bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot_num[2] == 1 ) ? 1 : 0;
     end
     assign scc2_req = scc2_req3 | scc2_req12;
@@ -1506,24 +1603,91 @@ memory_ctrl mem1 (
         .map_linear (map_linear),
 
         .megaram_req (megaram_req),
-        .megaram_wrt (megaram_wrt), 
+        .megaram_wrt (megaram_wrt),
         .megaram_addr (megaram_addr),
-        .scc_sound_disable (scc_sound_disable)
+        .scc_sound_disable (scc_sound_disable),
+        .scc_mode_plus (scc_mode_plus),
+        .sccplus_win_en (sccplus_win_en)
     );
 
 
-    //mixer
-    reg [23:0] fm_wav;
-    reg [16:0] fm_mix;
-    reg [14:0] scc_wav2;
+    // ===== Second SCC+ ("sound-only SCC-I cartridge" in the other free slot) =====
+    // Enabled by config1_ff[2] (former "ghost SCC" bit, repurposed; menu toggle).
+    // Lives in slot 1 if the megaram is in slot 2 and vice versa, so trackers that
+    // drive two SCC carts in two slots find both. Own bank2/bank3/mode regs (SCC-I),
+    // wave-RAM read-back included; no memory behind it (reads elsewhere return FF).
+    wire [1:0] scc2x_slot;
+    assign scc2x_slot = ( config_megaram_slot == 2'b01 ) ? 2'b10 : 2'b01;
+
+    reg [7:0] scc2x_bank2;
+    reg [7:0] scc2x_bank3;
+    reg [7:0] scc2x_modeb;
+    wire scc2x_slot_hit;
+    assign scc2x_slot_hit = ( config_enable_ghost_scc == 1 && pri_slot == scc2x_slot ) ? 1 : 0;
+
+    always @ (posedge clk_27m or negedge bus_reset_n) begin
+        if (bus_reset_n == 0) begin
+            scc2x_bank2 <= 8'h00;
+            scc2x_bank3 <= 8'h00;
+            scc2x_modeb <= 8'h00;
+        end
+        else if ( scc2x_slot_hit == 1 && bus_mreq_n == 0 && bus_wr_n == 0 ) begin
+            if ( bus_addr[15:11] == 5'b10010 )
+                scc2x_bank2 <= cpu_dout;                                    // 9000-97FF
+            if ( bus_addr[15:11] == 5'b10110 && scc2x_modeb[4] == 0 )
+                scc2x_bank3 <= cpu_dout;                                    // B000-B7FF
+            if ( bus_addr[15:11] == 5'b10111 && bus_addr[10:1] == 10'b1111111111 )
+                scc2x_modeb <= cpu_dout;                                    // BFFE-BFFF
+        end
+    end
+
+    wire scc2x_win;
+    assign scc2x_win = ( scc2x_modeb[5] == 0 ) ? ( (scc2x_bank2 == 8'h3f ? 1'b1 : 1'b0) & x98h )
+                                               : ( scc2x_bank3[7] & xb8h & ~scc2x_modeb[4] );
+
+    reg scc2x_req;
+    always @ (posedge clk_27m) begin
+        scc2x_req <= ( scc2x_slot_hit == 1 && scc2x_win == 1 && bus_mreq_n == 0 && (bus_wr_n == 0 || bus_rd_n == 0) ) ? 1 : 0;
+    end
+    wire scc2x_wrt;
+    wire scc2x_rd_r;
+    assign scc2x_wrt = ( scc2x_req == 1 && bus_wr_n == 0 ) ? 1 : 0;
+    assign scc2x_rd_r = ( scc2x_req == 1 && bus_rd_n == 0 ) ? 1 : 0;
+
+    wire [7:0] scc2x_dout;
+    wire [14:0] scc2x_wav;
+
+    scc_wave2 SccCh2 (
+        .clk21m (clk_27m),
+        .reset (~bus_reset_n),
+        .clkena (clk_enable_3m6_27),
+        .req ( scc2x_req),
+        .ack (),
+        .wrt (scc2x_wrt),
+        .adr (bus_addr[7:0]),
+        .dbi (scc2x_dout),
+        .dbo (cpu_dout),
+        .wave (scc2x_wav),
+        .sccplus (scc2x_modeb[5])
+    );
+
+    //mixer (L = PSG1+SCC1+OPLL, R = PSG2+SCC2+OPLL; mono = everything on both sides)
 	reg [15:0] audio_sample;
+	reg [15:0] audio_sample_r;
+
+    wire [15:0] scc_term;
+    assign scc_term = (map_sel == 2'b10) ? { scc_wav, 1'b0 } : 16'd0;  // SCC solo en modo SCC (no Konami4/ASCII)
 
     always @ (posedge clk_27m) begin
         if (clk_enable_3m6_27 == 1 ) begin
-            if (map_sel[0] == 0)
-                audio_sample <= { 2'b0 , psgSound3 , 6'b000000 } + { scc_wav, 1'b0 } + jt2413_wav;
-            else
-                audio_sample <= { 2'b0 , psgSound3 , 6'b000000 } + jt2413_wav;
+            if (config_enable_stereo == 1) begin
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + scc_term + jt2413_wav;
+                audio_sample_r <= { 2'b0 , psg2Sound3 , 6'b000000 } + { scc2x_wav, 1'b0 } + jt2413_wav;
+            end
+            else begin
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
+                audio_sample_r <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
+            end
         end
     end
 
@@ -1535,18 +1699,24 @@ memory_ctrl mem1 (
     wire [20:0] megaram_addr;
     wire megaram_enabled;
     wire [15:0] audio_sample;
+    wire [15:0] audio_sample_r;
     wire megaram_wrt;
 
 `endif
 
     //kanji data
-    wire kanji_data_req_r;
-    wire kanji_data_req_w;
+    // Strobes REGISTRADOS a clk_27m: el decode combinacional desde IORQ formaba la
+    // ruta critica (IORQ -> decode kanji -> mux ram_addr) a 54MHz. El ciclo I/O del
+    // Z80 dura decenas de ciclos, asi que 1 ciclo extra de latencia es inocuo.
+    reg kanji_data_req_r;
+    reg kanji_data_req_w;
     wire kanji_data_ram_req;
     reg [7:0] kanji_data_dout;
     wire [17:0] kanji_data_ram_addr;
-    assign kanji_data_req_w = (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1 : 0; // I/O:B4-B5h   / I/O:D8-DBh / Kanji-data
-    assign kanji_data_req_r = (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1 : 0; // I/O:B4-B5h   / I/O:D8-DBh / Kanji-data
+    always @ (posedge clk_27m) begin
+        kanji_data_req_w <= (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1 : 0; // I/O:D8-DBh / Kanji-data
+        kanji_data_req_r <= (bus_addr[7:2] == 6'b110110 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1 : 0; // I/O:D8-DBh / Kanji-data
+    end
 
     kanji kanji1(
         .clk21m(clk_27m),
@@ -1600,6 +1770,8 @@ memory_ctrl mem1 (
     wire config_enable_ghost_scc;
     reg config_enable_sdcard;
     wire config_enable_wait;
+    wire config_enable_stereo;
+    wire config_enable_16_9;
     reg config_reset_ff;
     reg config_flash_write_ff;
     reg config_update;
@@ -1690,6 +1862,8 @@ memory_ctrl mem1 (
     assign config_enable_scanlines = config1_ff[3];
     //assign config_keyboard = config2_ff[4:3];
     assign config_enable_wait = config2_ff[3];
+    assign config_enable_stereo = config2_ff[5];
+    assign config_enable_16_9 = config2_ff[4];
     assign config_req = (bus_addr[7:4] == 4'h4 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
     assign config_dout = ( bus_addr[3:0] == 4'h0 ) ? config0_ff :
                          ( bus_addr[3:0] == 4'h1 ) ? config1_ff :
@@ -1742,6 +1916,10 @@ memory_ctrl mem1 (
     assign config_sdcard_slot= 2'b11;
     assign config_reset = 0;
     assign config_enable_wait = 0;
+    wire config_enable_stereo;
+    assign config_enable_stereo = 0;
+    wire config_enable_16_9;
+    assign config_enable_16_9 = 0;
 
 `endif
 
@@ -2294,18 +2472,10 @@ memory_ctrl mem1 (
 //        .boot_ok( )
 //    );
 
-    timing_debug debug1(
-        .clk_27m(clk_27m),
-        .clk_108m(clk_108m),
-        .reset_n(bus_reset_n),
-        .bus_iorq_n(ex_bus_iorq_n),
-        .bus_mreq_n(ex_bus_mreq_n),
-        .bus_rd_n(ex_bus_rd_n),
-        .bus_wr_n(ex_bus_wr_n),
-        .send(send),
-
-        .uart_tx(usb_uart_tx)
-    );
+    // timing_debug debug1 removed for production: it registered high-fanout bus
+    // strobes + a UART, costing area/routing at 91% CLS for a dev-only feature.
+    // Re-add temporarily if bus timing needs probing over the USB-C UART.
+    assign usb_uart_tx = 1'b1;      // UART idle
 
     // ===== STANDALONE MERGE: discrete status LEDs (active low) — from MSXnano =====
     // LED[5] TURBO: solid = turbo ON (~4.13MHz); blink (~1.8Hz) = real-MSX speed (also "alive"). LED[4] SD busy;
