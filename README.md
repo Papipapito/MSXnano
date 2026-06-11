@@ -50,7 +50,7 @@ fixed by design (megaram in slot 2, SD in 3-2) and the saved values are preserve
 
 ---
 
-## What's new in the `MSXNano_Menu` branch (v1.6 preview)
+## What's new in v1.6
 
 ### 🗂️ Boot menu: SD file browser
 The boot menu is now a full SD file browser (File-Hunter style) that starts before the OS:
