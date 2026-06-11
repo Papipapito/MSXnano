@@ -81,12 +81,18 @@ now forced on and removed from the UI:
 
 | Option | What it does |
 |--------|--------------|
+
+https://github.com/user-attachments/assets/5fb49364-ebc3-4557-8cf1-1f48a0fafb3f
+
+
 | **Second SCC** | Enables a second SCC+ sound chip in the free slot (for dual-SCC players/trackers) |
 | **Scanlines** | CRT-style scanlines on the HDMI output |
 | **Compatible Mode** | Extra wait-states for picky software |
 | **Stereo Sound** | HDMI stereo: PSG1+SCC1+OPLL left / PSG2+SCC2+OPLL right (off = mono on both) |
 | **Pantalla 16:9** | HDMI AVI InfoFrame aspect signalling: 4:3 (off) or 16:9 (on). The TV decides pillarbox vs stretch |
 | Slots | Mapper / MegaRam / SD slot selection (removed in v1.7 — fixed layout) |
+
+
 
 ### 🔊 Sound: SCC+ done right (and doubled)
 * **Real SCC+ (SCC-I) mode**: B800h window, mode register at BFFEh, independent
