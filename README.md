@@ -1,3 +1,6 @@
+
+
+
 # MSXnano
 MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 
@@ -95,6 +98,8 @@ now forced on and removed from the UI:
 * **HDMI stereo**: true L/R audio over HDMI (see settings table above).
 * `tools/scctest/SCCTEST.COM`: detection + sound test for SCC/SCC+ per slot, dual PSG
   and FM, with stereo placement check.
+  https://github.com/user-attachments/assets/23cecea7-3888-40bd-9592-7cc60c37a41f
+
 
 ### 🧰 Other
 * Critical timing closure improvements in the FPGA (54 MHz domain now closes with
