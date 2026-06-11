@@ -1676,7 +1676,7 @@ memory_ctrl mem1 (
 	reg [15:0] audio_sample_r;
 
     wire [15:0] scc_term;
-    assign scc_term = (map_sel[0] == 0) ? { scc_wav, 1'b0 } : 16'd0;
+    assign scc_term = (map_sel == 2'b10) ? { scc_wav, 1'b0 } : 16'd0;  // SCC solo en modo SCC (no Konami4/ASCII)
 
     always @ (posedge clk_27m) begin
         if (clk_enable_3m6_27 == 1 ) begin

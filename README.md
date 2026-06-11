@@ -21,6 +21,35 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * WiFi UART pins aligned with the wiring diagram (`uart_rx` → pin 77, `uart_tx` → pin 73).
 * **Claude (Anthropic)** collaborated on this release.
 
+## What's new in v1.7
+
+### 🎮 Konami mapper (without SCC) — new compatibility
+Classic Konami games that use the plain Konami mapper (Nemesis 1, Penguin Adventure,
+The Maze of Galious, ...) now load and run from the boot menu: the megaram gained a
+true **Konami4 mode** (bank registers at 6000h/8000h/A000h, fixed bank 0, pure-ROM
+behaviour immune to Konami's anti-copy pokes).
+
+### 🕹️ Two-stage Konami boots fixed (Metal Gear 2, SD Snatcher)
+Games whose cartridge INIT hooks **H.STKE** and returns to the BIOS (expecting the
+boot to call them back) used to come up half-booted with garbled tiles. The launcher
+now CALLs the cartridge INIT the way the BIOS does and, if the game hooked H.STKE,
+invokes the hook itself. Metal Gear 2 boots and plays with full SCC sound.
+
+### 🔎 Browser: search and manual mapper override
+* **`/` search**: type part of a name (case-insensitive), ENTER jumps to the next
+  match in the current folder; press `/` + ENTER again for the following one.
+* **`M` on the confirm screen** cycles the mapper (plain → Konami → KonamiSCC →
+  ASCII8 → ASCII16) for ROMs the auto-detection gets wrong — no file renaming needed.
+* **Mapper auto-detection aligned with openMSX** `guessRomType`: full credit table
+  (including the 77FFh ASCII16 register) and highest-score decision with openMSX
+  tie-breaking.
+
+### 🧹 Settings menu cleanup
+The slot selectors (Mapper/MegaRam/SD) are gone from the UI — the system layout is
+fixed by design (megaram in slot 2, SD in 3-2) and the saved values are preserved.
+
+---
+
 ## What's new in the `MSXNano_Menu` branch (v1.6 preview)
 
 ### 🗂️ Boot menu: SD file browser
@@ -54,7 +83,7 @@ now forced on and removed from the UI:
 | **Compatible Mode** | Extra wait-states for picky software |
 | **Stereo Sound** | HDMI stereo: PSG1+SCC1+OPLL left / PSG2+SCC2+OPLL right (off = mono on both) |
 | **Pantalla 16:9** | HDMI AVI InfoFrame aspect signalling: 4:3 (off) or 16:9 (on). The TV decides pillarbox vs stretch |
-| Slots | Mapper / MegaRam / SD slot selection (as before) |
+| Slots | Mapper / MegaRam / SD slot selection (removed in v1.7 — fixed layout) |
 
 ### 🔊 Sound: SCC+ done right (and doubled)
 * **Real SCC+ (SCC-I) mode**: B800h window, mode register at BFFEh, independent

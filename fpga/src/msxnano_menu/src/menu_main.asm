@@ -173,10 +173,7 @@ MEG_B0		equ	#C0C7			; 1 byte: megaram byte 0 BEFORE the write
 LOAD_SEG	equ	#C0C8			; 1 byte: current 8K megaram segment being loaded
 LOAD_OFF	equ	#C0C9			; 2 bytes: byte offset within the current 8K segment
 MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
-VFY_MODE	equ	#C0CD			; 1 byte: 0 = load_rom escribe, 1 = verifica
-VFY_BAD		equ	#C0CE			; 2 bytes: contador de bytes que no coinciden
-VFY_SEG		equ	#C0D0			; 1 byte: segmento del primer fallo
-VFY_PTR		equ	#C0D1			; 2 bytes: direccion (0x4000+off) del primer fallo
+SRCH_BUF	equ	#E880			; 13 bytes: consulta de busqueda del navegador (ASCIIZ)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -1392,63 +1389,6 @@ wsm_advance:
 	ld   (LOAD_SEG), a
 	ret
 
-; verify_sector_megaram: compara SD_BUF (512 B) con el contenido de la megaram
-; en LOAD_SEG/LOAD_OFF (leyendo por la ventana 0x4000-0x5FFF con write-protect).
-; Acumula fallos en VFY_BAD y guarda seg/dir del primero. Comparte el avance de
-; offset/segmento con write_sector_to_megaram (wsm_advance).
-verify_sector_megaram:
-	ld   a, MEG_SLOT				; page 1 -> megaram (slot 2)
-	ld   hl, #4000
-	call ENASLT
-	ld   hl, (LOAD_OFF)
-	ld   a, h
-	or   l
-	jr   nz, .vsm_cmp
-	xor  a							; nuevo segmento: banco con write-protect
-	ld   (#7FFE), a					; mode_a = 0 (lectura siempre permitida)
-	ld   a, (LOAD_SEG)
-	ld   (#5000), a					; megaram_reg0 = segmento
-.vsm_cmp:
-	ld   hl, (LOAD_OFF)
-	ld   de, #4000
-	add  hl, de						; hl = ventana megaram
-	ld   de, SD_BUF					; de = lo que se escribio (re-leido de SD)
-	ld   bc, 512
-.vsm_loop:
-	ld   a, (de)
-	cp   (hl)
-	jr   z, .vsm_next
-	push hl
-	push de
-	ld   hl, (VFY_BAD)
-	ld   a, h
-	or   l
-	jr   nz, .vsm_count				; solo el primer fallo guarda seg/dir
-	ld   a, (LOAD_SEG)
-	ld   (VFY_SEG), a
-	pop  de
-	pop  hl
-	push hl
-	push de
-	ld   (VFY_PTR), hl
-	ld   hl, (VFY_BAD)
-.vsm_count:
-	inc  hl
-	ld   (VFY_BAD), hl
-	pop  de
-	pop  hl
-.vsm_next:
-	inc  hl
-	inc  de
-	dec  bc
-	ld   a, b
-	or   c
-	jr   nz, .vsm_loop
-	ld   a, #87						; page 1 -> slot 3-1 (menu)
-	ld   hl, #4000
-	call ENASLT
-	jp   wsm_advance
-
 ; load_rom: load the whole ROM (FILE_CLUS chain) into the megaram, 8K linear.
 load_rom:
 	ld   a, #D4						; SWIO: Slot2 = Int SCC-I (megaram -> slot 2, SCC mode)
@@ -1473,14 +1413,7 @@ load_rom:
 	ld   (SSEC_LEFT), a
 .lro_sec:
 	call sd_read_sector
-	ld   a, (VFY_MODE)				; 2a pasada: comparar en vez de escribir
-	or   a
-	jr   nz, .lro_vfy
 	call write_sector_to_megaram
-	jr   .lro_post
-.lro_vfy:
-	call verify_sector_megaram
-.lro_post:
 	ld   hl, (LOAD_OFF)				; LOAD_OFF wrapped to 0 -> one 8K segment done
 	ld   a, h
 	or   l
@@ -1623,7 +1556,10 @@ launch_rom:
 	jr   z, .lr_a8
 	cp   MAP_A16_ID
 	jr   z, .lr_a16
-	ld   a, #0F						; SCC / Konami / plain
+	cp   MAP_KON_ID
+	ld   a, #0D						; Konami4: Slot2Mode=00 (cmd Ext1+Ext2) ->
+	jr   z, .lr_setmap				; megaram map_sel=00 = regs 6000/8000/A000
+	ld   a, #0F						; SCC / plain (map_sel=10)
 	jr   .lr_setmap
 .lr_a8:
 	ld   a, #11						; Int ASCII8K
@@ -1723,6 +1659,8 @@ browse:
 	jp   z, .br_enter
 	cp   #08						; BACKSPACE -> parent folder
 	jp   z, .br_back
+	cp   '/'						; busqueda por nombre
+	jp   z, .br_search
 	cp   #09						; TAB -> next partition (multi-partition cards)
 	jp   z, .br_nextpart
 	cp   #53						; 'S' -> Settings (Ajustes)
@@ -1839,6 +1777,100 @@ browse:
 	sub  VISIBLE
 	ld   (BR_SEL), a
 	jp   .br_move
+.br_search:
+	; Busqueda por nombre (subcadena, insensible a mayusculas). '/' abre el
+	; prompt en la fila 0; ENTER busca la SIGUIENTE coincidencia desde la
+	; seleccion actual (con vuelta), ESC cancela. Reusa name_contains.
+	ld   a, (ENT_COUNT)
+	or   a
+	jp   z, .br_key					; lista vacia
+	ld   hl, #0100
+	call POSIT
+	ld   hl, srchStr				; "Buscar: "
+	call print_string
+	ld   hl, SRCH_BUF
+	ld   b, 0						; longitud actual
+.bs_key:
+	push hl							; browse_getkey (marquee_tick/poll_joy) machaca
+	push bc							; HL y BC: preservar puntero y longitud
+	call browse_getkey
+	pop  bc
+	pop  hl
+	cp   #0D
+	jr   z, .bs_go
+	cp   #1B
+	jp   z, .br_redraw				; cancelar (redibuja y limpia el prompt)
+	cp   #08
+	jr   z, .bs_del
+	cp   ' '
+	jr   c, .bs_key					; controles fuera
+	cp   #7F
+	jr   nc, .bs_key
+	ld   c, a
+	ld   a, b
+	cp   12
+	jr   nc, .bs_key				; buffer lleno
+	ld   a, c
+	cp   'a'
+	jr   c, .bs_st
+	cp   'z'+1
+	jr   nc, .bs_st
+	sub  #20						; needle en MAYUSCULAS (name_contains)
+.bs_st:
+	ld   (hl), a
+	inc  hl
+	inc  b
+	call CHPUT						; eco
+	jr   .bs_key
+.bs_del:
+	ld   a, b
+	or   a
+	jr   z, .bs_key
+	dec  hl
+	dec  b
+	ld   a, #08
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
+	ld   a, #08
+	call CHPUT
+	jr   .bs_key
+.bs_go:
+	ld   (hl), 0					; terminar la consulta
+	ld   a, b
+	or   a
+	jp   z, .br_redraw				; consulta vacia
+	ld   a, (BR_SEL)
+	ld   d, a						; d = indice de partida
+	ld   a, (ENT_COUNT)
+	ld   e, a						; e = entradas por probar
+.bs_loop:
+	ld   a, d
+	inc  a
+	ld   hl, ENT_COUNT
+	cp   (hl)
+	jr   c, .bs_idx
+	xor  a							; vuelta al principio
+.bs_idx:
+	ld   d, a
+	push de
+	call ent_addr					; A -> HL = registro de la entrada
+	ld   bc, NAME_OFF
+	add  hl, bc
+	ld   (TAGPTR), hl				; haystack = nombre del fichero
+	ld   hl, SRCH_BUF
+	call name_contains
+	pop  de
+	jr   c, .bs_found
+	dec  e
+	jr   nz, .bs_loop
+	jp   .br_redraw					; sin coincidencias
+.bs_found:
+	ld   a, d
+	ld   (BR_SEL), a
+	call ensure_visible				; recolocar la ventana si hace falta
+	jp   .br_redraw					; redibuja todo (borra el prompt)
+
 .br_move:
 	; Repaint only the old and new rows so the '>' marker moves without a
 	; full-screen redraw (no flicker). Full redraw only when the page scrolls.
@@ -1939,42 +1971,10 @@ browse:
 	call POSIT
 	ld   hl, loadingStr				; "Cargando ROM en megaram..."
 	call print_string
-	xor  a
-	ld   (VFY_MODE), a
 	call load_rom					; load now, automatically (progress bar)
-	ld   a, 1						; 2a pasada: re-leer SD y comparar megaram
-	ld   (VFY_MODE), a
-	ld   hl, 0
-	ld   (VFY_BAD), hl
-	call load_rom
-	xor  a
-	ld   (VFY_MODE), a
 	ld   hl, #0109
 	call POSIT
-	ld   hl, (VFY_BAD)
-	ld   a, h
-	or   l
-	jr   z, .bsr_vok
-	ld   hl, vfyBadStr				; "VFY ERR n=xxxx s=xx d=xxxx"
-	call print_string
-	ld   hl, (VFY_BAD)
-	call print_hex_hl
-	ld   hl, vfySegStr
-	call print_string
-	ld   a, (VFY_SEG)
-	call print_hex_a
-	ld   hl, vfyDirStr
-	call print_string
-	ld   hl, (VFY_PTR)
-	call print_hex_hl
-	jr   .bsr_vdone
-.bsr_vok:
-	ld   hl, vfyOkStr				; "Verificacion megaram: OK"
-	call print_string
-.bsr_vdone:
-	ld   hl, #010B
-	call POSIT
-	ld   hl, launch2Str				; "RETURN=LANZAR JUEGO   ESC=volver"
+	ld   hl, launch2Str				; "RETURN=LANZA M=MAPPER ESC=volver"
 	call print_string
 .bsr_lk:
 	call browse_getkey
@@ -1982,6 +1982,47 @@ browse:
 	jp   z, launch_rom
 	cp   #1B
 	jp   z, .br_redraw
+	cp   'M'
+	jr   z, .bsr_map
+	cp   'm'
+	jr   z, .bsr_map
+	jr   .bsr_lk
+.bsr_map:
+	ld   a, (MAPPER_ID)				; ciclar plain->Konami->SCC->ASCII8->ASCII16
+	cp   MAP_PLAIN
+	ld   b, MAP_KON_ID
+	jr   z, .bsr_ms
+	cp   MAP_KON_ID
+	ld   b, MAP_SCC_ID
+	jr   z, .bsr_ms
+	cp   MAP_SCC_ID
+	ld   b, MAP_A8_ID
+	jr   z, .bsr_ms
+	cp   MAP_A8_ID
+	ld   b, MAP_A16_ID
+	jr   z, .bsr_ms
+	ld   b, MAP_PLAIN
+.bsr_ms:
+	ld   a, b
+	ld   (MAPPER_ID), a
+	ld   hl, #0105					; reimprimir la linea Tamano + Mapper
+	call POSIT
+	ld   hl, romClusStr
+	call print_string
+	call print_rom_kb
+	ld   a, 'K'
+	call CHPUT
+	ld   hl, romSpcStr
+	call print_string
+	call print_mapper_name
+	ld   a, ' '						; limpiar cola de un nombre anterior mas largo
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
 	jr   .bsr_lk
 
 .br_seldsk:
@@ -2520,7 +2561,7 @@ draw_browser:
 	; --- header row 1: title + build (left), live clock (right) ---
 	ld   hl, #0101					; X=1, Y=1
 	call POSIT
-	ld   hl, hdrTitleStr			; "MSX Nano  v1.6"
+	ld   hl, hdrTitleStr			; "MSX Nano  v1.7"
 	call print_string
 	call draw_tabs					; row 2: filter tabs (active inverse)
 	ld   a, 22
@@ -3817,32 +3858,6 @@ ONOFF_Y = ONOFF_Y + 2
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 
-ONOFF_Y = 5
-	ld   hl,#3c00 + ONOFF_Y			; Print Mapper Slot
-	call POSIT						; BIOS setCursor
-	ld   a,(var_mapslt)
-	add  a,#30
-	call CHPUT						; BIOS printChar
-ONOFF_Y = ONOFF_Y + 2
-
-IFDEF ENABLE_MEGARAM
-	ld   hl,#3c00 + ONOFF_Y			; Print MegaRam Slot
-	call POSIT						; BIOS setCursor
-	ld   a,(var_megslt)
-	add  a,#30
-	call CHPUT						; BIOS printChar
-ONOFF_Y = ONOFF_Y + 2
-ENDIF ;ENABLE_MEGARAM
-
-IFDEF ENABLE_SDCARD
-	ld   hl,#3c00 + ONOFF_Y			; Print SD Card Slot
-	call POSIT						; BIOS setCursor
-	ld   a,(var_sdcslt)
-	add  a,#30
-	call CHPUT						; BIOS printChar
-ONOFF_Y = ONOFF_Y + 2
-ENDIF ;ENABLE_SDCARD
-
 	; Wait for a key
 wait_for_a_key:
 	ei
@@ -3922,122 +3937,6 @@ selected_scanlines:
 	xor  1
 	ld   (hl), a
 	ret
-
-selected_mapperSlot:
-	ld   a, (var_mapper)				; If disabled then don't modify
-	or   a
-	ret  z
-IFDEF ENABLE_MEGARAM
-	ld   a, (var_megslt)				; Increase slot if not used by MegaRam nor SD Card
-	cp   3
-	jr   nz, .mp_skip
-	xor  a
-.mp_skip:
-	ld   b, a
-ENDIF ;ENABLE_MEGARAM
-;IFDEF ENABLE_SDCARD
-;	ld   a, (var_sdcslt)
-;	ld   c, a
-;ENDIF ;ENABLE_SDCARD
-	ld   a, (var_mapslt)
-.mp_used:
-	inc  a
-.mp_no_inc:
-IFDEF ENABLE_MEGARAM
-	cp   b
-	jr   z, .mp_used
-ENDIF ;ENABLE_MEGARAM
-;IFDEF ENABLE_SDCARD
-;	ld   d, a
-;	ld   a, (var_sdcard)				; If disabled then skip
-;	or   a
-;	ld   a, d
-;	jr   z, .mapperSlot_check
-;	cp   c
-;	jr   z, .mp_used
-;	
-;ENDIF ;ENABLE_SDCARD
-
-.mapperSlot_check:
-	cp   4
-	jr   nz, .mp_no4
-	ld   a, #1
-	jr   .mp_no_inc
-.mp_no4:
-	ld   (var_mapslt), a
-	ret
-
-IFDEF ENABLE_MEGARAM
-selected_megaRamSlot:
-	ld   a, (var_megram)				; If disabled then don't modify
-	or   a
-	ret  z
-	ld   a, (var_mapslt)				; Increase slot if not used by Mapper nor SD Card
-	cp   3
-	jr   nz, .mr_skip
-	xor  a
-.mr_skip:
-	ld   b, a
-;IFDEF ENABLE_SDCARD
-;	ld   a, (var_sdcslt)
-;	ld   c, a
-;ENDIF ;ENABLE_SDCARD
-	ld   a, (var_megslt)
-.mr_used:
-	inc  a
-.mr_no_inc:
-	cp   b
-	jr   z, .mr_used
-;IFDEF ENABLE_SDCARD
-;	ld   d, a
-;	ld   a, (var_sdcard)				; If disabled then skip
-;	or   a
-;	ld   a, d
-;	jr   z, .megaramSlot_check
-;	cp   c
-;	jr   z, .mr_used
-;ENDIF
-
-.megaramSlot_check:
-	cp   4
-	jr   nz, .mr_no4
-	ld   a, #1
-	jr   .mr_no_inc
-.mr_no4:
-	ld   (var_megslt), a
-	ret
-ENDIF ;ENABLE_MEGARAM
-
-IFDEF ENABLE_SDCARD
-selected_sdCardSlot:
-	ret
-	ld   a, (var_sdcard)				; If disabled then don't modify
-	or   a
-	ret  z
-	ld   a, (var_mapslt)				; Increase slot if not used by Mapper nor MegaRam
-	ld   b, a
-IFDEF ENABLE_MEGARAM
-	ld   a, (var_megslt)
-	ld   c, a
-ENDIF ;ENABLE_MEGARAM
-	ld   a, (var_sdcslt)
-.sd_used:
-	inc  a
-.sd_used_no_inc:
-	cp   b
-	jr   z, .sd_used
-IFDEF ENABLE_MEGARAM
-	cp   c
-	jr   z, .sd_used
-ENDIF ;ENABLE_MEGARAM
-	cp   4
-	jr   nz, .sd_no4
-	ld   a, #1
-	jr   .sd_used_no_inc
-.sd_no4:
-	ld   (var_sdcslt), a
-	ret
-ENDIF ;ENABLE_SDCARD
 
 selected_saveReset:
 	pop  hl							; Remove ret to bucle
@@ -4194,7 +4093,7 @@ tagRomStr:
 tagDskStr:
 	.db "[DSK] ",0
 hdrTitleStr:
-	.db "MSX Nano  v1.6",0
+	.db "MSX Nano  v1.7",0
 tabRStr:
 	.db "[R]OM",0
 tabDStr:
@@ -4244,15 +4143,9 @@ mapUnkStr:
 loadingStr:
 	.db "Cargando ROM en megaram...",0
 launch2Str:
-	.db "RETURN=LANZAR JUEGO   ESC=volver",0
-vfyOkStr:
-	.db "Verificacion megaram: OK",0
-vfyBadStr:
-	.db "VFY ERR n=",0
-vfySegStr:
-	.db "s",0
-vfyDirStr:
-	.db "d",0
+	.db "RETURN=LANZA M=MAPPER ESC=volver",0
+srchStr:
+	.db "Buscar: ",0
 dskInfoStr:
 	.db "Disco seleccionado:",0
 dskMountStr:
@@ -4294,8 +4187,6 @@ saveExitStr:
 	.db "Save & Exit",0
 saveResetStr:
 	.db "Save & Reset",0
-slotStr:
-	.db "Slot",0
 
 onStr:
 	.db "On ",0
@@ -4322,7 +4213,7 @@ structs_start:
 struct_Slot1GhostSCC:
 	.db 21, POS_Y+1
 	.dw slot1GhostStr
-	.dw struct_SaveReset, struct_EnableScanlines, struct_MapperSlot
+	.dw struct_SaveReset, struct_EnableScanlines, struct_Slot1GhostSCC
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_slot1Ghost
@@ -4331,7 +4222,7 @@ POS_Y = POS_Y + 2
 struct_EnableScanlines:
 	.db 21, POS_Y+1
 	.dw enableScanlinesStr
-	.dw struct_Slot1GhostSCC, struct_SlowDevice, struct_MegaRamSlot
+	.dw struct_Slot1GhostSCC, struct_SlowDevice, struct_EnableScanlines
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_scanlines
@@ -4340,7 +4231,7 @@ POS_Y = POS_Y + 2
 struct_SlowDevice:
 	.db 21, POS_Y+1
 	.dw slowDeviceStr
-	.dw struct_EnableScanlines, struct_Stereo, struct_SDSlot
+	.dw struct_EnableScanlines, struct_Stereo, struct_SlowDevice
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_slowdevice
@@ -4381,39 +4272,6 @@ struct_SaveReset:
 	.db 4
 	.dw selected_saveReset
 POS_Y = POS_Y + 2
-
-POS_Y = 4
-
-struct_MapperSlot:
-	.db 54, POS_Y+1
-	.dw slotStr
-	.dw struct_SaveReset, struct_MegaRamSlot, struct_Slot1GhostSCC
-	.dw #0800 + POS_Y*10 + 6
-	.db 2
-	.dw selected_mapperSlot
-POS_Y = POS_Y + 2
-
-IFDEF ENABLE_MEGARAM
-struct_MegaRamSlot:
-	.db 54, POS_Y+1
-	.dw slotStr
-	.dw struct_MapperSlot, struct_SDSlot, struct_EnableScanlines
-	.dw #0800 + POS_Y*10 + 6
-	.db 2
-	.dw selected_megaRamSlot
-POS_Y = POS_Y + 2
-ENDIF ;ENABLE_MEGARAM
-
-IFDEF ENABLE_SDCARD
-struct_SDSlot:
-	.db 54, POS_Y+1
-	.dw slotStr
-	.dw struct_MegaRamSlot, struct_Slot1GhostSCC, struct_SlowDevice
-	.dw #0800 + POS_Y*10 + 6
-	.db 2
-	.dw selected_sdCardSlot
-POS_Y = POS_Y + 2
-ENDIF
 
 structs_end:
 	.db 0
