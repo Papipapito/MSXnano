@@ -54,6 +54,13 @@ main_menu_entry:
 	ld   bc, 15
 	ld   (hl), 0
 	ldir							; zero the 16-byte "NEXTOR_EMU_DATA" signature
+	ld   a, #C9						; y limpiar un hook H.STKE residual de un juego
+	ld   hl, #FEDA					; lanzado antes (si no, "Arrancar sistema" tras un
+	ld   b, 5						; reset manual relanzaria el juego en vez del DOS)
+.wipe_stke:
+	ld   (hl), a
+	inc  hl
+	djnz .wipe_stke
 	ld   a, 2
 	ld   (FILTER), a				; default tab = ALL
 
@@ -166,6 +173,10 @@ MEG_B0		equ	#C0C7			; 1 byte: megaram byte 0 BEFORE the write
 LOAD_SEG	equ	#C0C8			; 1 byte: current 8K megaram segment being loaded
 LOAD_OFF	equ	#C0C9			; 2 bytes: byte offset within the current 8K segment
 MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
+VFY_MODE	equ	#C0CD			; 1 byte: 0 = load_rom escribe, 1 = verifica
+VFY_BAD		equ	#C0CE			; 2 bytes: contador de bytes que no coinciden
+VFY_SEG		equ	#C0D0			; 1 byte: segmento del primer fallo
+VFY_PTR		equ	#C0D1			; 2 bytes: direccion (0x4000+off) del primer fallo
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -1351,6 +1362,7 @@ write_sector_to_megaram:
 	ld   a, #87						; page 1 -> slot 3-1
 	ld   hl, #4000
 	call ENASLT
+wsm_advance:
 	ld   hl, (LOAD_OFF)				; advance offset, wrap to next segment at 8 KB
 	ld   de, 512
 	add  hl, de
@@ -1364,6 +1376,63 @@ write_sector_to_megaram:
 	inc  a
 	ld   (LOAD_SEG), a
 	ret
+
+; verify_sector_megaram: compara SD_BUF (512 B) con el contenido de la megaram
+; en LOAD_SEG/LOAD_OFF (leyendo por la ventana 0x4000-0x5FFF con write-protect).
+; Acumula fallos en VFY_BAD y guarda seg/dir del primero. Comparte el avance de
+; offset/segmento con write_sector_to_megaram (wsm_advance).
+verify_sector_megaram:
+	ld   a, MEG_SLOT				; page 1 -> megaram (slot 2)
+	ld   hl, #4000
+	call ENASLT
+	ld   hl, (LOAD_OFF)
+	ld   a, h
+	or   l
+	jr   nz, .vsm_cmp
+	xor  a							; nuevo segmento: banco con write-protect
+	ld   (#7FFE), a					; mode_a = 0 (lectura siempre permitida)
+	ld   a, (LOAD_SEG)
+	ld   (#5000), a					; megaram_reg0 = segmento
+.vsm_cmp:
+	ld   hl, (LOAD_OFF)
+	ld   de, #4000
+	add  hl, de						; hl = ventana megaram
+	ld   de, SD_BUF					; de = lo que se escribio (re-leido de SD)
+	ld   bc, 512
+.vsm_loop:
+	ld   a, (de)
+	cp   (hl)
+	jr   z, .vsm_next
+	push hl
+	push de
+	ld   hl, (VFY_BAD)
+	ld   a, h
+	or   l
+	jr   nz, .vsm_count				; solo el primer fallo guarda seg/dir
+	ld   a, (LOAD_SEG)
+	ld   (VFY_SEG), a
+	pop  de
+	pop  hl
+	push hl
+	push de
+	ld   (VFY_PTR), hl
+	ld   hl, (VFY_BAD)
+.vsm_count:
+	inc  hl
+	ld   (VFY_BAD), hl
+	pop  de
+	pop  hl
+.vsm_next:
+	inc  hl
+	inc  de
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .vsm_loop
+	ld   a, #87						; page 1 -> slot 3-1 (menu)
+	ld   hl, #4000
+	call ENASLT
+	jp   wsm_advance
 
 ; load_rom: load the whole ROM (FILE_CLUS chain) into the megaram, 8K linear.
 load_rom:
@@ -1389,7 +1458,14 @@ load_rom:
 	ld   (SSEC_LEFT), a
 .lro_sec:
 	call sd_read_sector
+	ld   a, (VFY_MODE)				; 2a pasada: comparar en vez de escribir
+	or   a
+	jr   nz, .lro_vfy
 	call write_sector_to_megaram
+	jr   .lro_post
+.lro_vfy:
+	call verify_sector_megaram
+.lro_post:
 	ld   hl, (LOAD_OFF)				; LOAD_OFF wrapped to 0 -> one 8K segment done
 	ld   a, h
 	or   l
@@ -1504,15 +1580,18 @@ tag_scc:
 tag_kon:
 	.db "KONAMI",0
 
-; launch_rom: ROM already loaded into the megaram (SCC mode). Boot it DIRECTLY
-; (no BIOS reset — the reset re-runs the menu cartridge in slot 3-1 instead of
-; the game): leave the megaram clean (while still in SCC mode), set the game's
-; real mapper mode via the OCM SWIO smart command, then run a tiny stub in
-; page-3 RAM that switches pages 1+2 to slot 2 and jumps to the cart INIT.
+; launch_rom: ROM already loaded into the megaram (SCC mode). DIRECT boot, no
+; hardware reset: a reset re-runs the 512KB flash->SDRAM BIOS reload with the
+; refresh stopped for >64ms, so the megaram DRAM content DECAYS (verified on HW:
+; slot 2 reads FF after any reset; that is also why SofaRun never resets).
+; We instead do what the BIOS would: set the mapper mode via SWIO, clean the
+; VDP, switch pages 1+2 to slot 2 and CALL the cartridge INIT. If the INIT
+; RETURNS (two-stage Konami: Metal Gear 2, SD Snatcher hook H.STKE and expect
+; the BIOS to call it later) we call the H.STKE hook ourselves.
 launch_rom:
 	di
-	; 1) clean megaram to cartridge state -- MUST be in SCC mode (writes to
-	;    0x7FFE/0x5000 are SCC control regs; in ASCII mode they are bank regs)
+	; megaram a estado de cartucho (banco 0, write-protect) -- en modo SCC
+	; 0x7FFE/0x5000 son regs de control (en ASCII serian regs de banco)
 	ld   a, MEG_SLOT				; page 1 -> megaram (slot 2)
 	ld   hl, #4000
 	call ENASLT
@@ -1520,7 +1599,10 @@ launch_rom:
 	ld   (#7FFE), a					; mode_a = 0 : write-protect (normal cartridge)
 	xor  a
 	ld   (#5000), a					; bank reg0 = 0 (first 8 KB at 0x4000)
-	; 2) set the game's real mapper mode via the OCM SWIO smart command
+	ld   a, #87						; page 1 -> slot 3-1 (menu)
+	ld   hl, #4000
+	call ENASLT
+	; mapper real del juego via OCM SWIO
 	ld   a, (MAPPER_ID)
 	cp   MAP_A8_ID
 	jr   z, .lr_a8
@@ -1539,15 +1621,9 @@ launch_rom:
 	out  (#40), a
 	ld   a, b
 	out  (#41), a					; set Slot2Mode -> map_sel (mapper mode)
-	; 2b) reset the VDP to a clean state. INIT32 fixes R0-R7 + the BIOS work-area
-	;     mirror; then we clear the MSX2/V9958 registers R8-R23 + R25-R27 that the
-	;     menu's TEXT2 80-col mode left dirty (display adjust R18, line-int R19,
-	;     vertical scroll R23, ...). Without this, MSX2 games that only set some
-	;     VDP regs inherit garbage -> distortion / top-of-screen rubbish (Metal
-	;     Gear 2, Space Manbow). Done here (page 2, IRQs off); the stub afterwards
-	;     only flips slots, so the VDP stays clean until the game's own INIT.
-	call #006F						; INIT32 (SCREEN 1): R0-R7 + work-area mirror
-	di								; INIT32 may have re-enabled IRQs
+	; VDP a estado limpio: INIT32 (R0-R7 + espejo) y R8-R23/R25-R27 a cero
+	call #006F						; INIT32 (SCREEN 1)
+	di								; INIT32 puede reactivar IRQs
 	ld   hl, vdp_clean_tbl
 	ld   b, 19						; R8-R23 (16 regs) + R25-R27 (3 regs)
 .lr_vdp:
@@ -1558,8 +1634,9 @@ launch_rom:
 	inc  hl
 	out  (#99), a					; register select (0x80 | reg)
 	djnz .lr_vdp
-	; 3) copy the boot stub to page-3 RAM (#E000) and jump to it
-	ld   hl, boot_stub
+	ld   a, #C9						; hook H.STKE virgen antes de llamar al INIT
+	ld   (#FEDA), a
+	ld   hl, boot_stub				; stub a RAM de pagina 3 y saltar
 	ld   de, #E000
 	ld   bc, boot_stub_end - boot_stub
 	ldir
@@ -1579,9 +1656,11 @@ vdp_clean_tbl:
 	.db #00,#9A						; R26 = 0 (V9958 horiz scroll H)
 	.db #00,#9B						; R27 = 0 (V9958 horiz scroll L)
 
-; boot_stub: runs from #E000 (page-3 RAM). Position-independent (absolute refs
-; only). Switches pages 1+2 to slot 2 (megaram = the loaded ROM), then jumps to
-; the cartridge INIT vector at 0x4002 the way the BIOS boots a cartridge.
+; boot_stub: runs from #E000 (page-3 RAM). Switches pages 1+2 to slot 2
+; (megaram = the loaded ROM) and CALLS the cartridge INIT at (0x4002) the way
+; the BIOS boots a cartridge. Single-stage games never return. If the INIT
+; returns (two-stage Konami that hooked H.STKE expecting the BIOS to chain),
+; invoke the hook ourselves -- without any hardware reset (megaram decays).
 boot_stub:
 	ld   sp, #F380					; standard MSX boot stack (page-3 RAM)
 	ld   a, #02						; page 1 (0x4000) -> slot 2
@@ -1591,10 +1670,21 @@ boot_stub:
 	ld   hl, #8000
 	call ENASLT
 	ld   hl, (#4002)				; cartridge INIT vector
+	ld   bc, boot_ret - boot_stub + #E000
+	push bc							; "direccion de retorno" = boot_ret (en el stub)
 	ei
-	jp   (hl)
+	jp   (hl)						; call INIT (1 fase: no vuelve)
+boot_ret:
+	di								; INIT retorno = juego de 2 fases (H.STKE)
+	ld   a, (#FEDA)
+	cp   #C9
+	jr   z, boot_dead				; sin hook y sin tomar control: nada que hacer
+	ld   sp, #F380
+	ei
+	call #FEDA						; arrancar fase 2 (CALLF inter-slot, no vuelve)
+boot_dead:
+	jr   boot_dead
 boot_stub_end:
-
 ; -----------------------------------------------------------------------------
 ; browse: scrolling browser over ENT_ARRAY. Cursor up/down move the selection,
 ; RETURN shows the selected entry, ESC returns to the main menu. Input goes via
@@ -1834,8 +1924,40 @@ browse:
 	call POSIT
 	ld   hl, loadingStr				; "Cargando ROM en megaram..."
 	call print_string
+	xor  a
+	ld   (VFY_MODE), a
 	call load_rom					; load now, automatically (progress bar)
+	ld   a, 1						; 2a pasada: re-leer SD y comparar megaram
+	ld   (VFY_MODE), a
+	ld   hl, 0
+	ld   (VFY_BAD), hl
+	call load_rom
+	xor  a
+	ld   (VFY_MODE), a
 	ld   hl, #0109
+	call POSIT
+	ld   hl, (VFY_BAD)
+	ld   a, h
+	or   l
+	jr   z, .bsr_vok
+	ld   hl, vfyBadStr				; "VFY ERR n=xxxx s=xx d=xxxx"
+	call print_string
+	ld   hl, (VFY_BAD)
+	call print_hex_hl
+	ld   hl, vfySegStr
+	call print_string
+	ld   a, (VFY_SEG)
+	call print_hex_a
+	ld   hl, vfyDirStr
+	call print_string
+	ld   hl, (VFY_PTR)
+	call print_hex_hl
+	jr   .bsr_vdone
+.bsr_vok:
+	ld   hl, vfyOkStr				; "Verificacion megaram: OK"
+	call print_string
+.bsr_vdone:
+	ld   hl, #010B
 	call POSIT
 	ld   hl, launch2Str				; "RETURN=LANZAR JUEGO   ESC=volver"
 	call print_string
@@ -4108,6 +4230,14 @@ loadingStr:
 	.db "Cargando ROM en megaram...",0
 launch2Str:
 	.db "RETURN=LANZAR JUEGO   ESC=volver",0
+vfyOkStr:
+	.db "Verificacion megaram: OK",0
+vfyBadStr:
+	.db "VFY ERR n=",0
+vfySegStr:
+	.db "s",0
+vfyDirStr:
+	.db "d",0
 dskInfoStr:
 	.db "Disco seleccionado:",0
 dskMountStr:

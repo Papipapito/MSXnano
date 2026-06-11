@@ -122,6 +122,10 @@ class Z80:
                 ad = s.f16(); s.sbc_(s.m[ad] | (s.m[ad + 1] << 8))
             elif o2 == 0x53:
                 ad = s.f16(); s.m[ad] = s.e; s.m[ad + 1] = s.d
+            elif o2 == 0x73:
+                ad = s.f16(); s.m[ad] = s.sp & 0xFF; s.m[ad + 1] = (s.sp >> 8) & 0xFF
+            elif o2 == 0x7B:
+                ad = s.f16(); s.sp = s.m[ad] | (s.m[ad + 1] << 8)
             else:
                 raise Exception('ED %02X @%04X' % (o2, s.pc - 2))
             return
@@ -149,6 +153,18 @@ class Z80:
         elif op == 0x23: s.shl(s.ghl() + 1)
         elif op == 0x13: s.sde(s.gde() + 1)
         elif op == 0x2B: s.shl((s.ghl() - 1) & 0xFFFF)
+        elif op in (0xF3, 0xFB): pass  # di / ei
+        elif op == 0xF6:
+            s.a |= s.fetch(); s.setc(0); s.setz(s.a == 0)
+        elif op == 0xEE:
+            s.a ^= s.fetch(); s.setc(0); s.setz(s.a == 0)
+        elif op == 0xE3:
+            lo = s.m[s.sp]; hi = s.m[s.sp + 1]
+            s.m[s.sp] = s.l; s.m[s.sp + 1] = s.h
+            s.l = lo; s.h = hi
+        elif op == 0x0B: s.sbc_((s.gbc() - 1) & 0xFFFF)
+        elif op == 0x03: s.sbc_((s.gbc() + 1) & 0xFFFF)
+        elif op == 0x1B: s.sde((s.gde() - 1) & 0xFFFF)
         elif op == 0x29:
             r = s.ghl() * 2; s.setc(r > 0xFFFF); s.shl(r & 0xFFFF)
         elif op == 0x19:
