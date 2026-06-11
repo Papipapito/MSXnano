@@ -1109,9 +1109,12 @@ inc16:
 ;   0x50/0x90/0xB0 -> SCC-only    0x80/0xA0 -> Konami-only
 ;   0x68/0x78      -> ASCII8-only 0x60/0x70 -> ASCII16/generic
 classify_addr:
+	; tabla de creditos de openMSX guessRomType: 4000/8000/A000=Konami;
+	; 5000/9000/B000=SCC; 6800/7800=ASCII8; 77FF=ASCII16;
+	; 6000=Konami+A8+A16; 7000=SCC+A8+A16
 	ld   a, e
 	or   a
-	ret  nz							; low byte != 0 -> not a bank register
+	jr   nz, .ca_77ff				; byte bajo != 0: solo interesa 77FF
 	ld   a, d
 	cp   #50
 	jr   z, .ca_scc
@@ -1119,6 +1122,8 @@ classify_addr:
 	jr   z, .ca_scc
 	cp   #B0
 	jr   z, .ca_scc
+	cp   #40
+	jr   z, .ca_kon
 	cp   #80
 	jr   z, .ca_kon
 	cp   #A0
@@ -1128,10 +1133,28 @@ classify_addr:
 	cp   #78
 	jr   z, .ca_a8
 	cp   #60
-	jr   z, .ca_a16
+	jr   z, .ca_kaa
 	cp   #70
-	jr   z, .ca_a16
+	jr   z, .ca_saa
 	ret
+.ca_77ff:
+	inc  a							; e == #FF ?
+	ret  nz
+	ld   a, d
+	cp   #77
+	ret  nz
+	jr   .ca_a16
+.ca_kaa:							; 6000: Konami + ASCII8 + ASCII16
+	ld   hl, MAP_KON
+	call inc16
+	jr   .ca_aa
+.ca_saa:							; 7000: SCC + ASCII8 + ASCII16
+	ld   hl, MAP_SCC
+	call inc16
+.ca_aa:
+	ld   hl, MAP_A8
+	call inc16
+	jr   .ca_a16
 .ca_scc:
 	ld   hl, MAP_SCC
 	jp   inc16
@@ -1217,53 +1240,45 @@ scan_rom:
 .sr_done:
 	ret
 
-; sig_ok: HL = a counter -> CF=1 if it reaches MAP_THRESH (a real signature).
-sig_ok:
-	ld   a, h
-	or   a
-	jr   nz, .sok_yes				; high byte set -> well over threshold
-	ld   a, l
-	cp   MAP_THRESH
-	jr   nc, .sok_yes				; l >= THRESH
-	or   a							; CF = 0
-	ret
-.sok_yes:
-	scf
-	ret
-
-; decide_mapper: priority by DISTINGUISHING signature (ASCII8 -> SCC -> Konami ->
-; ASCII16). No signature -> plain/linear. Fixes ASCII16 being seen as Konami-SCC.
+; decide_mapper: eleccion al estilo openMSX guessRomType: quirk ascii8-- y
+; despues el maximo con >= iterando SCC,Konami,ASCII8,ASCII16 (en empate gana
+; el iterado mas tarde, p.ej. ASCII16 sobre ASCII8). Todo a cero -> plain.
 decide_mapper:
 	ld   hl, (MAP_A8)
-	call sig_ok
-	jr   c, .dm_a8
+	ld   a, h
+	or   l
+	jr   z, .dm_go
+	dec  hl							; quirk openMSX: ascii8-- si no es cero
+	ld   (MAP_A8), hl
+.dm_go:
+	ld   b, MAP_PLAIN				; mejor tipo
+	ld   de, 0						; mejor puntuacion
 	ld   hl, (MAP_SCC)
-	call sig_ok
-	jr   c, .dm_scc
+	ld   c, MAP_SCC_ID
+	call .dm_cand
 	ld   hl, (MAP_KON)
-	call sig_ok
-	jr   c, .dm_kon
+	ld   c, MAP_KON_ID
+	call .dm_cand
+	ld   hl, (MAP_A8)
+	ld   c, MAP_A8_ID
+	call .dm_cand
 	ld   hl, (MAP_A16)
-	call sig_ok
-	jr   c, .dm_a16
-	ld   a, MAP_PLAIN				; no mapper writes -> plain/linear
+	ld   c, MAP_A16_ID
+	call .dm_cand
+	ld   a, b
 	ld   (MAPPER_ID), a
 	ret
-.dm_a8:
-	ld   a, MAP_A8_ID
-	ld   (MAPPER_ID), a
-	ret
-.dm_scc:
-	ld   a, MAP_SCC_ID
-	ld   (MAPPER_ID), a
-	ret
-.dm_kon:
-	ld   a, MAP_KON_ID
-	ld   (MAPPER_ID), a
-	ret
-.dm_a16:
-	ld   a, MAP_A16_ID
-	ld   (MAPPER_ID), a
+.dm_cand:							; HL=puntos, C=tipo: si HL!=0 y HL>=mejor, gana
+	ld   a, h
+	or   l
+	ret  z
+	push hl
+	or   a
+	sbc  hl, de						; CF=1 si HL < mejor
+	pop  hl
+	ret  c
+	ex   de, hl						; nueva mejor puntuacion
+	ld   b, c
 	ret
 
 ; detect_mapper: decide MAPPER_ID for the selected file. <=32 KB -> plain; else
