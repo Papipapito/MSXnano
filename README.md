@@ -96,6 +96,10 @@ now forced on and removed from the UI:
 * `tools/scctest/SCCTEST.COM`: detection + sound test for SCC/SCC+ per slot, dual PSG
   and FM, with stereo placement check.
 
+Dual-SCC demo (turn the sound on 🔉):
+
+https://github.com/user-attachments/assets/5fb49364-ebc3-4557-8cf1-1f48a0fafb3f
+
 ### 🧰 Other
 * Critical timing closure improvements in the FPGA (54 MHz domain now closes with
   positive slack; SD-companion CDC constraints documented in the SDC).
