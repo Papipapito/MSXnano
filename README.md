@@ -1,3 +1,6 @@
+
+
+
 # MSXnano
 MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 
@@ -85,6 +88,8 @@ now forced on and removed from the UI:
 | **Pantalla 16:9** | HDMI AVI InfoFrame aspect signalling: 4:3 (off) or 16:9 (on). The TV decides pillarbox vs stretch |
 | Slots | Mapper / MegaRam / SD slot selection (removed in v1.7 — fixed layout) |
 
+
+
 ### 🔊 Sound: SCC+ done right (and doubled)
 * **Real SCC+ (SCC-I) mode**: B800h window, mode register at BFFEh, independent
   channel-5 waveform — Snatcher-class software works. Wave-RAM read-back fixed
@@ -99,6 +104,10 @@ now forced on and removed from the UI:
 Dual-SCC demo (turn the sound on 🔉):
 
 https://github.com/user-attachments/assets/5fb49364-ebc3-4557-8cf1-1f48a0fafb3f
+
+`SCCTEST.COM` in action:
+
+https://github.com/user-attachments/assets/23cecea7-3888-40bd-9592-7cc60c37a41f
 
 ### 🧰 Other
 * Critical timing closure improvements in the FPGA (54 MHz domain now closes with
