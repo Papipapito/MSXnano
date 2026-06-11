@@ -105,9 +105,6 @@ Dual-SCC demo (turn the sound on 🔉):
 
 https://github.com/user-attachments/assets/5fb49364-ebc3-4557-8cf1-1f48a0fafb3f
 
-`SCCTEST.COM` in action:
-
-https://github.com/user-attachments/assets/23cecea7-3888-40bd-9592-7cc60c37a41f
 
 ### 🧰 Other
 * Critical timing closure improvements in the FPGA (54 MHz domain now closes with
