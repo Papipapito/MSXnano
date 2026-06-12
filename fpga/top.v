@@ -590,6 +590,7 @@ assign keyboard_addr = ppi_port_c[3:0];
                      ( kanji_data_req_r == 1 ) ? ram_dout :
                 `ifdef ENABLE_WIFI
                      ( wifi_req == 1 ) ? ram_dout :
+                     ( logo_req == 1 ) ? ram_dout :
                      ( f2_req_r == 1 ) ? f2_port :
                      ( uart_req == 1 ) ? uart_dout :
                 `endif
@@ -1063,6 +1064,13 @@ assign keyboard_addr = ppi_port_c[3:0];
         wifi_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[0] == 1 && exp_slot0_num[2] == 1 ) ? 1 : 0;
     end
 
+    //logo ROM (FREE16KB del pack @0x7C000) en slot 0-3 pagina 1: pantalla de
+    //marca del menu (rutina+imagen autocontenidas; el menu la llama con CALLF)
+    reg logo_req;
+    always @ (posedge clk_54m) begin
+        logo_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[0] == 1 && exp_slot0_num[3] == 1 ) ? 1 : 0;
+    end
+
     //uart
     wire uart_req;
     wire wait_uart;
@@ -1277,6 +1285,7 @@ assign keyboard_addr = ppi_port_c[3:0];
                         (kanji_data_ram_req == 1 ) ? { 5'b11100, kanji_data_ram_addr[17:0] } : //bank D
                 `ifdef ENABLE_WIFI
                         (wifi_req == 1 ) ? { 9'b111011110, bus_addr[13:0] } : //bank D
+                        (logo_req == 1 ) ? { 9'b111011111, bus_addr[13:0] } : //bank D (pack 0x7C000)
                 `endif
                         23'h7fffff; 
     
@@ -1294,6 +1303,7 @@ assign keyboard_addr = ppi_port_c[3:0];
                       (kanji_data_ram_req == 1) ? ~bus_rd_n :
                 `ifdef ENABLE_WIFI
                       (wifi_req == 1) ? ~bus_rd_n :
+                      (logo_req == 1) ? ~bus_rd_n :
                 `endif
                       0;
     
@@ -1316,6 +1326,7 @@ assign keyboard_addr = ppi_port_c[3:0];
                      (kanji_data_ram_req == 1) ? kanji_data_ram_req:
                 `ifdef ENABLE_WIFI
                      (wifi_req == 1) ? wifi_req:
+                     (logo_req == 1) ? logo_req:
                 `endif
                       0;
 

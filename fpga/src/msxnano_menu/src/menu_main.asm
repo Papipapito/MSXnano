@@ -61,6 +61,16 @@ main_menu_entry:
 	ld   (hl), a
 	inc  hl
 	djnz .wipe_stke
+	; pantalla de logo (slot 0-3): si el pack la trae (magic 'L'), mostrarla
+	ld   a, #8C						; slot 0-3 (expandido, pri 0, sec 3)
+	ld   hl, #4000
+	call RDSLT
+	cp   'L'
+	jr   nz, .no_logo
+	rst  #30						; CALLF a la rutina del logo (SCREEN5 + espera)
+	.db  #8C
+	.dw  #4002
+.no_logo:
 	ld   a, 2
 	ld   (FILTER), a				; default tab = ALL
 
@@ -4254,7 +4264,7 @@ sramStr:
 srchStr:
 	.db "Buscar: ",0
 dskInfoStr:
-	.db "Disco seleccionado:",0
+	.db "Disco:",0
 dskMountStr:
 	.db "Montando disco (Nextor) y arrancando...",0
 dskFragStr:
