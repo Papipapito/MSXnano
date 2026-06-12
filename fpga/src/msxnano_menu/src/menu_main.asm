@@ -174,6 +174,7 @@ LOAD_SEG	equ	#C0C8			; 1 byte: current 8K megaram segment being loaded
 LOAD_OFF	equ	#C0C9			; 2 bytes: byte offset within the current 8K segment
 MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
 SRCH_BUF	equ	#E880			; 13 bytes: consulta de busqueda del navegador (ASCIIZ)
+SRAM_FLAG	equ	#C0D9			; 1 byte: SRAM de cartucho para este lanzamiento (0/1)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -1527,6 +1528,10 @@ tag_scc:
 	.db "SCC",0
 tag_kon:
 	.db "KONAMI",0
+tag_koei:
+	.db "KOEI",0
+tag_sram:
+	.db "SRAM",0
 
 ; launch_rom: ROM already loaded into the megaram (SCC mode). DIRECT boot, no
 ; hardware reset: a reset re-runs the 512KB flash->SDRAM BIOS reload with the
@@ -1538,6 +1543,77 @@ tag_kon:
 ; the BIOS to call it later) we call the H.STKE hook ourselves.
 launch_rom:
 	di
+	; --- SRAM de cartucho (#43): bit de habilitacion + limpieza del area ---
+	ld   a, #48						; dispositivo config goauld
+	out  (#40), a
+	ld   a, (SRAM_FLAG)
+	or   a
+	jr   z, .lr_sroff
+	ld   a, (MAPPER_ID)
+	cp   MAP_A16_ID
+	ld   b, #10						; ASCII16: modo "valor==0x10" (Hydlide2/A-Train)
+	jr   z, .lr_srclr
+	cp   MAP_A8_ID
+	jr   nz, .lr_sroff				; SRAM solo aplica a ASCII8/16
+	ld   hl, (BR_REC)				; ASCII8: bit = pow2 >= bancos de 8K (openMSX)
+	ld   de, SIZE_OFF+1
+	add  hl, de
+	ld   e, (hl)					; size>>8
+	inc  hl
+	ld   d, (hl)					; size>>16
+	srl  d
+	rr   e
+	srl  d
+	rr   e
+	srl  d
+	rr   e
+	srl  d
+	rr   e
+	srl  d
+	rr   e							; e = bancos de 8K (size>>13)
+	ld   b, 1
+.lr_srb:
+	ld   a, e
+	dec  a
+	cp   b							; b >= bancos -> listo
+	jr   c, .lr_srclr
+	sla  b
+	jr   nz, .lr_srb
+	ld   b, #80						; tope 2MB
+.lr_srclr:
+	ld   a, b
+	out  (#43), a
+	ld   a, MEG_SLOT				; limpiar SRAM (segs 252-255) a FF = cartucho virgen
+	ld   hl, #4000
+	call ENASLT
+	ld   a, 252
+.lr_srcs:
+	push af
+	xor  a
+	ld   (#7FFE), a					; banco solo se fija con write-protect activo
+	pop  af
+	push af
+	ld   (#5000), a					; reg0 = segmento
+	ld   a, #10
+	ld   (#7FFE), a					; write enable
+	ld   hl, #4000
+	ld   de, #4001
+	ld   bc, #1FFF
+	ld   (hl), #FF
+	ldir
+	pop  af
+	inc  a
+	jr   nz, .lr_srcs				; 252..255, tras 255 A pasa a 0
+	xor  a
+	ld   (#7FFE), a
+	ld   a, #87
+	ld   hl, #4000
+	call ENASLT
+	jr   .lr_srdone
+.lr_sroff:
+	xor  a
+	out  (#43), a					; SRAM apagada (defecto en cada lanzamiento)
+.lr_srdone:
 	; megaram a estado de cartucho (banco 0, write-protect) -- en modo SCC
 	; 0x7FFE/0x5000 son regs de control (en ASCII serian regs de banco)
 	ld   a, MEG_SLOT				; page 1 -> megaram (slot 2)
@@ -1941,6 +2017,19 @@ browse:
 	ld   a, #FF						; mapper: prefer GoodMSX name tag (fast);
 	ld   (MAPPER_ID), a				; only run the slow code scan if there is no tag
 	call override_mapper_by_name
+	; SRAM de cartucho: por defecto OFF; tags KOEI/SRAM en el nombre la activan
+	xor  a
+	ld   (SRAM_FLAG), a
+	ld   hl, tag_koei
+	call name_contains				; (TAGPTR ya apunta al nombre tras override)
+	jr   c, .bsr_sron
+	ld   hl, tag_sram
+	call name_contains
+	jr   nc, .bsr_srdone
+.bsr_sron:
+	ld   a, 1
+	ld   (SRAM_FLAG), a
+.bsr_srdone:
 	ld   a, (MAPPER_ID)
 	cp   #FF
 	jr   nz, .bsr_have
@@ -1972,9 +2061,10 @@ browse:
 	ld   hl, loadingStr				; "Cargando ROM en megaram..."
 	call print_string
 	call load_rom					; load now, automatically (progress bar)
+	call .bsr_sprint				; indicador "SRAM: On/Off" (fila 6)
 	ld   hl, #0109
 	call POSIT
-	ld   hl, launch2Str				; "RETURN=LANZA M=MAPPER ESC=volver"
+	ld   hl, launch2Str				; "RETURN=LANZA M=MAPPER S=SRAM ESC"
 	call print_string
 .bsr_lk:
 	call browse_getkey
@@ -1986,7 +2076,25 @@ browse:
 	jr   z, .bsr_map
 	cp   'm'
 	jr   z, .bsr_map
+	cp   'S'
+	jr   z, .bsr_srtg
+	cp   's'
+	jr   z, .bsr_srtg
 	jr   .bsr_lk
+.bsr_srtg:
+	ld   a, (SRAM_FLAG)				; conmutar SRAM de cartucho para este lanzamiento
+	xor  1
+	ld   (SRAM_FLAG), a
+	call .bsr_sprint
+	jr   .bsr_lk
+.bsr_sprint:
+	ld   hl, #0106
+	call POSIT
+	ld   hl, sramStr				; "SRAM:"
+	call print_string
+	ld   hl, #0806
+	ld   a, (SRAM_FLAG)
+	jp   print_on_off				; imprime On/Off y retorna al llamador
 .bsr_map:
 	ld   a, (MAPPER_ID)				; ciclar plain->Konami->SCC->ASCII8->ASCII16
 	cp   MAP_PLAIN
@@ -2015,15 +2123,12 @@ browse:
 	ld   hl, romSpcStr
 	call print_string
 	call print_mapper_name
-	ld   a, ' '						; limpiar cola de un nombre anterior mas largo
-	call CHPUT
+	ld   b, 4						; limpiar cola de un nombre anterior mas largo
+.bsr_msp:
 	ld   a, ' '
 	call CHPUT
-	ld   a, ' '
-	call CHPUT
-	ld   a, ' '
-	call CHPUT
-	jr   .bsr_lk
+	djnz .bsr_msp
+	jp   .bsr_lk
 
 .br_seldsk:
 	; --- selected .dsk: set up Nextor disk-emulation mode and boot it ---
@@ -4123,7 +4228,7 @@ help8Str:
 helpEndStr:
 	.db "Pulsa una tecla para volver...",0
 romInfoStr:
-	.db "ROM seleccionada:",0
+	.db "Fichero:",0
 romClusStr:
 	.db "Tamano: ",0
 romSpcStr:
@@ -4143,7 +4248,9 @@ mapUnkStr:
 loadingStr:
 	.db "Cargando ROM en megaram...",0
 launch2Str:
-	.db "RETURN=LANZA M=MAPPER ESC=volver",0
+	.db "RETURN=LANZA M=MAPPER S=SRAM ESC",0
+sramStr:
+	.db "SRAM:",0
 srchStr:
 	.db "Buscar: ",0
 dskInfoStr:

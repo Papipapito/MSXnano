@@ -101,6 +101,25 @@ class Z80:
             else:
                 raise Exception('DD %02X @%04X' % (o2, s.pc - 2))
             return
+        if op == 0xCB:
+            o2 = s.fetch()
+            reg = 'bcdehl?a'[o2 & 7]
+            if reg == '?':
+                raise Exception('CB (hl) no soportado @%04X' % (s.pc - 2))
+            v = getattr(s, reg)
+            kind = o2 >> 3
+            if kind == 0x07:      # srl
+                c = v & 1; v >>= 1
+            elif kind == 0x04:    # sla
+                c = (v >> 7) & 1; v = (v << 1) & 0xFF
+            elif kind == 0x03:    # rr
+                c = v & 1; v = (v >> 1) | (s.cy() << 7)
+            elif kind == 0x02:    # rl
+                c = (v >> 7) & 1; v = ((v << 1) & 0xFF) | s.cy()
+            else:
+                raise Exception('CB %02X @%04X' % (o2, s.pc - 2))
+            setattr(s, reg, v); s.setc(c); s.setz(v == 0)
+            return
         if op == 0xED:
             o2 = s.fetch()
             if o2 == 0xB0:
@@ -154,6 +173,9 @@ class Z80:
         elif op == 0x13: s.sde(s.gde() + 1)
         elif op == 0x2B: s.shl((s.ghl() - 1) & 0xFFFF)
         elif op in (0xF3, 0xFB): pass  # di / ei
+        elif op == 0xF5: s.push((s.a << 8) | s.f)
+        elif op == 0xF1:
+            v = s.pop(); s.a = (v >> 8) & 0xFF; s.f = v & 0xFF
         elif op == 0xF6:
             s.a |= s.fetch(); s.setc(0); s.setz(s.a == 0)
         elif op == 0xEE:

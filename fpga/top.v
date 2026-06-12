@@ -1601,6 +1601,7 @@ memory_ctrl mem1 (
         .scc_wrt (scc2_wrt),
         .map_sel (map_sel),
         .map_linear (map_linear),
+        .sram_cfg (config3_ff),
 
         .megaram_req (megaram_req),
         .megaram_wrt (megaram_wrt),
@@ -1783,6 +1784,8 @@ memory_ctrl mem1 (
     wire config0_req;
     wire config1_req;
     wire config2_req;
+    wire config3_req;
+    reg [7:0] config3_ff = 0;       // puerto #43: sram_cfg de la megaram (volatil)
     wire config_reset_req;
     wire config_reset;
     wire config_ok;
@@ -1801,6 +1804,9 @@ memory_ctrl mem1 (
             if (config1_req == 1 ) begin
                 config_update <= 1;
                 config1_temp_ff <= cpu_dout;
+            end
+            if (config3_req == 1 ) begin
+                config3_ff <= cpu_dout;
             end
             if (config2_req == 1 ) begin
                 config_update <= 1;
@@ -1859,6 +1865,7 @@ memory_ctrl mem1 (
     assign config0_req = (bus_addr[7:0] == 8'h40 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config1_req = (config_ok == 1 && bus_addr[7:0] == 8'h41 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config2_req = (config_ok == 1 && bus_addr[7:0] == 8'h42 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
+    assign config3_req = (config_ok == 1 && bus_addr[7:0] == 8'h43 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config_enable_scanlines = config1_ff[3];
     //assign config_keyboard = config2_ff[4:3];
     assign config_enable_wait = config2_ff[3];
@@ -1867,7 +1874,8 @@ memory_ctrl mem1 (
     assign config_req = (bus_addr[7:4] == 4'h4 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
     assign config_dout = ( bus_addr[3:0] == 4'h0 ) ? config0_ff :
                          ( bus_addr[3:0] == 4'h1 ) ? config1_ff :
-                         ( bus_addr[3:0] == 4'h2 ) ? config2_ff : 8'hff;
+                         ( bus_addr[3:0] == 4'h2 ) ? config2_ff :
+                         ( bus_addr[3:0] == 4'h3 ) ? config3_ff : 8'hff;
 
 
     always @ (posedge clk_54m) begin

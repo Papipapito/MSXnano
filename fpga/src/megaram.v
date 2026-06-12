@@ -9,6 +9,9 @@ module megaram_scc(
     input wire scc_wrt,
     input wire [1:0] map_sel,
     input wire map_linear,
+    input wire [7:0] sram_cfg,      // puerto #43: ASCII8 = bit de habilitacion SRAM
+                                    // (pow2 >= bancos 8K); ASCII16 = no-cero activa el
+                                    // modo "valor==0x10"; 0 = SRAM apagada (defecto)
 
     output wire megaram_req,
     output wire megaram_wrt,
@@ -45,8 +48,16 @@ module megaram_scc(
     wire megaram_sel_wave;
     reg megaram_sel_memory;
     assign megaram_sel_wave = ( bus_addr[8] == 0 && megaram_mode_b[4] == 0 && (megaram_scc_a == 1 || megaram_scc_b == 1) ) ? 1 : 0;
+    //escritura SRAM: en A8 donde este mapeada salvo 6000-7FFF (ahi mandan los
+    //regs de banco); en A16 solo en 8000-BFFF (fiel a Hydlide2/A-Train)
+    wire sram_wr_ok;
+    assign sram_wr_ok = ( sram_hit == 1 && (
+                          (map_sel[1] == 1) ? (bus_addr[15:14] == 2'b10)
+                                            : (bus_addr[14:13] != 2'b11) ) ) ? 1 : 0;
+
     assign megaram_sel_memory = ( megaram_sel_wave == 1 ) ? 0 :
                                 ( bus_rd_n == 0 ) ? 1 :
+                                ( bus_wr_n == 0 && sram_wr_ok == 1 ) ? 1 :
                                 ( bus_wr_n == 0 && bus_addr[15:13] == 3'b010 && megaram_mode_a[4] == 1 ) ? 1 : 
                                 ( bus_wr_n == 0 && bus_addr[15:13] == 3'b011 && megaram_mode_a[4] == 1 && megaram_1ffe == 0 ) ? 1 : 
                                 ( bus_wr_n == 0 && bus_addr[15:14] == 2'b01 && megaram_mode_b[4] == 1 ) ? 1 : 
@@ -58,7 +69,29 @@ module megaram_scc(
     assign megaram_req = ( megaram_sel_memory == 1 ) ? scc_req : 0;
     assign megaram_wrt = ( megaram_req == 1 && scc_wrt == 1 ) ? 1 : 0;
 
+    //SRAM de cartucho (ASCII8/16): vive en los 32KB ALTOS de la megaram
+    //(0x1F8000-0x1FFFFF = segmentos 252-255). Solo activa en modos ASCII y con
+    //sram_cfg != 0 (lo escribe el menu al lanzar; los juegos sin tag no la ven).
+    wire sram_mode;
+    wire sram_hit;
+    wire [1:0] sram_pg;
+    wire [20:0] sram_addr;
+    assign sram_mode = ( map_sel[0] == 1 && sram_cfg != 8'h00 ) ? 1 : 0;
+    assign sram_hit = ( sram_mode == 1 && (
+                        (bus_addr[14:13] == 2'b10 && sram_en[0] == 1) ||
+                        (bus_addr[14:13] == 2'b11 && sram_en[1] == 1) ||
+                        (bus_addr[14:13] == 2'b00 && sram_en[2] == 1) ||
+                        (bus_addr[14:13] == 2'b01 && sram_en[3] == 1) ) ) ? 1 : 0;
+    assign sram_pg = (bus_addr[14:13] == 2'b10) ? sram_page0 :
+                     (bus_addr[14:13] == 2'b11) ? sram_page1 :
+                     (bus_addr[14:13] == 2'b00) ? sram_page2 :
+                                                  sram_page3;
+    //ASCII16: SRAM de 2KB espejada en la ventana; ASCII8: paginas de 8KB
+    assign sram_addr = (map_sel[1] == 1) ? { 10'b1111110000, bus_addr[10:0] }
+                                         : { 6'b111111, sram_pg, bus_addr[12:0] };
+
     assign megaram_addr =  (map_linear == 1) ? { 5'b00000, bus_addr} :
+                          (sram_hit == 1) ? sram_addr :
                           (bus_addr [14:13] == 2'b10 ) ? { megaram_reg0, bus_addr[12:0] } :
                           (bus_addr [14:13] == 2'b11 ) ? { megaram_reg1, bus_addr[12:0] } :
                           (bus_addr [14:13] == 2'b00 ) ? { megaram_reg2, bus_addr[12:0] } :
@@ -72,6 +105,11 @@ module megaram_scc(
     reg megaram_reg_L;
     reg [7:0] megaram_mode_a;
     reg [7:0] megaram_mode_b;
+    reg [3:0] sram_en;              // SRAM mapeada por ventana 8K (4000/6000/8000/A000)
+    reg [1:0] sram_page0;           // pagina SRAM por ventana (Koei 32KB = 4 paginas 8K)
+    reg [1:0] sram_page1;
+    reg [1:0] sram_page2;
+    reg [1:0] sram_page3;
 
     always @( posedge clk_27m ) begin
         if (bus_reset_n == 0) begin
@@ -81,6 +119,11 @@ module megaram_scc(
             megaram_reg3	<= 8'h03;
             megaram_mode_a  <= 8'h00;
             megaram_mode_b  <= 8'h00;
+            sram_en         <= 4'b0000;
+            sram_page0      <= 2'b00;
+            sram_page1      <= 2'b00;
+            sram_page2      <= 2'b00;
+            sram_page3      <= 2'b00;
         end
         else if (scc_wrt == 1) begin
             if (map_sel == 2'b00) begin
@@ -150,16 +193,27 @@ module megaram_scc(
                         //ASC8K / 6000-67FFh
                         if (map_sel[1] == 0 && bus_addr[11] == 0) begin
                             megaram_reg0 <= cpu_dout;
+                            sram_en[0] <= ( sram_cfg != 8'h00 && (cpu_dout & sram_cfg) != 8'h00 ) ? 1'b1 : 1'b0;
+                            sram_page0 <= cpu_dout[1:0];
                         end
                         //ASC8K / 6800-6FFFh
                         else if (map_sel[1] == 0 && bus_addr[11] == 1) begin
                             megaram_reg1 <= cpu_dout;
+                            sram_en[1] <= ( sram_cfg != 8'h00 && (cpu_dout & sram_cfg) != 8'h00 ) ? 1'b1 : 1'b0;
+                            sram_page1 <= cpu_dout[1:0];
                         end
-                        //ASC16K / 6000-67FFh
+                        //ASC16K / 6000-67FFh (ventana 4000-7FFF = regs internos 0+1)
                         else if (bus_addr[11] == 0) begin
                             megaram_reg_L <= cpu_dout[6];
                             megaram_reg0 <= { cpu_dout[7], cpu_dout[5:0], 1'b0 };
                             megaram_reg1 <= { cpu_dout[7], cpu_dout[5:0], 1'b1 };
+                            //SRAM ASCII16 (Hydlide2/A-Train): valor exacto 0x10
+                            if ( sram_cfg != 8'h00 && cpu_dout == 8'h10 ) begin
+                                sram_en[1:0] <= 2'b11;
+                            end
+                            else begin
+                                sram_en[1:0] <= 2'b00;
+                            end
                         end
                     end
                     //Mapped I/O port access on 7000-7FFFh ... Bank register write
@@ -167,16 +221,26 @@ module megaram_scc(
                         //ASC8K / 7000-77FFh
                         if (map_sel[1] == 0 && bus_addr[11] == 0) begin
                             megaram_reg2 <= cpu_dout;
+                            sram_en[2] <= ( sram_cfg != 8'h00 && (cpu_dout & sram_cfg) != 8'h00 ) ? 1'b1 : 1'b0;
+                            sram_page2 <= cpu_dout[1:0];
                         end
                         //ASC8K / 7800-7FFFh
                         else if (map_sel[1] == 0 && bus_addr[11] == 1) begin
                             megaram_reg3 <= cpu_dout;
+                            sram_en[3] <= ( sram_cfg != 8'h00 && (cpu_dout & sram_cfg) != 8'h00 ) ? 1'b1 : 1'b0;
+                            sram_page3 <= cpu_dout[1:0];
                         end
-                        //ASC16K / 7000-77FFh
+                        //ASC16K / 7000-77FFh (ventana 8000-BFFF = regs internos 2+3)
                         else if (bus_addr[11] == 0) begin
                             megaram_reg_H <= cpu_dout[6];
                             megaram_reg2 <= { cpu_dout[7], cpu_dout[5:0], 1'b0 };
                             megaram_reg3 <= { cpu_dout[7], cpu_dout[5:0], 1'b1 };
+                            if ( sram_cfg != 8'h00 && cpu_dout == 8'h10 ) begin
+                                sram_en[3:2] <= 2'b11;
+                            end
+                            else begin
+                                sram_en[3:2] <= 2'b00;
+                            end
                         end
                     end
                 endcase
