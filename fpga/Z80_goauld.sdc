@@ -11,9 +11,10 @@ create_clock -name clock_audio -period 277.778 -waveform {0 138.889} [get_nets {
 create_clock -name clock_27m -period 37.037 -waveform {0 18.518} [get_nets {clk_27m}] -add
 create_generated_clock -name clock_54m -source [get_nets {clk_27m}] -master_clock clock_27m -multiply_by 2 [get_nets {clk_54m}] -add //[get_nets {clk_108m}] -add
 create_generated_clock -name clock_108m -source [get_nets {clk_27m}] -master_clock clock_27m -multiply_by 4 [get_ports {O_sdram_clk}] -add //[get_nets {clk_108m}] -add
+create_generated_clock -name clock_108i -source [get_nets {clk_27m}] -master_clock clock_27m -multiply_by 4 [get_pins {clk_main/rpll_inst/CLKOUT}] -add
 create_generated_clock -name clock_VideoDHClk -source [get_nets {clk_27m}] -master_clock clock_27m -divide_by 2 [get_nets {VideoDHClk}] -add
 create_generated_clock -name clock_VideoDLClk -source [get_nets {clk_27m}] -master_clock clock_27m -divide_by 4 [get_nets {VideoDLClk}] -add
-set_clock_groups -asynchronous -group [get_clocks {clock_108m clock_54m clock_VideoDHClk clock_VideoDLClk clock_27m }] -group [get_clocks {clock_reset }] -group [get_clocks {clock_env_reset clock_env_reset2 }]
+set_clock_groups -asynchronous -group [get_clocks {clock_108m clock_108i clock_54m clock_VideoDHClk clock_VideoDLClk clock_27m }] -group [get_clocks {clock_reset }] -group [get_clocks {clock_env_reset clock_env_reset2 }]
 // FPGA-Companion SPI CDC (mcu_spi_new.v): spi_data_in is written in the BL616 SPI-clock
 // domain and only captured into spi_target/spi_in_data after a 2-FF-synchronized ready
 // flag, so the data is stable for many clk_54m cycles around capture (handshake-safe).
@@ -71,9 +72,16 @@ set_false_path -from [get_clocks {clock_54m}] -to [get_pins {ocm_ports/?*?/D}]
 //set_false_path -from [get_clocks {clock_54m}] -to [get_pins {debug1/?*?/?*?/D}]   // debug1 removed (production)
 //set_false_path -from [get_clocks {clock_54m}] -to [get_pins {debug1/?*?/?*?/CE}]  // debug1 removed (production)
 set_false_path -from [get_clocks {clock_27m}] -to [get_pins {vdp4/hdmi_ntsc/true_hdmi_output.packet_picker/audio_sample_word_transfer?*?/D}]
-//set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/SPRENDERPLANES*/CE}]
-//set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/FF_Y_TEST_LISTUP_ADDR_*/D}]
-//set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/FF_Y_TEST_LISTUP_ADDR_*/CE}]
+set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/SPRENDERPLANES*/CE}]
+set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/FF_SP_OVERMAP*/CE}]
+set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/FF_Y_TEST*/CE}]
+set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/FF_Y_TEST*/D}]
+//uwifi muestrea senales del bus Z80 (IORQ/WR, estables ~280ns) a 27MHz: la
+//relacion de medio periodo 54F->27R es pesimista para senales cuasi-estaticas
+set_false_path -from [get_clocks {clock_54m}] -to [get_pins {uwifi/wait_o*/CE}]
+set_false_path -from [get_clocks {clock_54m}] -to [get_pins {uwifi/my_tx_state*/CE}]
+set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/FF_Y_TEST_LISTUP_ADDR_*/D}]
+set_false_path -from [get_clocks {clock_108m}] -to [get_pins {vdp4/u_v9958/U_SPRITE/FF_Y_TEST_LISTUP_ADDR_*/CE}]
 
 
 

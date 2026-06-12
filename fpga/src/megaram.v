@@ -37,12 +37,20 @@ module megaram_scc(
 
     //Mapped I/O port access on 9800-9FFFh ... Wave memory (solo modo SCC: en
     //Konami4/ASCII un banco 0x3F en reg2 NO debe abrir la ventana de sonido)
+    //map_sel REGISTRADO: meterlo directo en este cono alarga el camino
+    //combinacional de megaram_req hacia el muestreo a 108MHz del controlador
+    //SDRAM (sin restriccion SDC) y rompe en HW real (regresion MG2 v1.7).
+    //map_sel es estatico durante el juego: registrarlo es funcionalmente neutro.
+    reg ff_scc_mode;
+    always @( posedge clk_27m ) begin
+        ff_scc_mode <= ( map_sel == 2'b10 ) ? 1'b1 : 1'b0;
+    end
     wire megaram_scc_a;
-    assign megaram_scc_a = ( map_sel == 2'b10 && bus_addr[15:11] == 5'b10011 && megaram_mode_b[5] == 0 && megaram_reg2[5:0] == 6'b111111  ) ? 1 : 0;
+    assign megaram_scc_a = ( ff_scc_mode == 1 && bus_addr[15:11] == 5'b10011 && megaram_mode_b[5] == 0 && megaram_reg2[5:0] == 6'b111111  ) ? 1 : 0;
 
     //Mapped I/O port access on B800-BFFFh ... Wave memory
     wire megaram_scc_b;
-    assign megaram_scc_b = ( map_sel == 2'b10 && bus_addr[15:11] == 5'b10111 && megaram_mode_b[5] == 1 && megaram_reg3[7] == 1  ) ? 1 : 0;
+    assign megaram_scc_b = ( ff_scc_mode == 1 && bus_addr[15:11] == 5'b10111 && megaram_mode_b[5] == 1 && megaram_reg3[7] == 1  ) ? 1 : 0;
 
     //SCC address decoder
     wire megaram_sel_wave;
@@ -76,7 +84,12 @@ module megaram_scc(
     wire sram_hit;
     wire [1:0] sram_pg;
     wire [20:0] sram_addr;
-    assign sram_mode = ( map_sel[0] == 1 && sram_cfg != 8'h00 ) ? 1 : 0;
+    //registrado por la misma razon que ff_scc_mode: fuera del cono de megaram_req
+    reg ff_sram_mode;
+    always @( posedge clk_27m ) begin
+        ff_sram_mode <= ( map_sel[0] == 1 && sram_cfg != 8'h00 ) ? 1'b1 : 1'b0;
+    end
+    assign sram_mode = ff_sram_mode;
     assign sram_hit = ( sram_mode == 1 && (
                         (bus_addr[14:13] == 2'b10 && sram_en[0] == 1) ||
                         (bus_addr[14:13] == 2'b11 && sram_en[1] == 1) ||
@@ -173,14 +186,18 @@ module megaram_scc(
                         end
                     end
                     //Mapped I/O port access on 7FFE-7FFFh ... Register write
+                    //(mode_a[6] = cerrojo: el menu lo echa al lanzar para que el
+                    //juego vea un cartucho SCC puro -- MG2 hace pokes anticopia
+                    //a BFFE/7FFE que en una megaram abierta habilitan escritura
+                    //y el propio juego se corrompe al cambiar de banco)
                     5'b01111: begin
-                        if ( megaram_3fe == 1 && megaram_mode_b[5:4] == 2'b00 ) begin
+                        if ( megaram_3fe == 1 && megaram_mode_b[5:4] == 2'b00 && megaram_mode_a[7] == 0 ) begin
                             megaram_mode_a <= cpu_dout;
                         end
                     end
                     //Mapped I/O port access on BFFE-BFFFh ... Register write
                     5'b10111: begin
-                        if ( megaram_3fe == 1 && megaram_mode_a[6] == 0 && megaram_mode_a[4] == 0 ) begin
+                        if ( megaram_3fe == 1 && megaram_mode_a[6] == 0 && megaram_mode_a[4] == 0 && megaram_mode_a[7] == 0 ) begin
                             megaram_mode_b <= cpu_dout;
                         end
                     end
