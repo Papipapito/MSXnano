@@ -104,6 +104,8 @@ main_menu_entry:
 	or   e
 	jr   nz, .pm_w1
 .pm_done:
+	call restore_palette			; restaurar la paleta de fabrica AL SALIR del
+									; logo (no mientras sigue en pantalla)
 	ld   a, 2
 	ld   (FILTER), a				; default tab = ALL
 
@@ -219,6 +221,7 @@ MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
 SRCH_BUF	equ	#E880			; 13 bytes: consulta de busqueda del navegador (ASCIIZ)
 SRAM_FLAG	equ	#C0D9			; 1 byte: SRAM de cartucho para este lanzamiento (0/1)
 SD_READY	equ	#C0DB			; 1 byte: SD ya montada+escaneada (bajo el logo)
+MAP_SWIO	equ	#C0DC			; 1 byte: smart command del mapper (lo aplica el stub)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -1668,10 +1671,14 @@ launch_rom:
 	ld   a, MEG_SLOT				; page 1 -> megaram (slot 2)
 	ld   hl, #4000
 	call ENASLT
-	xor  a
-	ld   (#7FFE), a					; mode_a = 0 : write-protect (normal cartridge)
+	ld   a, #80
+	ld   (#7FFE), a					; mode_a = 0x80: write-protect + CERROJO (bit7):
+									; bloquea 7FFE y BFFE hasta el proximo reset para
+									; que los pokes anticopia (MG2) no abran escritura
 	xor  a
 	ld   (#5000), a					; bank reg0 = 0 (first 8 KB at 0x4000)
+									; (regs 1-3 los inicializa el stub: aqui la
+									; pagina 2 es la del menu, no la megaram)
 	ld   a, #87						; page 1 -> slot 3-1 (menu)
 	ld   hl, #4000
 	call ENASLT
@@ -1692,11 +1699,9 @@ launch_rom:
 .lr_a16:
 	ld   a, #13						; Int ASCII16K
 .lr_setmap:
-	ld   b, a
-	ld   a, #D4						; SWIO: select ID212
-	out  (#40), a
-	ld   a, b
-	out  (#41), a					; set Slot2Mode -> map_sel (mapper mode)
+	ld   (MAP_SWIO), a				; el stub lo aplica TRAS inicializar los bancos
+									; (el modo se queda en SCC, el del load, para que
+									; las escrituras de bancos del stub funcionen)
 	; VDP a estado limpio: INIT32 (R0-R7 + espejo) y R8-R23/R25-R27 a cero
 	call #006F						; INIT32 (SCREEN 1)
 	di								; INIT32 puede reactivar IRQs
@@ -1710,6 +1715,7 @@ launch_rom:
 	inc  hl
 	out  (#99), a					; register select (0x80 | reg)
 	djnz .lr_vdp
+	call restore_palette			; el logo dejo su paleta de marca puesta
 	ld   a, #C9						; hook H.STKE virgen antes de llamar al INIT
 	ld   (#FEDA), a
 	ld   hl, boot_stub				; stub a RAM de pagina 3 y saltar
@@ -1717,6 +1723,25 @@ launch_rom:
 	ld   bc, boot_stub_end - boot_stub
 	ldir
 	jp   #E000
+
+; restore_palette: paleta V9938 de fabrica (el logo de arranque la cambia y los
+; juegos MSX1 no la reprograman: sin esto salen colores invertidos/raros)
+restore_palette:
+	xor  a
+	out  (#99), a
+	ld   a, #90						; R#16 = 0 (indice de paleta)
+	out  (#99), a
+	ld   hl, def_palette
+	ld   b, 32
+.rp_l:
+	ld   a, (hl)
+	inc  hl
+	out  (#9A), a
+	djnz .rp_l
+	ret
+def_palette:						; formato: (R<<4)|B, G
+	.db #00,0, #00,0, #11,6, #33,7, #17,1, #27,3, #51,1, #27,6
+	.db #71,1, #73,3, #61,6, #64,6, #11,4, #65,2, #55,5, #77,7
 
 ; clean MSX2/V9958 VDP register values: (data, 0x80|reg) pairs for R8-R23,R25-27
 vdp_clean_tbl:
@@ -1745,6 +1770,18 @@ boot_stub:
 	ld   a, #02						; page 2 (0x8000) -> slot 2
 	ld   hl, #8000
 	call ENASLT
+	xor  a							; bancos a su valor canonico 0,1,2,3: el sondeo
+	ld   (#5000), a					; de RAM de la BIOS escribe en 0x8000 de todos los
+	ld   a, 1						; slots al arrancar y (en modo Konami4, el de
+	ld   (#7000), a					; encendido) corrompe reg2; los juegos de dos fases
+	ld   a, 2						; (MG2) confian en el mapeo por defecto al entrar
+	ld   (#9000), a					; en la pagina 2. Aqui el modo aun es SCC (load).
+	ld   a, 3
+	ld   (#B000), a
+	ld   a, #D4						; ahora si: mapper real del juego via SWIO
+	out  (#40), a
+	ld   a, (MAP_SWIO)
+	out  (#41), a
 	ld   hl, (#4002)				; cartridge INIT vector
 	ld   bc, boot_ret - boot_stub + #E000
 	push bc							; "direccion de retorno" = boot_ret (en el stub)
