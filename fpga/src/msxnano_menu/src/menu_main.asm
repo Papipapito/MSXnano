@@ -45,16 +45,9 @@ main_menu_entry:
 	ld   a, b
 	cp   #99
 	jp   z, main_action_boot		; pending boot -> continue the boot, skip the menu
-	; Wipe any stale Nextor disk-emulation pointer in RAM (#A000). The one-time
-	; record we write for .dsk launch survives a WARM reset, so without this a plain
-	; "arrancar sistema" (ESC) after a previous .dsk would make Nextor re-enter
-	; emulation and hang. Only the .dsk launch path re-writes it, later than here.
-	ld   hl, #A000
-	ld   de, #A001
-	ld   bc, 15
-	ld   (hl), 0
-	ldir							; zero the 16-byte "NEXTOR_EMU_DATA" signature
-	ld   a, #C9						; y limpiar un hook H.STKE residual de un juego
+	; (el registro Nextor de #A000 lo cubre el padding del .org #A010: el depack
+	; del menu escribe esa zona en cada arranque y borra cualquier firma rancia)
+	ld   a, #C9						; limpiar un hook H.STKE residual de un juego
 	ld   hl, #FEDA					; lanzado antes (si no, "Arrancar sistema" tras un
 	ld   b, 5						; reset manual relanzaria el juego en vez del DOS)
 .wipe_stke:
@@ -67,10 +60,50 @@ main_menu_entry:
 	call RDSLT
 	cp   'L'
 	jr   nz, .no_logo
-	rst  #30						; CALLF a la rutina del logo (SCREEN5 + espera)
+	rst  #30						; CALLF a la rutina del logo (SCREEN5, ~0.5s)
 	.db  #8C
 	.dw  #4002
 .no_logo:
+	; premontar la SD BAJO el logo (montaje silencioso): si va bien, el
+	; navegador se salta el "Leyendo SD..." y aparece ya con contenido
+	xor  a
+	ld   (SD_READY), a
+	ld   (SD_LBA+0), a
+	ld   (SD_LBA+1), a
+	ld   (SD_LBA+2), a
+	ld   (SD_LBA+3), a
+	call sd_read_sector				; MBR
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .pm_done
+	ld   a, (SD_BUF+510)
+	cp   #55
+	jr   nz, .pm_done
+	ld   a, (SD_BUF+511)
+	cp   #AA
+	jr   nz, .pm_done
+	call enum_partitions
+	ld   a, (PART_CNT)
+	or   a
+	jr   z, .pm_done
+	xor  a
+	call select_partition
+	jr   c, .pm_done
+	ld   a, 1
+	ld   (SD_READY), a
+	ld   de, 2						; ~1s extra de logo con la SD ya lista
+.pm_w1:
+	ld   bc, 0
+.pm_w2:
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .pm_w2
+	dec  de
+	ld   a, d
+	or   e
+	jr   nz, .pm_w1
+.pm_done:
 	ld   a, 2
 	ld   (FILTER), a				; default tab = ALL
 
@@ -185,6 +218,7 @@ LOAD_OFF	equ	#C0C9			; 2 bytes: byte offset within the current 8K segment
 MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
 SRCH_BUF	equ	#E880			; 13 bytes: consulta de busqueda del navegador (ASCIIZ)
 SRAM_FLAG	equ	#C0D9			; 1 byte: SRAM de cartucho para este lanzamiento (0/1)
+SD_READY	equ	#C0DB			; 1 byte: SD ya montada+escaneada (bajo el logo)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -250,6 +284,9 @@ SDC_SADDR	equ	#7E03			; wo: 4 bytes = LBA
 SDC_CTYPE	equ	#7E0C			; ro: card type
 
 main_action_sdrom:
+	ld   a, (SD_READY)
+	or   a
+	jp   nz, browse					; montada bajo el logo -> navegador directo
 	call cls_browser				; show feedback (the SD init can pause a moment)
 	ld   hl, #0103
 	call POSIT
@@ -281,6 +318,8 @@ main_action_sdrom:
 	xor  a
 	call select_partition			; open partition 0 (reads BPB, computes root, scans;
 	jp   c, sd_not_present			; sets BR_SEL/BR_TOP/MQ_SEL/BROWSING)
+	ld   a, 1
+	ld   (SD_READY), a				; las vueltas desde ajustes ya no re-montan
 	jp   browse						; scrolling browser (returns to menu on ESC)
 
 ; sd_not_present: no usable SD card (init/read timeout or bad MBR signature).
@@ -4219,6 +4258,11 @@ footerStr:
 	.db "R/D/A=Filtro  ESC=Boot  S=Set  W=WiFi  TAB=Part  H=Ayuda",0
 helpTitleStr:
 	.db "MSXnano - AYUDA",0
+; ============================== DATOS (>= A010) ==============================
+; El codigo debe quedar por debajo de #A000; cadenas y tablas viven a partir de
+; #A010, dejando #A000-#A00F como hueco para el registro NEXTOR_EMU_DATA que
+; escribe el lanzador de .dsk (y que el depack machaca en cada arranque).
+	.org #A010
 help1Str:
 	.db "Arriba/Abajo          : mover (Izq/Der = pagina)",0
 help2Str:

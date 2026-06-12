@@ -37,7 +37,7 @@ def build_code(lines, y0, nbytes):
     c += b'\x21' + img_addr.to_bytes(2,'little')  # ld hl,IMG
     c += b'\x11' + nbytes.to_bytes(2,'little')    # ld de,NBYTES
     c += b'\x7E\xD3\x98\x23\x1B\x7A\xB3\x20\xF7'  # lp: ld a,(hl)/out(98),a/inc hl/dec de/ld a,d/or e/jr nz,lp
-    c += b'\x11\x04\x00'                          # ld de,4  (~2 s de logo)
+    c += b'\x11\x01\x00'                          # ld de,1 (~0.5s; el resto = escaneo SD bajo el logo)
     c += b'\x01\x00\x00'                          # w1: ld bc,0
     c += b'\x0B\x78\xB1\x20\xFB'                  # w2: dec bc/ld a,b/or c/jr nz,w2
     c += b'\x1B\x7A\xB3\x20\xF6'                  # dec de/ld a,d/or e/jr nz,w1
