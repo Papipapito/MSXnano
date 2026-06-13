@@ -44,7 +44,7 @@ main_menu_entry:
 	ld   (BOOT_FLAG), a				; the flag is only valid transiently
 	ld   a, b
 	cp   #99
-	jp   z, main_action_boot		; pending boot -> continue the boot, skip the menu
+	jp   z, second_pass_boot		; pending boot -> continue the boot, skip the menu
 	; (el registro Nextor de #A000 lo cubre el padding del .org #A010: el depack
 	; del menu escribe esa zona en cada arranque y borra cualquier firma rancia)
 	ld   a, #C9						; limpiar un hook H.STKE residual de un juego
@@ -54,6 +54,10 @@ main_menu_entry:
 	ld   (hl), a
 	inc  hl
 	djnz .wipe_stke
+	xor  a
+	ld   (DSK_PEND), a				; sin .dsk pendiente: el 2o pase NO debe reescribir
+									; el registro NEXTOR (en frio #C0DD es basura y
+									; emulaba un disco inexistente -> caia a BASIC)
 	; pantalla de logo (slot 0-3): si el pack la trae (magic 'L'), mostrarla
 	ld   a, #8C						; slot 0-3 (expandido, pri 0, sec 3)
 	ld   hl, #4000
@@ -139,6 +143,30 @@ main_menu_restart:
 ; boot_system: user chose "arrancar sistema". Mark a pending-boot flag (so the
 ; BIOS's second INIT pass auto-continues instead of showing the browser again)
 ; and continue the boot.
+; second_pass_boot: 2o pase del INIT con boot pendiente. Si hay un .dsk
+; seleccionado, REESCRIBIR el registro NEXTOR_EMU_DATA (#A000-#A015): el
+; re-depack de este mismo pase acaba de machacarlo (los datos del menu viven
+; en #A010+ desde el reorg y el padding cubre #A000-#A00F a proposito).
+second_pass_boot:
+	ld   a, (DSK_PEND)
+	or   a
+	jp   z, main_action_boot
+	xor  a
+	ld   (DSK_PEND), a
+	ld   hl, emuSig
+	ld   de, #A000
+	ld   bc, 16
+	ldir
+	ld   a, 1
+	ld   (#A010), a					; device index (WonderTANG SD)
+	ld   a, 1
+	ld   (#A011), a					; LUN
+	ld   hl, (EMU_LBA+0)
+	ld   (#A012), hl
+	ld   hl, (EMU_LBA+2)
+	ld   (#A014), hl
+	jp   main_action_boot
+
 boot_system:
 	ld   a, #99
 	ld   (BOOT_FLAG), a
@@ -222,6 +250,7 @@ SRCH_BUF	equ	#E880			; 13 bytes: consulta de busqueda del navegador (ASCIIZ)
 SRAM_FLAG	equ	#C0D9			; 1 byte: SRAM de cartucho para este lanzamiento (0/1)
 SD_READY	equ	#C0DB			; 1 byte: SD ya montada+escaneada (bajo el logo)
 MAP_SWIO	equ	#C0DC			; 1 byte: smart command del mapper (lo aplica el stub)
+DSK_PEND	equ	#C0DD			; 1 byte: registro .dsk pendiente de reescribir (2o pase)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -2373,6 +2402,8 @@ browse:
 	ld   (#A012), hl
 	ld   hl, (EMU_LBA+2)
 	ld   (#A014), hl
+	ld   a, 1
+	ld   (DSK_PEND), a				; el 2o pase del INIT reescribira el registro
 	jp   boot_system				; continue boot with Nextor ON -> Nextor emulates A:
 .br_back:
 	ld   a, (DIR_SP)
