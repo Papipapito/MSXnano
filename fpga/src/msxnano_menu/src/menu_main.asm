@@ -70,6 +70,10 @@ main_menu_entry:
 .no_logo:
 	; premontar la SD BAJO el logo (montaje silencioso): si va bien, el
 	; navegador se salta el "Leyendo SD..." y aparece ya con contenido
+	ld   a, 2						; FILTER = ALL ANTES de escanear: select_partition
+	ld   (FILTER), a				; -> scan_root aplica FILTER; en frio era basura y
+									; filtraba los ficheros (solo se veian carpetas
+									; en el primer listado hasta cambiar de pestana)
 	xor  a
 	ld   (SD_READY), a
 	ld   (SD_LBA+0), a
