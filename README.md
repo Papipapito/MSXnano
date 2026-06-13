@@ -24,6 +24,31 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * WiFi UART pins aligned with the wiring diagram (`uart_rx` → pin 77, `uart_tx` → pin 73).
 * **Claude (Anthropic)** collaborated on this release.
 
+## What's new in v1.7.1
+
+### 🐞 Bug fixes over v1.7
+* **Two-stage Konami launch fixed for real (Metal Gear 2 / SD Snatcher boot).**
+  v1.7 left a bank register pointing at 0x8000 in the power-on (Konami4) mode, which
+  the BIOS RAM probe corrupts on every boot — so two-stage games came up to a blue
+  screen. The launcher now initialises the four bank registers in the stub before
+  jumping to the cartridge INIT, so these games boot.
+* **Mapper detection by ROM content (openMSX-style), not by filename.** Previously a
+  filename tag could mislead detection (e.g. the maker word "Konami" forced Konami4
+  onto SCC games). Detection now scans the ROM; the filename tag is only a fallback.
+* **.dsk mounting fixed** (the Nextor emulation record was being clobbered by the
+  menu's depack pass).
+* **Boot file list fixed**: files (not just folders) now show on the first listing.
+* **Nextor 2.1.4** WonderTANG driver in the BIOS pack.
+* **Cartridge SRAM (ASCII8/16)**, **MSX Barcelona boot splash**, and a VRAM-refresh
+  fix that removes a stray line of garbage in the Space Manbow intro.
+
+> ⚠️ **Known limitation:** **Metal Gear 2 — Solid Snake** boots and is playable, but
+> shows a graphics glitch when gameplay starts (the loading screen does not fully
+> clear, mixing with the game). This is a VDP-state issue specific to how the boot
+> menu launches the ROM; launching the same game from SofaRun (MSX-DOS) is clean.
+> Under investigation. Other Konami SCC games (Space Manbow, Maze of Galious, ...)
+> are unaffected.
+
 ## What's new in v1.7
 
 ### 🎮 Konami mapper (without SCC) — new compatibility
@@ -36,7 +61,8 @@ behaviour immune to Konami's anti-copy pokes).
 Games whose cartridge INIT hooks **H.STKE** and returns to the BIOS (expecting the
 boot to call them back) used to come up half-booted with garbled tiles. The launcher
 now CALLs the cartridge INIT the way the BIOS does and, if the game hooked H.STKE,
-invokes the hook itself. Metal Gear 2 boots and plays with full SCC sound.
+invokes the hook itself. (See v1.7.1 above for the follow-up fixes this needed and
+the remaining Metal Gear 2 gameplay glitch.)
 
 ### 🔎 Browser: search and manual mapper override
 * **`/` search**: type part of a name (case-insensitive), ENTER jumps to the next
@@ -208,6 +234,10 @@ Megaram is detected automatically by sofarun using default settings. When using 
 
 ## Known issues
 * Tape games fail: use poke -1,0
+* **Metal Gear 2 — Solid Snake**: boots and is playable, but the in-game screen
+  glitches when gameplay starts (loading screen doesn't fully clear). VDP-state issue
+  tied to the menu launcher; launching from SofaRun (MSX-DOS) is clean. Under
+  investigation.
 
 ## Flashing
 
