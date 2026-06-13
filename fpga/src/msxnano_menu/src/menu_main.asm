@@ -1381,7 +1381,12 @@ detect_mapper:
 	ret
 .det_scan:
 	call scan_rom
-	jp   decide_mapper
+	call decide_mapper				; MAPPER_ID por CONTENIDO (estilo openMSX)
+	ld   a, (MAPPER_ID)
+	or   a							; MAP_PLAIN = 0 -> el code-scan no vio mapper
+	ret  nz							; el contenido decidio -> respetarlo SIEMPRE
+	jp   override_mapper_by_name	; solo si el scan no ve nada (juegos ld(hl),a):
+									; el tag [..] del nombre como ultima red
 
 ; megaram_test: set the megaram to Konami-SCC mode (OCM SWIO), write-enable it,
 ; write A5/5A to bank 0, read them back into MEG_T0/MEG_T1. No reset (safe).
@@ -1601,14 +1606,18 @@ name_contains:
 	or   a							; CF = 0
 	ret
 
+; tags de mapper GoodMSX/openMSX: SIEMPRE entre corchetes. Antes "KONAMI"
+; (sin corchetes) se tragaba el nombre del FABRICANTE -- casi toda ROM MSX
+; lleva "Konami" en el nombre -> forzaba Konami4 a juegos KonamiSCC (MG2 se
+; cargaba como Konami4 y reiniciaba). Con el corchete solo matchea el TAG.
 tag_a16:
-	.db "ASCII16",0
+	.db "[ASCII16",0
 tag_a8:
-	.db "ASCII8",0
+	.db "[ASCII8",0
 tag_scc:
-	.db "SCC",0
+	.db "SCC]",0					; pilla [SCC] y [KonamiSCC]
 tag_kon:
-	.db "KONAMI",0
+	.db "[Konami",0					; [Konami] o [Konami5]; NO el fabricante suelto
 tag_koei:
 	.db "KOEI",0
 tag_sram:
@@ -2129,14 +2138,19 @@ browse:
 	inc  hl							; record+1 = cluster (dword)
 	ld   de, FILE_CLUS
 	call w_copy
-	ld   a, #FF						; mapper: prefer GoodMSX name tag (fast);
-	ld   (MAPPER_ID), a				; only run the slow code scan if there is no tag
-	call override_mapper_by_name
+	call detect_mapper				; mapper por CONTENIDO (estilo Picoverse/openMSX);
+									; el nombre solo decide si el scan no ve nada.
+									; Evita falsos positivos del nombre (p.ej. "Konami"
+									; del fabricante forzaba Konami4 a juegos SCC).
 	; SRAM de cartucho: por defecto OFF; tags KOEI/SRAM en el nombre la activan
+	ld   hl, (BR_REC)				; asegurar TAGPTR -> nombre para los tags SRAM
+	ld   de, NAME_OFF
+	add  hl, de
+	ld   (TAGPTR), hl
 	xor  a
 	ld   (SRAM_FLAG), a
 	ld   hl, tag_koei
-	call name_contains				; (TAGPTR ya apunta al nombre tras override)
+	call name_contains
 	jr   c, .bsr_sron
 	ld   hl, tag_sram
 	call name_contains
@@ -2153,17 +2167,18 @@ browse:
 	call cls_browser
 	ld   hl, #0101
 	call POSIT
-	ld   hl, romInfoStr				; "ROM seleccionada:"
+	ld   hl, romInfoStr				; "Fichero:"  (fila 1)
 	call print_string
 	ld   hl, #0103
 	call POSIT
-	ld   hl, (BR_REC)
-	ld   de, NAME_OFF
+	ld   hl, (BR_REC)				; nombre (fila 3), TRUNCADO a 76 col para que
+	ld   de, NAME_OFF				; un nombre largo no haga wrap y descoloque todo
 	add  hl, de
-	call print_string				; ROM name
+	ld   b, 76
+	call print_string_max
 	ld   hl, #0105
 	call POSIT
-	ld   hl, romClusStr				; "Tamano: "
+	ld   hl, romClusStr				; "Tamano: "  (fila 5)
 	call print_string
 	call print_rom_kb
 	ld   a, 'K'
@@ -2171,15 +2186,15 @@ browse:
 	ld   hl, romSpcStr				; "  Mapper: "
 	call print_string
 	call print_mapper_name
-	ld   hl, #0107
+	call .bsr_sprint				; "SRAM: On/Off" (fila 6)
+	ld   hl, #0108					; "Cargando ROM en megaram..."  (fila 8)
 	call POSIT
-	ld   hl, loadingStr				; "Cargando ROM en megaram..."
+	ld   hl, loadingStr
 	call print_string
-	call load_rom					; load now, automatically (progress bar)
-	call .bsr_sprint				; indicador "SRAM: On/Off" (fila 6)
-	ld   hl, #0109
-	call POSIT
-	ld   hl, launch2Str				; "RETURN=LANZA M=MAPPER S=SRAM ESC"
+	call load_rom					; carga ahora (barra de progreso, fila 13)
+	ld   hl, #0108					; al acabar la carga, el mensaje de teclas tapa
+	call POSIT						; "Cargando..." en la misma fila (launch2Str es
+	ld   hl, launch2Str				; mas largo -> lo cubre por completo)
 	call print_string
 .bsr_lk:
 	call browse_getkey
@@ -4269,6 +4284,16 @@ print_string:
 	inc  hl
 	call CHPUT						; BIOS printChar
 	jr   print_string
+
+; print_string_max: imprime (HL) hasta B caracteres o NUL (lo que llegue antes)
+print_string_max:
+	ld   a, (hl)
+	or   a
+	ret  z
+	inc  hl
+	call CHPUT
+	djnz print_string_max
+	ret
 
 ; Set the cursor to L,H position and prints 'Off'/'On ' if A is 0 or not.
 ; Input    : H  - Y coordinate of cursor
