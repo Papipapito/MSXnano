@@ -39,3 +39,12 @@ fpga/src/rom/*.fs
 fpga/src/msxnano_menu/M2_DESIGN.md
 fpga/src/msxnano_menu/src/*.SDwork.txt
 fpga/midi_build.log
+
+# BIOS packs con Nextor 2.1.4 y ROMs de trabajo (copyright / build local, el
+# usuario los genera y sube manualmente). Norma: los .bin del pack se generan
+# con Nextor 2.1.4 (no 2.1.1).
+fpga/src/rom/goauld_rom_*_n214.bin
+fpga/src/rom/Nextor-2.1.4.WonderTANG.ROM.bin
+fpga/src/rom/pack_*.bin
+fpga/src/rom/msxnano_v*.fs
+fpga/src/rom/*_diag*.bin
