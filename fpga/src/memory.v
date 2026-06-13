@@ -201,7 +201,14 @@ module memory_ctrl (
 //            else if( RstSeq[4:3] != 2'b11 ) begin
 //                SdrSta <= 3'b101;                                                //-- Write (Initialize memory content)
 //            end
-            else if( bus_rfsh_n == 0 && video_dlclk == 1 ) begin
+            else if( bus_rfsh_n == 0 && video_dlclk == 1 && vram_write == 0 ) begin
+                //-- refresh roba el slot VDP SOLO si el VDP va a LEER (display/
+                //-- sprite, recuperable al siguiente frame). Si va a ESCRIBIR
+                //-- (comando del blitter HMMV/HMMM o acceso CPU por puerto), NO:
+                //-- el VDP da ACK incondicional y la escritura se perderia ->
+                //-- agujeros permanentes en VRAM (glitch de MG2 al cambiar de
+                //-- pantalla). Hay >100k ciclos RFSH del Z80 por frame; saltarse
+                //-- los pocos que coinciden con vram_write no afecta el refresh.
                 SdrSta <= 3'b010;                                                //-- refresh
             end
             else begin
