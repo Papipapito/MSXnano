@@ -2653,6 +2653,19 @@ load_font:
 	out  (#98), a
 	inc  hl
 	djnz .lf_loop
+	; char 0xDB = bloque solido (lo usa la barra de carga de ROMs). El glifo de
+	; #DB en el charset de la BIOS 2+ no es macizo (se ve "feo"); lo redefinimos a
+	; 8x0xFF para que la barra sea solida con CUALQUIER BIOS. Addr en la tabla de
+	; patrones (SCREEN 0/80col, base 0x1000) = 0x1000 + 0xDB*8 = 0x16D8.
+	ld   a, #D8						; low byte de 0x16D8
+	out  (#99), a
+	ld   a, #56						; high 0x16 | write bit 0x40
+	out  (#99), a
+	ld   b, 8
+.lf_solid:
+	ld   a, #FF
+	out  (#98), a
+	djnz .lf_solid
 	ei
 	ret
 font_pat:
