@@ -1322,6 +1322,31 @@ scan_rom:
 	ld   a, h						; cap at 512 sectors (256 KB scanned)
 	cp   2
 	jr   nc, .sr_done
+	; spinner: el analisis del mapper lee ~170 sectores/s; girar un caracter (cambia
+	; de frame cada 16 sectores) para que se vea que el menu trabaja en esos 2-3s
+	push af
+	push bc
+	push de
+	push hl
+	ld   a, (SCAN_N)				; low byte del contador de sectores
+	and  #30						; bits 5:4 -> frame 0..3
+	rrca
+	rrca
+	rrca
+	rrca
+	ld   e, a
+	ld   d, 0
+	ld   hl, spin_chars
+	add  hl, de
+	ld   c, (hl)					; caracter del frame
+	ld   hl, #1C08					; col 28, fila 8 (junto a "Cargando...")
+	call POSIT
+	ld   a, c
+	call CHPUT
+	pop  hl
+	pop  de
+	pop  bc
+	pop  af
 	call inc_sd_lba
 	ld   a, (SSEC_LEFT)
 	dec  a
@@ -1340,6 +1365,8 @@ scan_rom:
 	jr   .sr_clus
 .sr_done:
 	ret
+spin_chars:
+	.db #2D,#5C,#7C,#2F				; frames del spinner: - \ | /
 
 ; decide_mapper: eleccion al estilo openMSX guessRomType: quirk ascii8-- y
 ; despues el maximo con >= iterando SCC,Konami,ASCII8,ASCII16 (en empate gana
@@ -2183,6 +2210,24 @@ browse:
 	inc  hl							; record+1 = cluster (dword)
 	ld   de, FILE_CLUS
 	call w_copy
+	; feedback inmediato: detect_mapper lee sectores de la SD y tarda 2-3s en ROMs
+	; grandes; pintar YA nombre + "Cargando..." para que el Enter no parezca cuelgue
+	call cls_browser
+	ld   hl, #0101
+	call POSIT
+	ld   hl, romInfoStr				; "Fichero:" (fila 1)
+	call print_string
+	ld   hl, #0103
+	call POSIT
+	ld   hl, (BR_REC)				; nombre (fila 3), truncado a 76 col
+	ld   de, NAME_OFF
+	add  hl, de
+	ld   b, 76
+	call print_string_max
+	ld   hl, #0108					; "Cargando ROM en megaram..." (fila 8) YA visible
+	call POSIT
+	ld   hl, loadingStr
+	call print_string
 	call detect_mapper				; mapper por CONTENIDO (estilo Picoverse/openMSX);
 									; el nombre solo decide si el scan no ve nada.
 									; Evita falsos positivos del nombre (p.ej. "Konami"
@@ -2209,7 +2254,12 @@ browse:
 	jr   nz, .bsr_have
 	call detect_mapper
 .bsr_have:
-	call cls_browser
+	; (la pantalla ya se limpio y pinto arriba, antes del escaneo: solo reescribimos
+	;  los datos; sin cls_browser aqui para que NO parpadee)
+	ld   hl, #1C08					; borrar el spinner del analisis (col 28, fila 8)
+	call POSIT
+	ld   a, ' '
+	call CHPUT
 	ld   hl, #0101
 	call POSIT
 	ld   hl, romInfoStr				; "Fichero:"  (fila 1)
@@ -3921,6 +3971,12 @@ main_action_wifi:
 	ld   hl, #4000
 	call ENASLT
 	ei
+	call #006F						; INIT32: SCREEN 1 (32 col, GRAPHIC1). El setup del ESP
+									; NO fija modo y carga patrones de caracter propios
+									; (OUTI a #98) que asumen la tabla de patrones de
+									; GRAPHIC1; en SCREEN 0 caian en VRAM equivocada -> los
+									; "caracteres raros". Al volver, main_menu_restart ->
+									; init_screen restaura el SCREEN 0 80col del navegador.
 	call #4202						; ESP WiFi config menu (returns on exit)
 	di
 	ld   a, #87						; page 1 -> our menu ROM (slot 3-1)
