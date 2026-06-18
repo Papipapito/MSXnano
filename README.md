@@ -21,7 +21,7 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * Rebuilt on the **goauld standalone core** (cleaner base) while keeping the standalone / USB / WiFi design.
 * **Authentic MSX speed**: added the per-M1 opcode-fetch wait-state that a real MSX board provides, so the CPU runs at ~100% (≈3.58 MHz effective, measured 101%) instead of ~116%. Toggleable via `` `define ENABLE_M1_WAIT `` in `fpga/top.v`.
 * **WiFi BIOS integrated**: the ESP8266 UNAPI ROM now ships inside the single BIOS pack flashed at `0x200000` — there is no separate WiFi ROM to flash.
-* WiFi UART pins aligned with the wiring diagram (`uart_rx` → pin 77, `uart_tx` → pin 73).
+* WiFi UART pins on two consecutive pins for a single connector (`uart_rx` → pin 28, `uart_tx` → pin 27).
 * **Claude (Anthropic)** collaborated on this release.
 
 ## What's new in v1.7.1
@@ -159,8 +159,8 @@ https://github.com/user-attachments/assets/23cecea7-3888-40bd-9592-7cc60c37a41f
                     │       [ S2: UPDATE (BL616 ISP mode) ]
                     │                              │
                     │   GPIO header:               │
-                    │      Pin 77 ─────────────────┼──── ESP-01S TX  ┐
-                    │      Pin 73 ─────────────────┼──── ESP-01S RX  │ WiFi
+                    │      Pin 28 ─────────────────┼──── ESP-01S TX  ┐
+                    │      Pin 27 ─────────────────┼──── ESP-01S RX  │ WiFi
                     │      3.3V  ─────────────────┼──── ESP-01S VCC │ (optional)
                     │      GND   ─────────────────┼──── ESP-01S GND ┘
                     └──────────────────────────────┘
@@ -294,8 +294,8 @@ WiFi support uses an ESP-01S module (ESP8266) connected to the Tang Nano 20K hea
 
 | ESP-01S pin | Tang Nano 20K pin | Direction |
 |-------------|-------------------|-----------|
-| TX (GPIO1)  | Pin 77            | ESP → FPGA |
-| RX (GPIO3)  | Pin 73            | FPGA → ESP |
+| TX (GPIO1)  | Pin 28            | ESP → FPGA |
+| RX (GPIO3)  | Pin 27            | FPGA → ESP |
 | VCC         | 3.3V              | Power |
 | GND         | GND               | Ground |
 

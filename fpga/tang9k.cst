@@ -88,8 +88,9 @@ IO_PORT "sd_dat2" IO_TYPE=LVCMOS33;
 IO_LOC  "sd_dat3" 81;
 IO_PORT "sd_dat3" IO_TYPE=LVCMOS33;
 
-//wifi (ESP-01S) — pines igual que MSXnano: rx=77, tx=73. (NO usar 75: es spi_dir del BL616/USB)
-IO_LOC "uart_rx" 77;
+//wifi (ESP-01S): tx=27, rx=28 -> dos pines CONSECUTIVOS y libres para un solo
+//conector (v1.7.2; antes rx=77/tx=73). Zona 26-32 libre (25=ws2812, 33+=HDMI)
+IO_LOC "uart_rx" 28;
 IO_PORT "uart_rx" PULL_MODE=UP IO_TYPE=LVCMOS33;
-IO_LOC "uart_tx" 73;
+IO_LOC "uart_tx" 27;
 IO_PORT "uart_tx"  IO_TYPE=LVCMOS33;
