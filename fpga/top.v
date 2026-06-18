@@ -1750,18 +1750,21 @@ memory_ctrl mem1 (
     end
     wire [7:0] sg_dc;
     wire [7:0] sg_dd;
-    assign sg_dc = ~{ joystick1[1], joystick1[0], joystick0[5], joystick0[4],
-                      joystick0[3], joystick0[2], joystick0[1], joystick0[0] };
-    assign sg_dd = { 4'b1111, ~joystick1[5], ~joystick1[4], ~joystick1[3], ~joystick1[2] };
+    // bits crudos joystickN: [0]=Der [1]=Izq [2]=Abajo [3]=Arriba [4]=btn1 [5]=btn2
+    // SG-1000 DC (activo bajo): D0=Arr D1=Aba D2=Izq D3=Der D4=btn1 D5=btn2 D6=P2Arr D7=P2Aba
+    assign sg_dc = ~{ joystick1[2], joystick1[3], joystick0[5], joystick0[4],
+                      joystick0[0], joystick0[1], joystick0[2], joystick0[3] };
+    // SG-1000 DD: D0=P2Izq D1=P2Der D2=P2btn1 D3=P2btn2
+    assign sg_dd = { 4'b1111, ~joystick1[5], ~joystick1[4], ~joystick1[0], ~joystick1[1] };
     wire [7:0] coleco_joy0;
     wire [7:0] coleco_joy1;
     //byte joystick Coleco (activo bajo): D0=arriba D1=derecha D2=abajo D3=izda D6=fuego
     assign coleco_joy0 = (coleco_kp == 1) ? { 1'b1, ~joystick0[5], 2'b11, kp_code }
                                           : { 1'b1, ~joystick0[4], 2'b11,
-                                              ~joystick0[2], ~joystick0[1], ~joystick0[3], ~joystick0[0] };
+                                              ~joystick0[1], ~joystick0[2], ~joystick0[0], ~joystick0[3] };
     assign coleco_joy1 = (coleco_kp == 1) ? { 1'b1, ~joystick1[5], 2'b11, 4'hF }
                                           : { 1'b1, ~joystick1[4], 2'b11,
-                                              ~joystick1[2], ~joystick1[1], ~joystick1[3], ~joystick1[0] };
+                                              ~joystick1[1], ~joystick1[2], ~joystick1[0], ~joystick1[3] };
     wire console_joy_r;
     assign console_joy_r = ( bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0 && (
                              (console_mode == 2'b01 && bus_addr[7:1] == 7'b1101110) ||
