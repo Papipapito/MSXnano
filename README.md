@@ -17,6 +17,28 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * WiFi via ESP-01S (MSX UNAPI) — WiFi BIOS ROM integrated into the BIOS pack
 * Authentic MSX timing: per-M1 wait-state (~100% of real MSX speed), with a **Turbo mode** toggled by **F11** (full speed, ~116% / 4.13 MHz)
 
+---
+
+## ⚠️ EL TECLADO NO FUNCIONA EN TANG NANO 20K NUEVOS (2024+) — LEER ESTO
+
+Desde **~febrero de 2024**, Sipeed fabrica los Tang Nano 20K (marca **`3921`** en la
+placa) con el **secure-boot del BL616 en otro estado**. En muchas de estas placas el
+**BL616 de a bordo no puede ejecutar el firmware del companion**, así que **el teclado
+USB no funciona** — aunque la imagen por HDMI y el menú **sí** funcionen (eso es la
+FPGA, no el BL616). **No es un fallo del MSXnano**, es un cambio de hardware de Sipeed.
+
+**Test rápido:** flashea el firmware onboard ([`fpga/bl616/flash_nano20k.ini`](fpga/bl616/));
+si tras un power-cycle el teclado va → tu placa es compatible. Si **no** va → necesitas
+un **M0S Dock externo** (módulo BL616 aparte): el core conmuta a él automáticamente al
+enchufarlo al header `m0s`. Firmware y guía completa en **[`fpga/bl616/`](fpga/bl616/)**.
+
+| Tu placa | BL616 de a bordo | Solución |
+|---|---|---|
+| Antigua (pre-2024) | Suele funcionar | Firmware onboard `fpga/bl616/flash_nano20k.ini` |
+| Nueva (`3921`, 2024+) | A menudo **NO** | **M0S Dock externo** (`fpga/bl616/flash_m0sdock_cfg.ini`) |
+
+---
+
 ## What's new in v1.2
 * Rebuilt on the **goauld standalone core** (cleaner base) while keeping the standalone / USB / WiFi design.
 * **Authentic MSX speed**: added the per-M1 opcode-fetch wait-state that a real MSX board provides, so the CPU runs at ~100% (≈3.58 MHz effective, measured 101%) instead of ~116%. Toggleable via `` `define ENABLE_M1_WAIT `` in `fpga/top.v`.
