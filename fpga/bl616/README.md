@@ -71,8 +71,34 @@ el USB-C conectado a un PC para alimentar)
 `flash_m0sdock_cfg.ini`
 - `fpga_companion_m0sdock.bin` → `0x0`
 
-Flashea el M0S Dock (con su propio BOOT), conéctalo al header **`m0s`** del Tang
-(pines `42, 41, 56, 54, 51`), y enchufa el teclado al USB del M0S Dock.
+Flashea el M0S Dock (con su propio BOOT), cablea las 5 líneas SPI + alimentación
+al Tang, y enchufa el teclado al USB-C del M0S Dock con un adaptador
+**USB-C → USB-A (OTG)**. El core detecta el dock cuando CS (`m0s[2]`) baja y
+conmuta del BL616 de a bordo al externo automáticamente (no hay que tocar RTL).
+
+#### Cableado M0S Dock → Tang Nano 20K
+
+Las señales SPI están definidas en el firmware (`mcu_hw.c`, build `M0S_DOCK`:
+MISO=IO10, MOSI=IO11, CSN=IO12, SCK=IO13, IRQ=IO14) y en el RTL del MSXnano
+(`fpga_companion.v` + `tang9k.cst`). Mapeo final:
+
+| Señal | M0S Dock | Tang Nano 20K (pin GW2A) | `m0s[]` |
+|---|---|---|---|
+| MISO (FPGA→M0S) | IO10 | 42 | `m0s[0]` |
+| MOSI (M0S→FPGA) | IO11 | 41 | `m0s[1]` |
+| CS/SS (M0S→FPGA) | IO12 | 56 | `m0s[2]` |
+| SCK (M0S→FPGA) | IO13 | 54 | `m0s[3]` |
+| IRQ (FPGA→M0S) | IO14 | 51 | `m0s[4]` |
+| 5V | 5V | 5V | alimentación |
+| GND | GND | GND | común |
+
+Notas:
+- **IO10–IO14 están agrupadas** en el header CK-Link/debug del M0S Dock.
+- El M0S Dock se **alimenta desde el Tang** (5V + GND), porque su USB-C lo ocupa
+  el teclado.
+- Las direcciones de señal cuadran 1:1: MISO/IRQ las conduce la FPGA, y
+  MOSI/CS/SCK las conduce el M0S; `m0s[2]` lleva PULL-UP para que sin dock se use
+  el BL616 de a bordo.
 
 ---
 
