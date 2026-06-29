@@ -16,6 +16,7 @@ MSX2+ core for the Tang Nano 20k (60k and 138k soon)
 * FPGA Companion used as HID (keyboard, gamepads) interface
 * WiFi via ESP-01S (MSX UNAPI) — WiFi BIOS ROM integrated into the BIOS pack
 * Authentic MSX timing: per-M1 wait-state (~100% of real MSX speed), with a **Turbo mode** toggled by **F11** (full speed, ~116% / 4.13 MHz)
+* **ColecoVision & Sega SG-1000** emulation — drop a `.col` / `.sg` ROM on the SD card and launch it straight from the boot menu (SN76489 sound chip; ColecoVision needs `COLECO.ROM` on the SD)
 
 ---
 
