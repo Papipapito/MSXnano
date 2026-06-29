@@ -59,15 +59,21 @@ and the other didn't.
 any command-engine residue left by the boot splash. This also fixes **any page-flipping
 game** launched from the boot menu.
 
-* **Menu-only fix** — the FPGA bitstream is unchanged from v1.7.2; only the BIOS pack
-  needs re-flashing.
+* The MG2 fix itself is **menu-only** (no RTL change). v1.8 still ships a freshly built
+  bitstream so the release is self-contained and consolidates console support (below).
 
-## What's new in v1.2
-* Rebuilt on the **goauld standalone core** (cleaner base) while keeping the standalone / USB / WiFi design.
-* **Authentic MSX speed**: added the per-M1 opcode-fetch wait-state that a real MSX board provides, so the CPU runs at ~100% (≈3.58 MHz effective, measured 101%) instead of ~116%. Toggleable via `` `define ENABLE_M1_WAIT `` in `fpga/top.v`.
-* **WiFi BIOS integrated**: the ESP8266 UNAPI ROM now ships inside the single BIOS pack flashed at `0x200000` — there is no separate WiFi ROM to flash.
-* WiFi UART pins on two consecutive pins for a single connector (`uart_rx` → pin 28, `uart_tx` → pin 27).
-* **Claude (Anthropic)** collaborated on this release.
+### 🕹️ ColecoVision & Sega SG-1000 emulation
+v1.8 brings **ColecoVision** and **Sega SG-1000** emulation to the boot menu: copy a
+`.col` or `.sg` ROM to the SD card and launch it straight from the menu — no MSX
+cartridge needed. The core provides the **SN76489** sound chip and maps the
+joystick/keypad; for ColecoVision, place its BIOS (`COLECO.ROM`) on the SD card.
+
+> ℹ️ The MSX side is the mature path; console mode is newer — the ColecoVision numeric
+> keypad mapping in particular may still receive tweaks.
+
+* **Flashing v1.8:** re-flash **both** the bitstream (`project.fs`) and the BIOS pack
+  (`goauld_rom_int.bin`). Coming from v1.7.2 you only need the pack for the MG2 fix, but
+  the bitstream is what enables ColecoVision/SG-1000.
 
 ## What's new in v1.7.1
 
