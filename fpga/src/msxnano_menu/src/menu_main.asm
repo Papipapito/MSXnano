@@ -1890,6 +1890,25 @@ boot_stub:
 	out  (#40), a
 	ld   a, (MAP_SWIO)
 	out  (#41), a
+	; #22 FIX (page-flip MG2): el menu deja R#13=0x10 (blink "steady" de la barra
+	; de seleccion). En el VDP eso fija FF_BLINK_STATE=1 -> el bit de pagina (R#2
+	; bit5) se fuerza a 0 SIEMPRE (vdp_graphic4567.vhd:249 y 505-507). MG2 hace el
+	; page-flip carga->escenario via R#2 pero NO reescribe R#13 (asume el 0 que
+	; deja la BIOS), asi que la imagen se queda clavada en pagina 0 y la carga no
+	; se borra. DOS deja R#13=0, por eso SofaRun si funciona. Limpiamos R#13/R#12
+	; (estado de blink como tras un SCREEN de la BIOS) antes de llamar al INIT.
+	ld   bc, #000D					; B=0 dato, C=13 reg -> R#13 = 0 (blink OFF)
+	call #0047						; WRTVDP (actualiza HW + espejo BIOS)
+	ld   bc, #000C					; R#12 = 0 (colores de blink), por limpieza
+	call #0047						; WRTVDP
+	; el logo de arranque (MSX Barcelona) pinta su bitmap con comandos VDP y puede
+	; dejar el motor del V9938/58 a medias (CE asserted). MG2, al entrar, hace un
+	; HMMV de borrado (el "fundido"); si el motor sigue ocupado no cuaja. R#46=0 =
+	; comando STOP: aborta y limpia CE. Directo por puerto (WRTVDP no cubre R#46).
+	xor  a
+	out  (#99), a					; dato = 0
+	ld   a, #AE						; #80|46 -> seleccionar R#46 (registro de comando)
+	out  (#99), a					; R#46 = 0 = STOP -> aborta comando pendiente, limpia CE
 	ld   hl, (#4002)				; cartridge INIT vector
 	ld   bc, boot_ret - boot_stub + #E000
 	push bc							; "direccion de retorno" = boot_ret (en el stub)
@@ -2998,7 +3017,7 @@ draw_browser:
 	; --- header row 1: title + build (left), live clock (right) ---
 	ld   hl, #0101					; X=1, Y=1
 	call POSIT
-	ld   hl, hdrTitleStr			; "MSX Nano  v1.7"
+	ld   hl, hdrTitleStr			; "MSX Nano  v1.8"
 	call print_string
 	call draw_tabs					; row 2: filter tabs (active inverse)
 	ld   a, 22
@@ -4570,7 +4589,7 @@ tagRomStr:
 tagDskStr:
 	.db "[DSK] ",0
 hdrTitleStr:
-	.db "MSX Nano  v1.7",0
+	.db "MSX Nano  v1.8",0
 tabRStr:
 	.db "[R]OM",0
 tabDStr:

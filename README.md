@@ -39,6 +39,29 @@ enchufarlo al header `m0s`. Firmware y guía completa en **[`fpga/bl616/`](fpga/
 
 ---
 
+## What's new in v1.8
+
+### 🐞 Metal Gear 2 — Solid Snake glitch FIXED (the v1.7.1 known limitation)
+The graphics glitch when gameplay starts in **Metal Gear 2: Solid Snake** — the loading
+screen not clearing and the stage drawing on top of it — is **fixed**.
+
+**Root cause:** the boot menu highlights the selected entry using the VDP **blink register
+(R#13)**. On the V9938/V9958, R#13 *also* drives the blink **page-flip** feature, and the
+menu's value (steady blink) **forces display page 0 permanently**, ignoring the page
+register (R#2). That value leaked into the launched game. MG2 performs its loading→stage
+transition by **flipping the display page (0→1)**, so with page 0 forced the flip did
+nothing and the loading screen stayed on screen. Launching the same ROM from MSX-DOS /
+SofaRun was clean because **DOS leaves R#13 = 0** — which is exactly why one path worked
+and the other didn't.
+
+**Fix:** the launcher now resets **R#13/R#12 to 0** before calling the cartridge INIT
+(the clean state the BIOS provides), and issues a VDP command **STOP (R#46 = 0)** to clear
+any command-engine residue left by the boot splash. This also fixes **any page-flipping
+game** launched from the boot menu.
+
+* **Menu-only fix** — the FPGA bitstream is unchanged from v1.7.2; only the BIOS pack
+  needs re-flashing.
+
 ## What's new in v1.2
 * Rebuilt on the **goauld standalone core** (cleaner base) while keeping the standalone / USB / WiFi design.
 * **Authentic MSX speed**: added the per-M1 opcode-fetch wait-state that a real MSX board provides, so the CPU runs at ~100% (≈3.58 MHz effective, measured 101%) instead of ~116%. Toggleable via `` `define ENABLE_M1_WAIT `` in `fpga/top.v`.
@@ -64,12 +87,11 @@ enchufarlo al header `m0s`. Firmware y guía completa en **[`fpga/bl616/`](fpga/
 * **Cartridge SRAM (ASCII8/16)**, **MSX Barcelona boot splash**, and a VRAM-refresh
   fix that removes a stray line of garbage in the Space Manbow intro.
 
-> ⚠️ **Known limitation:** **Metal Gear 2 — Solid Snake** boots and is playable, but
-> shows a graphics glitch when gameplay starts (the loading screen does not fully
-> clear, mixing with the game). This is a VDP-state issue specific to how the boot
-> menu launches the ROM; launching the same game from SofaRun (MSX-DOS) is clean.
-> Under investigation. Other Konami SCC games (Space Manbow, Maze of Galious, ...)
-> are unaffected.
+> ✅ **Resolved in v1.8:** the **Metal Gear 2 — Solid Snake** gameplay-start glitch
+> (the loading screen not fully clearing, mixing with the game) is fixed — see the
+> v1.8 notes above. Root cause was the menu's VDP blink register (R#13) leaking into
+> the launched game and forcing display page 0. Other Konami SCC games (Space Manbow,
+> Maze of Galious, ...) were unaffected.
 
 ## What's new in v1.7
 
