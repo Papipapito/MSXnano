@@ -288,7 +288,7 @@ Slot map has been updated to improve compatibility without requiring changes.
 The slot layout is fixed by design (megaram in slot 2, SD in 3-2); the per-slot selectors were removed in v1.7.
 
 ## Megaram + Sofarun
-Megaram is detected automatically by sofarun using default settings. When using other software you may need to indicate location, Slot 3-3 by default.
+Megaram is detected automatically by SofaRun with its default settings. With other software you may need to set the megaram location manually — it lives in **slot 2** (the OCM relocates it there at boot).
 
 ## Known issues
 * Tape games fail: use poke -1,0
