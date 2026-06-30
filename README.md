@@ -1,8 +1,8 @@
+# MSXnano — MSX2+ FPGA Core for Tang Nano 20K
 
+**MSXnano** is an open-source MSX2+ FPGA implementation for the Tang Nano 20K (Gowin GW2AR-18). It runs a complete MSX2+ system — Z80 CPU, V9958 VDP with HDMI output, SCC/OPLL sound, SD card with Nextor, and optional WiFi — entirely on the FPGA, with no original MSX hardware required. Tang Nano 60K and 138K support in progress.
 
-
-# MSXnano
-MSX2+ core for the Tang Nano 20k (60k and 138k soon)
+> 📖 Project page, install guides and community: **[msx.barcelona](https://msx.barcelona)**
 
 * Z80
 * V9958 with hdmi output
@@ -388,3 +388,11 @@ This project is based on the work of **jabadiagm** ([MSXgoauldSD_tn20k](https://
 It is a standalone FPGA implementation that does not rely on the original physical MSX hardware, so all hardware-related files (PCB, MSX interface, schematics) have been removed.
 
 **Claude (Anthropic)** collaborated on this project.
+
+---
+
+## Community & links
+
+- 🌐 Project page & guides: [msx.barcelona](https://msx.barcelona)
+- 🐙 Other MSX FPGA projects: [github.com/Papipapito](https://github.com/Papipapito)
+- 🗣️ Barcelona MSX community: [AAMSX](https://www.aamsx.com)
