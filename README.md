@@ -4,10 +4,14 @@
 
 > 📖 Project page, install guides and community: **[msx.barcelona](https://msx.barcelona)**
 
+## Features
+
+MSXnano implements a complete MSX2+ retro-computing machine on the Tang Nano 20K FPGA — Z80 CPU, V9958 VDP and SCC/OPLL sound in real hardware — running original MSX2+ software with no PC and no software emulator:
+
 * Z80
 * V9958 with hdmi output
 * MSX2+ BIOS
-* SD Card support + Nextor 2.1
+* SD Card support + Nextor 2.1.4
 * 4MB mapper
 * 2MB megaram SCC
 * RTC
@@ -20,23 +24,24 @@
 
 ---
 
-## ⚠️ EL TECLADO NO FUNCIONA EN TANG NANO 20K NUEVOS (2024+) — LEER ESTO
+## ⚠️ Keyboard on new Tang Nano 20K boards (2024+, marked `3921`)
 
-Desde **~febrero de 2024**, Sipeed fabrica los Tang Nano 20K (marca **`3921`** en la
-placa) con el **secure-boot del BL616 en otro estado**. En muchas de estas placas el
-**BL616 de a bordo no puede ejecutar el firmware del companion**, así que **el teclado
-USB no funciona** — aunque la imagen por HDMI y el menú **sí** funcionen (eso es la
-FPGA, no el BL616). **No es un fallo del MSXnano**, es un cambio de hardware de Sipeed.
+On Tang Nano 20K boards manufactured since **~February 2024** (marked **`3921`** on the
+board), the **onboard BL616 secure-boot is in a different state** and often **cannot run
+the FPGA-Companion firmware**, so the **USB keyboard does not work** — even though HDMI
+video and the boot menu **do** (that is the FPGA, not the BL616). This is a **Sipeed
+hardware change, not an MSXnano bug**.
 
-**Test rápido:** flashea el firmware onboard ([`fpga/bl616/flash_nano20k.ini`](fpga/bl616/));
-si tras un power-cycle el teclado va → tu placa es compatible. Si **no** va → necesitas
-un **M0S Dock externo** (módulo BL616 aparte): el core conmuta a él automáticamente al
-enchufarlo al header `m0s`. Firmware y guía completa en **[`fpga/bl616/`](fpga/bl616/)**.
+**Quick test:** flash the onboard firmware ([`fpga/bl616/flash_nano20k.ini`](fpga/bl616/));
+if the keyboard works after a power-cycle, your board is compatible. If it does **not**,
+you need an **external M0S Dock** (a separate BL616 module): the core switches to it
+automatically when you plug it into the `m0s` header. Firmware and full guide in
+**[`fpga/bl616/`](fpga/bl616/)**.
 
-| Tu placa | BL616 de a bordo | Solución |
+| Your board | Onboard BL616 | Solution |
 |---|---|---|
-| Antigua (pre-2024) | Suele funcionar | Firmware onboard `fpga/bl616/flash_nano20k.ini` |
-| Nueva (`3921`, 2024+) | A menudo **NO** | **M0S Dock externo** (`fpga/bl616/flash_m0sdock_cfg.ini`) |
+| Old (pre-2024) | Usually works | Onboard firmware `fpga/bl616/flash_nano20k.ini` |
+| New (`3921`, 2024+) | Often **does not** | **External M0S Dock** (`fpga/bl616/flash_m0sdock_cfg.ini`) |
 
 ---
 
@@ -75,6 +80,9 @@ joystick/keypad; for ColecoVision, place its BIOS (`COLECO.ROM`) on the SD card.
 * **Flashing v1.8:** re-flash **both** the bitstream (`project.fs`) and the BIOS pack
   (`goauld_rom_int.bin`). Coming from v1.7.2 you only need the pack for the MG2 fix, but
   the bitstream is what enables ColecoVision/SG-1000.
+
+<details>
+<summary><strong>Older release notes — v1.7.1, v1.7, v1.6</strong> (click to expand)</summary>
 
 ## What's new in v1.7.1
 
@@ -135,7 +143,7 @@ fixed by design (megaram in slot 2, SD in 3-2) and the saved values are preserve
 ### 🗂️ Boot menu: SD file browser
 The boot menu is now a full SD file browser (File-Hunter style) that starts before the OS:
 
-![SD browser](/pics/menu_browser.png)
+![MSXnano SD-card file browser boot menu on the Tang Nano 20K, listing ROM and DSK files](/pics/menu_browser.png)
 
 * **Launch `.ROM` games** straight into the megaram: mapper auto-detection (code scan)
   plus GoodMSX filename tags (`[KonamiSCC]`, `[ASCII8]`, `[ASCII16]`, ...), progress bar
@@ -154,7 +162,7 @@ The boot menu is now a full SD file browser (File-Hunter style) that starts befo
 Cleaned up and extended — the always-required goauld toggles (mapper/megaram/SD) are
 now forced on and removed from the UI:
 
-![Settings](/pics/menu_settings.png)
+![MSXnano settings menu — Second SCC, scanlines, stereo sound and 16:9 aspect options](/pics/menu_settings.png)
 
 | Option | What it does |
 |--------|--------------|
@@ -162,7 +170,7 @@ now forced on and removed from the UI:
 | **Scanlines** | CRT-style scanlines on the HDMI output |
 | **Compatible Mode** | Extra wait-states for picky software |
 | **Stereo Sound** | HDMI stereo: PSG1+SCC1+OPLL left / PSG2+SCC2+OPLL right (off = mono on both) |
-| **Pantalla 16:9** | HDMI AVI InfoFrame aspect signalling: 4:3 (off) or 16:9 (on). The TV decides pillarbox vs stretch |
+| **16:9 Screen** | HDMI AVI InfoFrame aspect signalling: 4:3 (off) or 16:9 (on). The TV decides pillarbox vs stretch |
 | Slots | Mapper / MegaRam / SD slot selection (removed in v1.7 — fixed layout) |
 
 
@@ -190,6 +198,8 @@ https://github.com/user-attachments/assets/5fb49364-ebc3-4557-8cf1-1f48a0fafb3f
 * Z80-level emulation test harness for the menu's FAT code
   (`tools/scctest/opcheck/fat32_emu_test.py`).
 
+</details>
+
 ---
 
 ## 🔌 Connection diagram
@@ -216,7 +226,7 @@ https://github.com/user-attachments/assets/5fb49364-ebc3-4557-8cf1-1f48a0fafb3f
 
 ---
 
-### 💾 What to flash and with what tool
+## 💾 What to flash and with what tool
 
 | Step | File | Address | Tool | Notes |
 |------|------|---------|------|-------|
@@ -224,7 +234,7 @@ https://github.com/user-attachments/assets/5fb49364-ebc3-4557-8cf1-1f48a0fafb3f
 | 2 |  `flash_nano20k.ini` | (BL616) | [BLFlashCube](https://dev.bouffalolab.com/download) | Hold UPDATE → plug USB-C → release |
 | 2a | `bl616_fpga_partner_nano20k.bin` | `0x000000` (BL616) | [BLFlashCube](https://dev.bouffalolab.com/download) | Into INI File |
 | 2b | `fpga_companion_nano20k.bin` | `0x040000` (BL616) | BLFlashCube + `flash_nano20k.ini` | Into Ini File |
-| 3 | `goauld_rom_int.bin` (BIOS pack) | `0x200000` | Gowin Programmer | *exFlash C Bin Erase, Program thru GAO-Bridge*. Bundles MSX2+ BIOS + sub-ROM + Nextor 2.1 + **WiFi ROM** + config. Build locally (copyright) |
+| 3 | `goauld_rom_int.bin` (BIOS pack) | `0x200000` | Gowin Programmer | *exFlash C Bin Erase, Program thru GAO-Bridge*. Bundles MSX2+ BIOS + sub-ROM + Nextor 2.1.4 + **WiFi ROM** + config. Build locally (copyright) |
 | 4 | ESP-01S UNAPI firmware (OCM) | — | esptool / Arduino IDE via CH340 adapter | *(WiFi only — see below)* |
 
 > **File 1 (`msxnano.fs`):** download from [releases](https://github.com/Papipapito/MSXnano/releases)  
@@ -273,19 +283,19 @@ project (stock nano did not map them).
 
 Slot map has been updated to improve compatibility without requiring changes.
 
-![Slot map](/pics/mapa_slots4.png)
+![MSXnano MSX2+ slot map / memory layout for the Tang Nano 20K FPGA core](/pics/mapa_slots4.png)
 
-Mapper and megaram can be relocated to slots 1 or 2 using config menu.
+The slot layout is fixed by design (megaram in slot 2, SD in 3-2); the per-slot selectors were removed in v1.7.
 
 ## Megaram + Sofarun
 Megaram is detected automatically by sofarun using default settings. When using other software you may need to indicate location, Slot 3-3 by default.
 
 ## Known issues
 * Tape games fail: use poke -1,0
-* **Metal Gear 2 — Solid Snake**: boots and is playable, but the in-game screen
-  glitches when gameplay starts (loading screen doesn't fully clear). VDP-state issue
-  tied to the menu launcher; launching from SofaRun (MSX-DOS) is clean. Under
-  investigation.
+* **Metal Gear 2 — Solid Snake**: the gameplay-start glitch (loading screen not fully
+  clearing) is **fixed in v1.8** — the boot menu's VDP blink register (R#13) was forcing
+  display page 0 and leaking into the launched game; the launcher now resets R#13/R#12
+  before the cartridge INIT. Re-flash the v1.8 BIOS pack to get the fix.
 
 ## Flashing
 
@@ -330,7 +340,7 @@ Player 1 = first XInput device enumerated; Player 2 = second device (requires US
 
 This standalone core loads the MSX2+ BIOS from external SPI flash (it is **not** embedded in the bitstream), so a second flash step is required. Flash the BIOS pack `goauld_rom_int.bin` (international; or `goauld_rom_japan.bin`) at address `0x200000` with Gowin Programmer, Operation = *"exFlash C Bin Erase, Program thru GAO-Bridge"*.
 
-The pack is a single 512 KB image that already bundles **everything**: MSX2+ BIOS + sub-ROM + logo/FM menu + **Nextor 2.1** disk ROM + **WiFi UNAPI ROM (esp8266e)** + config. There is no separate Nextor or WiFi ROM to flash.
+The pack is a single 512 KB image that already bundles **everything**: MSX2+ BIOS + sub-ROM + logo/FM menu + **Nextor 2.1.4** disk ROM + **WiFi UNAPI ROM (esp8266e)** + config. There is no separate Nextor or WiFi ROM to flash.
 
 > The pack contains copyrighted MSX system ROMs, so it is **not** included in this repository. Build it yourself from your own ROM dumps with `fpga/src/rom/build.bat`.
 
