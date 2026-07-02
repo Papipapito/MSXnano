@@ -56,6 +56,7 @@ main_menu_entry:
 	djnz .wipe_stke
 	xor  a
 	ld   (DSK_PEND), a				; sin .dsk pendiente: el 2o pase NO debe reescribir
+	ld   (FH_MODE), a				; File-Hunter off (en frio la RAM es basura)
 									; el registro NEXTOR (en frio #C0DD es basura y
 									; emulaba un disco inexistente -> caia a BASIC)
 	; pantalla de logo (slot 0-3): si el pack la trae (magic 'L'), mostrarla
@@ -460,6 +461,10 @@ sd_not_present:
 	jp   z, main_action_unapi_test
 	cp   #75						; 'u'
 	jp   z, main_action_unapi_test
+	cp   #46						; 'F' -> File-Hunter (buscar y listar online)
+	jp   z, fh_browse
+	cp   #66						; 'f'
+	jp   z, fh_browse
 	jr   .snp_key
 
 ; =====================================================================
@@ -2010,6 +2015,11 @@ browse:
 	call draw_browser
 .br_key:
 	call browse_getkey				; A = key code
+	ld   c, a						; modo File-Hunter: fh_key_filter (CALL) se come
+	ld   a, (FH_MODE)				; las teclas SD/lanzado (devuelve A=0 -> cae al
+	or   a							; final del dispatch = repetir bucle) o salta a
+	ld   a, c						; la accion FH descartando el retorno; el resto
+	call nz, fh_key_filter			; (cursores, '/', H) sigue el dispatch normal
 	cp   #1E						; cursor up
 	jp   z, .br_up
 	cp   #1F						; cursor down
@@ -2038,6 +2048,10 @@ browse:
 	jp   z, main_action_unapi_test
 	cp   #75						; 'u'
 	jp   z, main_action_unapi_test
+	cp   #46						; 'F' -> File-Hunter (buscar y listar online)
+	jp   z, fh_browse
+	cp   #66						; 'f'
+	jp   z, fh_browse
 	cp   #48						; 'H' -> help overlay
 	jp   z, .br_help
 	cp   #68						; 'h'
@@ -2056,7 +2070,7 @@ browse:
 	jp   z, .br_fall
 	cp   #1B						; ESC -> arrancar sistema (boot the OS)
 	jp   z, boot_system
-	jr   .br_key
+	jp   .br_key					; (jp: el hook FH dejo .br_key fuera de rango jr)
 .br_help:
 	call help_screen
 	jp   .br_redraw
@@ -5186,6 +5200,684 @@ fh_m_dnserr:	.db "error ",0
 fh_m_ok:	.db 13,10,10,"TEST OK - UNAPI operativo en el menu",0
 fh_m_key:	.db 13,10,10,"Pulsa una tecla para volver",0
 
+; --- FASE 1 FILE-HUNTER: buscar y listar online (tecla F) --------------------
+; Pide una busqueda (>=2 chars), consulta la API index4 de file-hunter.com por
+; HTTP sobre UNAPI y vuelca los resultados en ENT_ARRAY con el MISMO formato
+; que el scan de la SD (type+cluster+size+nombre) para reutilizar el navegador
+; completo (scroll, marquee, busqueda '/'). En cluster se guarda el INDICE del
+; item dentro de esta query (la fase 2 descargara con download=N). FH_MODE=1
+; hace que browse_key_loop desvie a fh_key_filter las teclas que tocan la SD o
+; lanzan; ESC/BS salen re-escaneando la SD (el fetch machaca ENT_ARRAY).
+; Red: MISMAS salvaguardas validadas en HW que la fase 0 (SP<#F363, backups
+; HIMEM/H.TIMI, desinstalacion SIEMPRE), aqui como subrutinas fh_net_begin/end
+; (guardan su direccion de retorno en FH_RETTMP porque cambian de stack).
+; Request y RX reutilizan SD_BUF (512B): durante FH no hay actividad SD.
+; API: registros de 7B (u32 ptr, u16 KB, u8 load) + terminador u32 0 + ASCIIZs
+; en orden (los punteros relocados por base no hacen falta). Nombres <=73 en
+; origen; se truncan a NAME_MAX (70) + NUL, como hace copy_name en el scan.
+
+FH_MAXENT	equ	115				; cap = capacidad de ENT_ARRAY (115 registros)
+
+fh_browse:
+	; ---- prompt de busqueda (fila 0, como .br_search) ----
+	xor  a
+	ld   (FH_MODE), a				; durante el prompt aun no hay lista FH
+	ld   hl, #0100
+	call POSIT
+	ld   hl, fh1_prompt
+	call ver_puts
+	ld   hl, FH_QUERY
+	ld   b, 0
+.f1_key:
+	push hl
+	push bc
+	call browse_getkey
+	pop  bc
+	pop  hl
+	cp   #0D
+	jr   z, .f1_go
+	cp   #1B
+	jp   z, main_menu_restart		; cancelar
+	cp   #08
+	jr   z, .f1_del
+	cp   ' '
+	jr   c, .f1_key
+	cp   #7F
+	jr   nc, .f1_key
+	ld   c, a
+	ld   a, b
+	cp   20
+	jr   nc, .f1_key				; buffer lleno
+	ld   a, c
+	ld   (hl), a
+	inc  hl
+	inc  b
+	call CHPUT						; eco
+	jr   .f1_key
+.f1_del:
+	ld   a, b
+	or   a
+	jr   z, .f1_key
+	dec  hl
+	dec  b
+	ld   a, #08
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
+	ld   a, #08
+	call CHPUT
+	jr   .f1_key
+.f1_go:
+	ld   a, b
+	cp   2
+	jr   c, .f1_key					; minimo 2 chars (evita listas gigantes)
+	ld   (hl), 0
+	ld   hl, fh1_m_net				; "  Conectando..."
+	call ver_puts
+
+	; ---- sesion de red (salvaguardas fase 0) ----
+	call fh_net_begin				; CF=1 -> HL=mensaje (todo restaurado)
+	jp   c, fh_neterr
+	ld   c, 20						; red abierta? ~10 s de reintentos
+.f1_net:
+	push bc
+	ld   a, 3						; TCPIP_NET_STATE -> B=2 abierta
+	call fh_unapi
+	ld   a, b
+	pop  bc
+	cp   2
+	jr   z, .f1_dns
+	push bc
+	ld   b, 30
+.f1_nw:
+	halt
+	djnz .f1_nw
+	pop  bc
+	dec  c
+	jr   nz, .f1_net
+	ld   hl, fh1_e_red
+	jp   fh_neterr_end
+.f1_dns:
+	ld   hl, fh_host				; "api.file-hunter.com" (fase 0)
+	ld   b, 0
+	ld   a, 6						; TCPIP_DNS_Q
+	call fh_unapi
+	or   a
+	ld   hl, fh1_e_dns
+	jp   nz, fh_neterr_end
+	ld   a, 40
+	ld   (FH_TRIES), a
+.f1_dp:
+	ld   b, 15
+.f1_dw:
+	halt
+	djnz .f1_dw
+	ld   b, 1						; limpiar resultado al leer
+	ld   a, 7						; TCPIP_DNS_S -> B=2, IP en L.H.E.D
+	call fh_unapi
+	or   a
+	ld   hl, fh1_e_dns
+	jp   nz, fh_neterr_end
+	ld   a, b
+	cp   2
+	jr   z, .f1_dok
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jr   nz, .f1_dp
+	ld   hl, fh1_e_dns
+	jp   fh_neterr_end
+.f1_dok:
+	ld   a, l
+	ld   (FH_TCPP+0), a				; IP directa al bloque de params TCP
+	ld   a, h
+	ld   (FH_TCPP+1), a
+	ld   a, e
+	ld   (FH_TCPP+2), a
+	ld   a, d
+	ld   (FH_TCPP+3), a
+
+	; ---- TCP OPEN (bloque de 13 bytes en RAM) ----
+	ld   hl, FH_TCPP+4
+	ld   (hl), 80					; +4..5 puerto remoto
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), #FF					; +6..7 puerto local #FFFF
+	inc  hl
+	ld   (hl), #FF
+	inc  hl
+	ld   (hl), 0					; +8..9 timeout usuario 0
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), 0					; +10 flags = TCP normal
+	inc  hl
+	ld   (hl), 0					; +11..12 ptr hostname = 0
+	inc  hl
+	ld   (hl), 0
+	ld   hl, FH_TCPP
+	ld   a, 13						; TCPIP_TCP_OPEN (bloqueante)
+	call fh_unapi
+	or   a
+	ld   hl, fh1_e_con
+	jp   nz, fh_neterr_end
+	ld   a, b
+	ld   (FH_CONN), a
+
+	; ---- montar el GET en SD_BUF (sin SD durante FH) y enviar ----
+	ld   hl, fh1_req1
+	ld   de, SD_BUF
+	call fh_strcpy
+	ld   hl, FH_QUERY
+.f1_q:
+	ld   a, (hl)
+	inc  hl
+	or   a
+	jr   z, .f1_q2
+	cp   ' '
+	jr   nz, .f1_q1
+	ld   a, '+'						; espacios -> '+' (URL)
+.f1_q1:
+	ld   (de), a
+	inc  de
+	jr   .f1_q
+.f1_q2:
+	ld   hl, fh1_req2
+	call fh_strcpy
+	ex   de, hl						; HL = fin del request
+	ld   bc, SD_BUF
+	or   a
+	sbc  hl, bc
+	ld   (FH_REQLEN), hl
+.f1_send:
+	ld   a, (FH_CONN)
+	ld   b, a
+	ld   de, SD_BUF
+	ld   hl, (FH_REQLEN)
+	ld   c, 1						; PUSH
+	ld   a, 17						; TCPIP_TCP_SEND
+	call fh_unapi
+	or   a
+	jr   z, .f1_rx0
+	cp   13							; ERR_BUFFER -> reintentar
+	ld   hl, fh1_e_con
+	jp   nz, fh_neterr_end
+	halt
+	jr   .f1_send
+
+	; ---- recepcion + parser FSM ----
+.f1_rx0:
+	xor  a
+	ld   (FH_STATE), a				; 0 = cabeceras HTTP
+	ld   (FH_NREC), a
+	ld   (FH_SIDX), a
+	ld   (FH_ACCN), a
+	ld   (FH_CRLF), a
+	ld   (FH_HPOS), a
+	ld   (FH_FULL), a
+	ld   a, 120
+	ld   (FH_TRIES), a				; timeout de inactividad ~10 s
+.f1_rx:
+	ld   a, (FH_CONN)
+	ld   b, a
+	ld   de, SD_BUF
+	ld   hl, 512
+	ld   a, 18						; TCPIP_TCP_RCV -> BC = bytes
+	call fh_unapi
+	cp   11							; ERR_NO_CONN: servidor cerro y drenado
+	jr   z, .f1_fin
+	or   a
+	jr   nz, .f1_fin				; otros errores: terminar con lo recibido
+	ld   a, b
+	or   c
+	jr   nz, .f1_data
+	ld   b, 5						; sin datos: espera corta + timeout
+.f1_rw:
+	halt
+	djnz .f1_rw
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jr   nz, .f1_rx
+	jr   .f1_fin
+.f1_data:
+	ld   a, 120
+	ld   (FH_TRIES), a
+	ld   hl, SD_BUF
+.f1_dl:
+	ld   a, (hl)
+	inc  hl
+	push hl
+	push bc
+	call fh_rx_byte
+	pop  bc
+	pop  hl
+	ld   a, (FH_STATE)
+	cp   9							; DONE: todas las strings copiadas
+	jr   z, .f1_fin
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .f1_dl
+	jr   .f1_rx
+.f1_fin:
+	ld   a, (FH_CONN)
+	ld   b, a
+	ld   a, 15						; TCPIP_TCP_ABORT (corte seguro)
+	call fh_unapi
+	call fh_net_end					; desinstalar SIEMPRE
+	ld   a, (FH_SIDX)
+	or   a
+	jr   z, .f1_none
+	ld   (ENT_COUNT), a
+	xor  a
+	ld   (BR_SEL), a
+	ld   (BR_TOP), a
+	ld   a, 1
+	ld   (FH_MODE), a
+	jp   browse						; navegador sobre los resultados FH
+.f1_none:
+	ld   hl, fh1_m_none
+	jp   fh_neterr					; mensaje + tecla + volver
+
+; error de red DESPUES de abrir sesion: cerrar/desinstalar y avisar (HL=msg)
+fh_neterr_end:
+	push hl
+	call fh_net_end
+	pop  hl
+; error con sesion ya cerrada (HL=msg): fila 0 + tecla + volver al menu
+fh_neterr:
+	push hl
+	ld   hl, #0100
+	call POSIT
+	pop  hl
+	call ver_puts
+	call CHGET
+	jp   main_menu_restart
+
+; ---- procesa 1 byte recibido (A); estado en FH_STATE ----
+; 0=cabeceras (status 2xx + CRLFCRLF)  1=registros 7B  2=strings  8=absorber  9=DONE
+fh_rx_byte:
+	ld   c, a
+	ld   a, (FH_STATE)
+	or   a
+	jr   z, .fb_hdr
+	cp   1
+	jr   z, .fb_rec
+	cp   2
+	jp   z, .fb_str
+	ret								; 8/9: absorber
+.fb_hdr:
+	ld   a, (FH_HPOS)
+	inc  a
+	jr   z, .fb_h2					; saturado: no envolver el contador
+	ld   (FH_HPOS), a
+	cp   10
+	jr   nz, .fb_h2
+	ld   a, c						; byte 10 de "HTTP/1.1 2xx" = '2'
+	cp   '2'
+	jr   z, .fb_h2
+	ld   a, 8
+	ld   (FH_STATE), a				; status no-2xx: absorber (0 resultados)
+	ret
+.fb_h2:
+	ld   a, c						; deteccion CR LF CR LF
+	cp   13
+	jr   z, .fb_cr
+	cp   10
+	jr   z, .fb_lf
+	xor  a
+	ld   (FH_CRLF), a
+	ret
+.fb_cr:
+	ld   a, (FH_CRLF)
+	cp   2
+	jr   z, .fb_c3
+	ld   a, 1
+	ld   (FH_CRLF), a
+	ret
+.fb_c3:
+	ld   a, 3
+	ld   (FH_CRLF), a
+	ret
+.fb_lf:
+	ld   a, (FH_CRLF)
+	cp   1
+	jr   z, .fb_l2
+	cp   3
+	jr   z, .fb_body
+	xor  a
+	ld   (FH_CRLF), a
+	ret
+.fb_l2:
+	ld   a, 2
+	ld   (FH_CRLF), a
+	ret
+.fb_body:
+	ld   a, 1						; empieza el cuerpo: registros de 7B
+	ld   (FH_STATE), a
+	xor  a
+	ld   (FH_ACCN), a
+	ld   hl, ENT_ARRAY
+	ld   (FH_RPTR), hl
+	ret
+.fb_rec:
+	ld   a, (FH_ACCN)				; acumular en FH_ACC
+	ld   e, a
+	ld   d, 0
+	ld   hl, FH_ACC
+	add  hl, de
+	ld   (hl), c
+	inc  a
+	ld   (FH_ACCN), a
+	cp   4
+	jr   z, .fb_r4
+	cp   7
+	ret  nz
+	xor  a							; registro completo
+	ld   (FH_ACCN), a
+	ld   a, (FH_NREC)
+	cp   FH_MAXENT
+	jr   c, .fb_r7
+	ld   a, 1						; cap alcanzado: ignorar el resto de
+	ld   (FH_FULL), a				; registros (sus strings se cortan al
+	ret								; llegar FH_SIDX a FH_NREC)
+.fb_r7:
+	ld   hl, (FH_RPTR)				; ENT_ARRAY[n] (layout real de .scr_store):
+	ld   (hl), 1					;   +0 type = fichero
+	inc  hl
+	ld   a, (FH_NREC)
+	ld   (hl), a					;   +1..+4 cluster (4B) = indice del item
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   a, (FH_ACC+4)				;   +5..+8 size en BYTES = KB << 10
+	ld   e, a						;   e = KB lo, d = KB hi
+	ld   a, (FH_ACC+5)
+	ld   d, a
+	ld   (hl), 0					;   byte0 = 0
+	inc  hl
+	ld   a, e						;   byte1 = (lo<<2) & #FC
+	rlca
+	rlca
+	and  #FC
+	ld   (hl), a
+	inc  hl
+	ld   a, e						;   byte2 = (lo>>6) | ((hi<<2) & #FC)
+	rlca
+	rlca
+	and  #03
+	ld   c, a
+	ld   a, d
+	rlca
+	rlca
+	and  #FC
+	or   c
+	ld   (hl), a
+	inc  hl
+	ld   a, d						;   byte3 = hi >> 6
+	rlca
+	rlca
+	and  #03
+	ld   (hl), a
+	ld   hl, (FH_RPTR)
+	ld   de, ENT_SIZE
+	add  hl, de
+	ld   (FH_RPTR), hl
+	ld   a, (FH_NREC)
+	inc  a
+	ld   (FH_NREC), a
+	ret
+.fb_r4:
+	ld   hl, FH_ACC					; con 4 bytes: terminador u32 0?
+	ld   a, (hl)
+	inc  hl
+	or   (hl)
+	inc  hl
+	or   (hl)
+	inc  hl
+	or   (hl)
+	ret  nz							; no: seguir hasta 7
+	ld   a, (FH_NREC)
+	or   a
+	jr   nz, .fb_s0
+	ld   a, 9						; 0 registros -> DONE (sin resultados)
+	ld   (FH_STATE), a
+	ret
+.fb_s0:
+	ld   a, 2						; empiezan las strings (en orden)
+	ld   (FH_STATE), a
+	xor  a
+	ld   (FH_SIDX), a
+	ld   (FH_NPOS), a
+	ld   hl, ENT_ARRAY+9
+	ld   (FH_WPTR), hl
+	ret
+.fb_str:
+	ld   a, c
+	or   a
+	jr   z, .fb_se					; NUL: string cerrada
+	ld   a, (FH_NPOS)
+	cp   NAME_MAX
+	ret  nc							; truncar a NAME_MAX + NUL (como copy_name)
+	inc  a
+	ld   (FH_NPOS), a
+	ld   hl, (FH_WPTR)
+	ld   (hl), c
+	inc  hl
+	ld   (FH_WPTR), hl
+	ret
+.fb_se:
+	ld   hl, (FH_WPTR)
+	ld   (hl), 0
+	ld   a, (FH_SIDX)
+	inc  a
+	ld   (FH_SIDX), a
+	ld   c, a
+	ld   a, (FH_NREC)
+	cp   c
+	jr   z, .fb_done
+	ld   l, c						; destino siguiente: ENT_ARRAY + c*80 + 7
+	ld   h, 0
+	add  hl, hl						; *2
+	add  hl, hl						; *4
+	add  hl, hl						; *8
+	add  hl, hl						; *16
+	push hl
+	add  hl, hl						; *32
+	add  hl, hl						; *64
+	pop  de
+	add  hl, de						; *80
+	ld   de, ENT_ARRAY+9
+	add  hl, de
+	ld   (FH_WPTR), hl
+	xor  a
+	ld   (FH_NPOS), a
+	ret
+.fb_done:
+	ld   a, 9
+	ld   (FH_STATE), a
+	ret
+
+; ---- filtro de teclas en modo File-Hunter (llamado con CALL, A = tecla) ----
+; Acciones FH: descartan la direccion de retorno (pop) y saltan. Teclas que
+; tocan la SD o lanzan: devuelven A=0 (no casa con nada en el dispatch del
+; navegador -> cae al 'jr .br_key' final = bucle). Resto: A intacta.
+fh_key_filter:
+	cp   #0D						; RETURN -> item (fase 2: descarga)
+	jr   z, .kf_enter
+	cp   #1B						; ESC / BACKSPACE -> salir de FH
+	jr   z, .kf_exit
+	cp   #08
+	jr   z, .kf_exit
+	cp   #46						; F -> nueva busqueda
+	jr   z, .kf_new
+	cp   #66
+	jr   z, .kf_new
+	cp   #09						; TAB, filtros R/D/A y S/W/U: inertes
+	jr   z, .kf_eat
+	cp   #52
+	jr   z, .kf_eat
+	cp   #72
+	jr   z, .kf_eat
+	cp   #44
+	jr   z, .kf_eat
+	cp   #64
+	jr   z, .kf_eat
+	cp   #41
+	jr   z, .kf_eat
+	cp   #61
+	jr   z, .kf_eat
+	cp   #53
+	jr   z, .kf_eat
+	cp   #73
+	jr   z, .kf_eat
+	cp   #57
+	jr   z, .kf_eat
+	cp   #77
+	jr   z, .kf_eat
+	cp   #55
+	jr   z, .kf_eat
+	cp   #75
+	jr   z, .kf_eat
+	ret								; cursores, '/', H: dispatch normal
+.kf_eat:
+	xor  a							; A=0: no casa con nada -> repite el bucle
+	ret
+.kf_enter:
+	pop  af							; descartar retorno del CALL
+	jp   fh_enter_item
+.kf_exit:
+	pop  af
+	jp   fh_exit
+.kf_new:
+	pop  af
+	jp   fh_browse
+
+fh_enter_item:
+	ld   hl, #0100
+	call POSIT
+	ld   hl, fh1_m_f2
+	call ver_puts
+	call CHGET
+	jp   browse						; redibujar (limpia la fila 0)
+
+fh_exit:
+	xor  a
+	ld   (FH_MODE), a
+	ld   (SD_READY), a				; ENT_ARRAY machacado: forzar re-scan SD
+	jp   main_menu_restart
+
+; ---- copia ASCIIZ HL->DE (el NUL no se copia; DE queda al final) ----
+fh_strcpy:
+	ld   a, (hl)
+	or   a
+	ret  z
+	ld   (de), a
+	inc  hl
+	inc  de
+	jr   fh_strcpy
+
+; ---- abre la sesion de red (salvaguardas fase 0, en subrutina) ----
+; Cambia de stack: guarda su retorno en FH_RETTMP. CF=0 ok (driver mapeado en
+; pag.1); CF=1 fallo con TODO restaurado y HL=mensaje.
+fh_net_begin:
+	pop  hl
+	ld   (FH_RETTMP), hl
+	di
+	ld   (FH_SAVE_SP), sp
+	ld   sp, #F300					; bajo el area que asigna el driver (#F363)
+	ld   hl, (FH_HIMEM)
+	ld   (FH_SAVE_HIMEM), hl
+	ld   hl, FH_HTIMI
+	ld   de, FH_SAVE_HTIMI
+	ld   bc, 5
+	ldir
+	ei
+	ld   a, (FH_HOKVLD)
+	bit  0, a
+	jr   z, .nb_no
+	ld   hl, fh_id
+	ld   de, FH_ARG
+	ld   bc, 7
+	ldir
+	xor  a
+	ld   b, a
+	ld   de, #2222
+	call FH_EXTBIO					; contar implementaciones
+	ld   a, b
+	or   a
+	jr   z, .nb_no
+	ld   a, 1
+	ld   de, #2222
+	call FH_EXTBIO					; datos: A=slot, HL=entry (asigna area!)
+	ld   (FH_UNAPI_SLT), a
+	ld   (FH_UNAPI_ADR), hl
+	di
+	ld   hl, #4000
+	call ENASLT						; pag.1 -> ROM del driver (A=slot)
+	ei
+	or   a							; CF=0
+	ld   hl, (FH_RETTMP)
+	jp   (hl)
+.nb_no:
+	di								; fallo: restaurar (inocuo si no llego a
+	ld   hl, FH_SAVE_HTIMI			; asignarse nada) y volver con CF=1
+	ld   de, FH_HTIMI
+	ld   bc, 5
+	ldir
+	ld   hl, (FH_SAVE_HIMEM)
+	ld   (FH_HIMEM), hl
+	xor  a
+	ld   (FH_SLTWRK_P), a
+	ld   (FH_SLTWRK_P+1), a
+	ld   sp, (FH_SAVE_SP)
+	ei
+	ld   hl, fh1_e_unapi
+	push hl
+	ld   hl, (FH_RETTMP)
+	ex   (sp), hl					; stack=retorno; HL=mensaje
+	scf
+	ret
+
+; ---- cierra la sesion: desinstala el area volatil del driver y restaura ----
+fh_net_end:
+	pop  hl
+	ld   (FH_RETTMP), hl
+	di
+	ld   a, #87						; pag.1 -> ROM del menu
+	ld   hl, #4000
+	call ENASLT
+	ld   hl, FH_SAVE_HTIMI			; H.TIMI original
+	ld   de, FH_HTIMI
+	ld   bc, 5
+	ldir
+	ld   hl, (FH_SAVE_HIMEM)		; HIMEM original
+	ld   (FH_HIMEM), hl
+	xor  a
+	ld   (FH_SLTWRK_P), a			; puntero del area en SLTWRK a 0
+	ld   (FH_SLTWRK_P+1), a
+	ld   sp, (FH_SAVE_SP)
+	ei
+	ld   hl, (FH_RETTMP)
+	jp   (hl)
+
+fh1_prompt:	.db "File-Hunter (ROM) Buscar: ",0
+fh1_m_net:	.db "  Conectando...",0
+fh1_m_none:	.db "FH: sin resultados. Pulsa una tecla",0
+fh1_m_f2:	.db "FH: la descarga llega en la fase 2. Pulsa una tecla",0
+fh1_e_unapi:	.db "FH: UNAPI no disponible. Pulsa una tecla",0
+fh1_e_red:	.db "FH: sin red (configurala con W). Pulsa una tecla",0
+fh1_e_dns:	.db "FH: fallo de DNS. Pulsa una tecla",0
+fh1_e_con:	.db "FH: fallo de conexion. Pulsa una tecla",0
+fh1_req1:	.db "GET /index4.php?base=1BA0&type=rom&msx=&char=",0
+fh1_req2:	.db " HTTP/1.1",13,10,"Host: api.file-hunter.com",13,10,"Connection: close",13,10,13,10,0
+
 ; ############## Variables
 
 	var_mapper: ds 1
@@ -5210,6 +5902,25 @@ ENDIF
 	FH_UNAPI_SLT:  ds 1
 	FH_UNAPI_ADR:  ds 2
 	FH_TRIES:      ds 1
+
+	; File-Hunter fase 1 (buscar/listar)
+	FH_MODE:    ds 1				; 1 = navegador mostrando resultados FH
+	FH_STATE:   ds 1				; FSM RX: 0 hdr / 1 rec / 2 str / 8 abs / 9 done
+	FH_CRLF:    ds 1
+	FH_HPOS:    ds 1
+	FH_ACC:     ds 7
+	FH_ACCN:    ds 1
+	FH_NREC:    ds 1
+	FH_SIDX:    ds 1
+	FH_NPOS:    ds 1
+	FH_FULL:    ds 1
+	FH_CONN:    ds 1
+	FH_QUERY:   ds 21
+	FH_TCPP:    ds 13
+	FH_REQLEN:  ds 2
+	FH_WPTR:    ds 2
+	FH_RPTR:    ds 2
+	FH_RETTMP:  ds 2
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
