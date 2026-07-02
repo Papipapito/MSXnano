@@ -552,8 +552,14 @@ always @(posedge clk_54m or negedge bus_reset_n) begin
 end
 assign keyboard_addr = ppi_port_c[3:0];
 
+    // v1.9: FPGA/bitstream version readable on I/O port 0x2F. The boot menu reads it and
+    // warns if you flashed mismatched .fs/.bin (e.g. a v1.8 bitstream + a v1.7 BIOS pack).
+    // Encoding 0x1X = version 1.X. Bump FPGA_VERSION each release together with the pack.
+    localparam [7:0] FPGA_VERSION = 8'h19;
+    wire ver_req_r = (bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0 && bus_addr[7:0] == 8'h2F);
     always @ (posedge clk_54m) begin
         cpu_din <=
+                ( ver_req_r == 1 ) ? FPGA_VERSION :
                 ( console_joy_r == 1 ) ? console_joy_data :
                 ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
                 `ifdef ENABLE_SOUND
@@ -584,6 +590,7 @@ assign keyboard_addr = ppi_port_c[3:0];
                      ( scc2x_rd_r == 1 ) ? scc2x_dout:
                 `endif
                 `ifdef ENABLE_CONFIG
+                     ( config_req == 1 && pana_sel == 1 ) ? pana_dout :
                      ( config_req == 1 && config_ok == 1) ? config_dout :
                      ( config_req == 1 && config_ok == 0) ? swio_dout :
                 `endif
@@ -689,6 +696,9 @@ assign keyboard_addr = ppi_port_c[3:0];
                         state_wait <= WAIT_STATE2;
                     end
                 end
+                // NOTA v1.9: el wait sigue midiendo y liberando con los pulsos 3m6
+                // fijos TAMBIEN en turbo (release 3m6-alineado con el CPU en tren
+                // 5m4 swallowed). Validado en HW: juegos/DOS en turbo sin fallos.
                 WAIT_STATE2: begin
                     if ( clk_falling_3m6_54 == 1 ) begin
                         wait_io_ff <= 1;
@@ -747,6 +757,12 @@ assign keyboard_addr = ppi_port_c[3:0];
 
 `endif
 
+    // v1.9: CPU cadence wires (assigned in the turbo block below). Forward-declared
+    // so the M1-wait FSM tracks the ACTIVE cadence (3.6 normal / 5.37 turbo) instead
+    // of the fixed 3.6 pulses — otherwise the M1 stall would last 1.5 T at 5.37 MHz.
+    wire clk_enable_cpu_54;
+    wire clk_falling_cpu_54;
+
 `ifdef ENABLE_M1_WAIT
     // ===== STANDALONE M1 wait-state generator (frenado a ~100% MSX) =====
     // A real MSX inserts exactly 1 wait-state in every M1 (opcode-fetch) cycle.
@@ -757,8 +773,8 @@ assign keyboard_addr = ppi_port_c[3:0];
     // The earlier WAIT_n version released the pulse at the T1->T2 boundary, so it
     // was already high when the core sampled WAIT_n inside T2 -> no wait inserted
     // (bench stayed at 116%). Instead we mirror the proven wait_io stall: mask
-    // exactly one full CPU-clock period (one clk_enable_3m6_54 + one
-    // clk_falling_3m6_54) per M1 opcode fetch. Skipping one CPU-clock period
+    // exactly one full CPU-clock period (one clk_enable_cpu_54 + one
+    // clk_falling_cpu_54, i.e. the ACTIVE cadence) per M1 opcode fetch. Skipping one
     // removes exactly one T-state of progress = one wait-state, independent of
     // the core's internal T-state sampling. RFSH is T3/T4 with M1_n already high
     // (t80.vhd:1077), so refresh cycles are NOT slowed. clk_54m domain.
@@ -789,10 +805,12 @@ assign keyboard_addr = ppi_port_c[3:0];
                 // While stalled (wait_m1==0) the coincident enable/falling pulses
                 // are masked out of the CPU clock-enable. Track one of each, then
                 // release -> exactly one CPU-clock period (one T-state) inserted.
-                if (clk_enable_3m6_54)  m1_masked_en   <= 1'b1;
-                if (clk_falling_3m6_54) m1_masked_fall <= 1'b1;
-                if ((m1_masked_en  || clk_enable_3m6_54) &&
-                    (m1_masked_fall || clk_falling_3m6_54)) begin
+                // v1.9: tracks the MUXED cadence so the wait is exactly 1 T-state
+                // in both 3.6 (normal) and 5.37 (turbo) modes.
+                if (clk_enable_cpu_54)  m1_masked_en   <= 1'b1;
+                if (clk_falling_cpu_54) m1_masked_fall <= 1'b1;
+                if ((m1_masked_en  || clk_enable_cpu_54) &&
+                    (m1_masked_fall || clk_falling_cpu_54)) begin
                     wait_m1   <= 1'b1;   // release on next cycle
                     m1_active <= 1'b0;
                 end
@@ -803,9 +821,11 @@ assign keyboard_addr = ppi_port_c[3:0];
 
     // ===== Turbo mode toggle (F11) =====
     // Default turbo=0 -> M1 wait active -> ~100% real-MSX speed (3.58MHz behaviour).
-    // Press F11 (USB HID usage 0x44 = keyboard[68]) to toggle. turbo=1 bypasses the
-    // per-M1 wait -> full speed (~4.13MHz / 116%, "as before"). Toggle survives MSX
-    // soft-reset; powers on in real-MSX mode. LED5 shows the state.
+    // Press F11 (USB HID usage 0x44 = keyboard[68]) to toggle. v1.9: turbo=1 switches
+    // the CPU cadence to 5.37 MHz (WSX-style) while the per-M1 wait STAYS active, like
+    // the real T9769 does at 5.37 MHz -> benchmarks report ~5.37 (150%). (The v1.8
+    // "bypass M1 wait" turbo stacked on the 5.4 clock read as ~6.2 MHz on HW.)
+    // Toggle survives MSX soft-reset; powers on in real-MSX mode. LED5 shows the state.
     // NOTE: F12 is captured by the BL616 FPGA-Companion firmware (its OSD) and never
     // reaches the FPGA, so F11 (which does reach it, verified on HW) is used instead.
     reg turbo   = 1'b0;
@@ -818,7 +838,81 @@ assign keyboard_addr = ppi_port_c[3:0];
         f11_prev <= f11_s1;
         if (f11_s1 & ~f11_prev)     // rising edge = F11 pressed
             turbo <= ~turbo;        // toggle real-MSX <-> turbo
+        // v1.9: control software Panasonic — OUT &H41,n con el dispositivo 8
+        // seleccionado (decode pana41_wr junto al bloque config). bit0 activo-bajo:
+        // 0 = turbo 5.37 MHz, 1 = 3.58. Puesto tras el F11: si coinciden en el
+        // mismo ciclo gana el software (en el T9769 real el puerto es el unico control).
+        if (pana41_wr)
+            turbo <= ~cpu_dout[0];
+        // v1.9: "Boot Turbo" persistido (ajuste del menu, puerto #45). Siembra el
+        // turbo durante la ventana config_init del stream de flash: config_init y
+        // config_sig son dominio clk_54m (sin CDC) y config_sig[4] ya esta cargado
+        // cuando la ventana abre (se carga con last_bytes_cnt==2). Va el ULTIMO del
+        // bloque: domina sobre F11/puerto durante el boot (no disparan ahi de todos
+        // modos). Con S2 (rescate) arranca SIEMPRE a 3.58.
+        if (config_init)
+            turbo <= (s2 == 0 && config_sig[4] == 8'h54) ? 1'b1 : 1'b0;
     end
+
+    // ===== v1.9 Panasonic-WSX turbo: 5.37 MHz CPU cadence =====
+    // /20 divider on 108 MHz -> 5.40 MHz base cadence + "period swallow" trim ->
+    // EXACT WSX 5.369318 MHz (see below). The sound chips keep the /30
+    // clk_enable_3m6_27 (untouched). At turbo=0 the CPU uses the ORIGINAL
+    // clk_enable_3m6_54 verbatim (3.58 behaviour byte-identical). NOTE: NO
+    // ram_busy handshake yet, so if HW shows corruption during active display,
+    // add the handshake (dormant ENABLE_WAIT_ADAPTIVE, top.v ~707) in iter.2.
+    //
+    // Divisor /20 PURO (mitades de 10 ciclos, pares: fase constante vs clk_54m).
+    // NOTA: durante el desarrollo se probo un divisor fraccionario (17x10+1x11,
+    // 5.37 directo reformando el reloj) y se descarto; los "cuelgues" que se le
+    // atribuyeron resultaron ser un falso contacto del teclado, pero el esquema
+    // /20 puro + trago (abajo) es mas simple, conserva las fases 108->54
+    // validadas y da el 5.37 EXACTO. Validado en HW (juegos/DOS en turbo).
+    reg [4:0] div20_cnt;
+    reg       clk_5m4_internal;
+    always @(posedge clk_108m or negedge bus_reset_n) begin
+        if (~bus_reset_n) begin div20_cnt <= 0; clk_5m4_internal <= 0; end
+        else if (div20_cnt >= 5'd9) begin clk_5m4_internal <= ~clk_5m4_internal; div20_cnt <= 0; end
+        else div20_cnt <= div20_cnt + 1;
+    end
+    wire clk_enable_5m4_raw, clk_falling_5m4_raw;
+    reg  s5m4_a, s5m4_b;
+    always @(posedge clk_54m) begin s5m4_a <= clk_5m4_internal; s5m4_b <= s5m4_a; end
+    assign clk_enable_5m4_raw  = (s5m4_b == 0 && s5m4_a == 1);
+    assign clk_falling_5m4_raw = (s5m4_b == 1 && s5m4_a == 0);
+
+    // Ajuste EXACTO a 5.37: "trago" de periodo. De cada 176 periodos de 5.4 MHz
+    // se enmascara 1 completo (su enable Y su falling, en pareja) ->
+    // 5.4 MHz * 175/176 = 5 369 318 Hz = el turbo WSX exacto (315/88 * 1.5 MHz).
+    // Mismo mecanismo probado que los waits M1/IO (saltar pulsos de enable en el
+    // dominio 54), SIN tocar la forma del reloj 5m4 ni sus fases 108->54. El CPU
+    // solo percibe una pausa de 1 T-state cada ~33 us; la alternancia
+    // enable/falling se conserva (se traga la pareja completa).
+    reg [7:0] pana_per_cnt   = 0;
+    reg       pana_skip_pend = 0;   // enmascarando el falling del periodo tragado
+    wire      pana_skip_now  = (pana_per_cnt == 8'd175) && clk_enable_5m4_raw;
+    always @(posedge clk_54m) begin
+        if (~bus_reset_n) begin
+            pana_per_cnt   <= 0;
+            pana_skip_pend <= 0;
+        end else begin
+            if (clk_enable_5m4_raw) begin
+                if (pana_per_cnt == 8'd175) begin
+                    pana_per_cnt   <= 0;
+                    pana_skip_pend <= 1;    // el falling de ESTE periodo tambien se traga
+                end else
+                    pana_per_cnt <= pana_per_cnt + 1'b1;
+            end
+            if (pana_skip_pend && clk_falling_5m4_raw)
+                pana_skip_pend <= 0;
+        end
+    end
+    wire clk_enable_5m4_54  = clk_enable_5m4_raw  & ~pana_skip_now;
+    wire clk_falling_5m4_54 = clk_falling_5m4_raw & ~pana_skip_pend;
+    // CPU cadence mux: turbo picks 5.37 MHz, else the untouched 3.6 MHz path.
+    // (wires forward-declared above the M1-wait FSM)
+    assign clk_enable_cpu_54  = turbo ? clk_enable_5m4_54  : clk_enable_3m6_54;
+    assign clk_falling_cpu_54 = turbo ? clk_falling_5m4_54 : clk_falling_3m6_54;
 
     // ----- M1-wait fallback (divisor) -----
     // If on real HW the benchmark still does not land near 100% with the WAIT_n
@@ -843,16 +937,19 @@ assign keyboard_addr = ppi_port_c[3:0];
         .CLK_n     (clk_54m),
     `ifdef ENABLE_WAIT
       `ifdef ENABLE_M1_WAIT
-        .clk_enable (clk_enable_3m6_54 & wait_io & (wait_m1 | turbo)),
-        .clk_falling (clk_falling_3m6_54 & wait_io & (wait_m1 | turbo)),
+        // v1.9: M1 wait is NOT bypassed in turbo (real WSX keeps it at 5.37 MHz);
+        // the speed change comes only from the 3.6/5.37 cadence mux.
+        .clk_enable (clk_enable_cpu_54 & wait_io & wait_m1),
+        .clk_falling (clk_falling_cpu_54 & wait_io & wait_m1),
       `else
         .clk_enable (clk_enable_3m6_54 & wait_io ),
         .clk_falling (clk_falling_3m6_54 & wait_io ),
       `endif
     `else
       `ifdef ENABLE_M1_WAIT
-        .clk_enable (clk_enable_3m6_54 & (wait_m1 | turbo)),
-        .clk_falling (clk_falling_3m6_54 & (wait_m1 | turbo)),
+        // (inactive branch) v1.9 semantics: cadence mux + M1 wait always on
+        .clk_enable (clk_enable_cpu_54 & wait_m1),
+        .clk_falling (clk_falling_cpu_54 & wait_m1),
       `else
         .clk_enable (clk_enable_3m6_54),
         .clk_falling (clk_falling_3m6_54),
@@ -1891,6 +1988,10 @@ memory_ctrl mem1 (
     reg [7:0] config3_ff = 0;       // puerto #43: sram_cfg de la megaram (volatil)
     wire config4_req;
     reg [7:0] config4_ff = 0;       // puerto #44: modo consola (volatil; reset -> MSX)
+    wire config5_req;
+    reg config_turbo_boot_ff = 0;   // puerto #45 bit0: arrancar en turbo (PERSISTIDO en
+                                    // flash byte[4] del bloque config: 'T'=0x54 -> on;
+                                    // 0x00/0xFF legados -> off)
     wire config_reset_req;
     wire config_reset;
     wire config_ok;
@@ -1945,11 +2046,19 @@ memory_ctrl mem1 (
             if (s2 == 1) begin
                 config1_ff <= CONFIG1_DEFAULT;
                 config2_ff <= CONFIG2_DEFAULT;
+                config_turbo_boot_ff <= 0;      // rescate S2: boot turbo off
             end
             else begin
                 config1_ff <= config_sig[2];
                 config2_ff <= config_sig[3];
+                config_turbo_boot_ff <= (config_sig[4] == 8'h54) ? 1'b1 : 1'b0;
             end
+        end
+        // escritura del puerto #45 (menu): mismo bloque que la carga init para un
+        // unico driver; config5_req dura todo el ciclo OUT (re-latch inocuo) y no
+        // puede coincidir con config_init (el CPU arranca tras el stream de flash)
+        if (config5_req == 1 ) begin
+            config_turbo_boot_ff <= cpu_dout[0];
         end
         if (config_update == 1) begin
             config1_ff <= config1_temp_ff;
@@ -1975,6 +2084,7 @@ memory_ctrl mem1 (
     assign config2_req = (config_ok == 1 && bus_addr[7:0] == 8'h42 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config3_req = (config_ok == 1 && console_mode == 2'b00 && bus_addr[7:0] == 8'h43 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config4_req = (config_ok == 1 && console_mode == 2'b00 && bus_addr[7:0] == 8'h44 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
+    assign config5_req = (config_ok == 1 && bus_addr[7:0] == 8'h45 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     //modo consola (SG-1000 / ColecoVision): en consola se apagan los responders
     //MSX (memoria e I/O conflictiva); salida = reset fisico (config4 -> 0)
     //el cambio de mapa es atomico: la escritura a #44 solo ARMA el modo; se
@@ -1992,12 +2102,29 @@ memory_ctrl mem1 (
     assign config_enable_wait = config2_ff[3];
     assign config_enable_stereo = config2_ff[5];
     assign config_enable_16_9 = config2_ff[4];
+    // ===== v1.9 Panasonic switched-I/O device 8 (T9769 turbo, estilo WSX) =====
+    // Protocolo (ref. openMSX MSXMatsushita.cc): OUT &H40,8 selecciona el dispositivo;
+    // leer $40 devuelve ~8 = 247 (deteccion). $41 write: SOLO bit0, activo-bajo
+    // (0 = 5.37 MHz, 1 = 3.58; OUT &H41,154 enciende porque 154 es par). $41 read:
+    // bit0 = estado turbo (0=on), bit2 = 0 (turbo disponible), bit7 = 1 (sin
+    // firmware switch), resto 1 -> 0xFA turbo / 0xFB normal.
+    // config0_ff guarda ~ID, asi que "dispositivo 8 seleccionado" == 0xF7 y el
+    // readback de $40 ES config0_ff = 247. Convive con el config goauld (ID 0x48
+    // -> config_ok, excluyentes) y con el fallback swio_dout del rango $40-$4F.
+    // La escritura del turbo se latchea en el bloque F11 (clk_54m, un solo driver).
+    wire pana_sel  = (config0_ff == 8'hf7) ? 1 : 0;
+    wire pana41_wr = (pana_sel == 1 && console_mode == 2'b00 && bus_addr[7:0] == 8'h41 &&
+                      bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0) ? 1 : 0;
+    wire [7:0] pana_dout = ( bus_addr[3:0] == 4'h0 ) ? config0_ff :
+                           ( bus_addr[3:0] == 4'h1 ) ? ( turbo ? 8'hfa : 8'hfb ) : 8'hff;
+
     assign config_req = (console_mode == 2'b00 && bus_addr[7:4] == 4'h4 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
     assign config_dout = ( bus_addr[3:0] == 4'h0 ) ? config0_ff :
                          ( bus_addr[3:0] == 4'h1 ) ? config1_ff :
                          ( bus_addr[3:0] == 4'h2 ) ? config2_ff :
                          ( bus_addr[3:0] == 4'h3 ) ? config3_ff :
-                         ( bus_addr[3:0] == 4'h4 ) ? config4_ff : 8'hff;
+                         ( bus_addr[3:0] == 4'h4 ) ? config4_ff :
+                         ( bus_addr[3:0] == 4'h5 ) ? {7'b0, config_turbo_boot_ff} : 8'hff;
 
 
     always @ (posedge clk_54m) begin
@@ -2086,7 +2213,8 @@ memory_ctrl mem1 (
                              (flash_write_counter == 8'd01) ? 8'h42 :
                         `ifdef ENABLE_CONFIG
                              (flash_write_counter == 8'd02) ? config1_ff :
-                             (flash_write_counter == 8'd03) ? config2_ff : 8'hff;
+                             (flash_write_counter == 8'd03) ? config2_ff :
+                             (flash_write_counter == 8'd04) ? (config_turbo_boot_ff ? 8'h54 : 8'h00) : 8'hff;
                         `else
                              (flash_write_counter == 8'd02) ? CONFIG1_DEFAULT :
                              (flash_write_counter == 8'd03) ? CONFIG2_DEFAULT : 8'hff;

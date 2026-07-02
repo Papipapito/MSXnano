@@ -117,6 +117,13 @@ main_menu_entry:
 	ld   a, 2
 	ld   (FILTER), a				; default tab = ALL
 
+	; --- v1.9: warn if the bitstream (.fs) and BIOS pack (.bin) versions differ ---
+	; e.g. someone flashed a v1.8 .fs with a v1.7 .bin. Port 0x2F returns the FPGA
+	; version (0x1X); 0xFF = a pre-v1.9 bitstream with no version port. First boot only.
+	in   a, (#2F)
+	cp   #19						; this pack's version (v1.9)
+	call nz, version_warning
+
 ; Re-entry point used by the placeholders (M2/M3): re-init the screen and
 ; redraw WITHOUT re-capturing the BIOS context (which is only valid on the
 ; very first entry from the cartridge INIT).
@@ -128,6 +135,69 @@ main_menu_restart:
 	; every "return to menu" land here. ESC in the browser = boot the system,
 	; 'A' = settings. The old 4-option menu below is kept but no longer reached.
 	jp   main_action_sdrom
+
+; --- v1.9 version-mismatch warning (bitstream .fs vs BIOS pack .bin) ---------
+; A = FPGA version read from port 0x2F (mismatched). Shows a warning on SCREEN 1
+; and holds ~3s with a busy loop (no keyboard/IRQ needed, so it works even if the
+; USB keyboard is dead), then returns and the menu continues.
+version_warning:
+	ld   c, a						; C = FPGA/bitstream version
+	ld   a, 1
+	call #005F						; CHGMOD -> SCREEN 1 (clears)
+	ld   hl, ver_msg1
+	call ver_puts
+	ld   a, c
+	call ver_pnib					; print bitstream version "M.m"
+	ld   hl, ver_msg2
+	call ver_puts
+	ld   a, #19						; this pack's version
+	call ver_pnib
+	ld   hl, ver_msg3
+	call ver_puts
+	ld   de, 6						; hold ~3s
+.vw1:
+	ld   bc, 0
+.vw2:
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .vw2
+	dec  de
+	ld   a, d
+	or   e
+	jr   nz, .vw1
+	ret
+ver_puts:							; HL -> zero-terminated string, print via CHPUT
+	ld   a, (hl)
+	or   a
+	ret  z
+	call #00A2
+	inc  hl
+	jr   ver_puts
+ver_pnib:							; A = version byte -> "M.m" (hex nibbles)
+	push af
+	rrca
+	rrca
+	rrca
+	rrca
+	call ver_hex1
+	ld   a, '.'
+	call #00A2
+	pop  af
+	call ver_hex1
+	ret
+ver_hex1:
+	and  #0F
+	cp   10
+	jr   c, .vh
+	add  a, 7
+.vh:
+	add  a, '0'
+	call #00A2
+	ret
+ver_msg1:	.db 13,10,10,"  MSXnano: VERSION MISMATCH",13,10,10,"  Bitstream (.fs): ",0
+ver_msg2:	.db 13,10,"  BIOS pack (.bin): ",0
+ver_msg3:	.db 13,10,10,"  Flash the .fs and .bin from",13,10,"  the SAME MSXnano version.",0
 
 ; --- Option 1: continue the normal MSX boot ---------------------------------
 ; Behaves EXACTLY like the proven "Save & Exit" of the config menu (known to
@@ -3017,7 +3087,7 @@ draw_browser:
 	; --- header row 1: title + build (left), live clock (right) ---
 	ld   hl, #0101					; X=1, Y=1
 	call POSIT
-	ld   hl, hdrTitleStr			; "MSX Nano  v1.8"
+	ld   hl, hdrTitleStr			; "MSX Nano  v1.9"
 	call print_string
 	call draw_tabs					; row 2: filter tabs (active inverse)
 	ld   a, 22
@@ -4309,6 +4379,10 @@ ENDIF ;ENABLE_SDCARD
 	rrca							; bit4 -> bit0
 	ld   (var_aspct), a
 
+	in   a, (#45)					; #45 Bit 0: boot turbo (flash byte[4]='T')
+	and  #01
+	ld   (var_btturb), a
+
 	ei
 
 ; ############## Main loop
@@ -4341,6 +4415,11 @@ ONOFF_Y = ONOFF_Y + 2
 
 	ld   hl,#2b00 + ONOFF_Y			; Print Pantalla 16:9
 	ld   a,(var_aspct)
+	call print_on_off
+ONOFF_Y = ONOFF_Y + 2
+
+	ld   hl,#2b00 + ONOFF_Y			; Print Boot Turbo
+	ld   a,(var_btturb)
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 
@@ -4411,6 +4490,10 @@ selected_aspect:
 	ld   hl, var_aspct
 	jp   .selected_on_off
 
+selected_bootturbo:
+	ld   hl, var_btturb
+	jp   .selected_on_off
+
 selected_slot1Ghost:
 	ld   hl, var_ghtscc
 	jp   .selected_on_off
@@ -4478,6 +4561,11 @@ ENDIF ;ENABLE_MEGARAM
 
 	ld   c, #41
 	call set_settings
+
+	ld   a, (var_btturb)			; #45 Bit 0: arrancar en turbo (persistido)
+	ld   b, a						; ANTES del #42: la escritura de #42 (bit6)
+	ld   c, #45						; dispara la grabacion en flash y byte[4]
+	call set_settings				; se muestrea en ese momento
 
 	ld   b, #0
 IFDEF ENABLE_SDCARD
@@ -4589,7 +4677,7 @@ tagRomStr:
 tagDskStr:
 	.db "[DSK] ",0
 hdrTitleStr:
-	.db "MSX Nano  v1.8",0
+	.db "MSX Nano  v1.9",0
 tabRStr:
 	.db "[R]OM",0
 tabDStr:
@@ -4696,6 +4784,8 @@ stereoStr:
 	.db "Stereo Sound",0
 aspectStr:
 	.db "Pantalla 16:9",0
+bootTurboStr:
+	.db "Boot Turbo",0			; arrancar siempre a 5.37 MHz (flash byte[4]='T')
 saveExitStr:
 	.db "Save & Exit",0
 saveResetStr:
@@ -4762,16 +4852,25 @@ POS_Y = POS_Y + 2
 struct_Aspect:
 	.db 21, POS_Y+1
 	.dw aspectStr
-	.dw struct_Stereo, struct_SaveExit, struct_Aspect
+	.dw struct_Stereo, struct_BootTurbo, struct_Aspect
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_aspect
 POS_Y = POS_Y + 2
 
+struct_BootTurbo:
+	.db 21, POS_Y+1
+	.dw bootTurboStr
+	.dw struct_Aspect, struct_SaveExit, struct_BootTurbo
+	.dw #0800 + POS_Y*10 + 2
+	.db 4
+	.dw selected_bootturbo
+POS_Y = POS_Y + 2
+
 struct_SaveExit:
 	.db 21, POS_Y+1
 	.dw saveExitStr
-	.dw struct_Aspect, struct_SaveReset, struct_SaveExit
+	.dw struct_BootTurbo, struct_SaveReset, struct_SaveExit
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_saveExit
@@ -4805,6 +4904,7 @@ ENDIF
 	var_slowdv: ds 1
 	var_stereo: ds 1
 	var_aspct: ds 1
+	var_btturb: ds 1
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
