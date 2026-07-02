@@ -456,6 +456,10 @@ sd_not_present:
 	jp   z, main_action_wifi
 	cp   #77						; 'w'
 	jp   z, main_action_wifi
+	cp   #55						; 'U' -> test UNAPI (File-Hunter fase 0)
+	jp   z, main_action_unapi_test
+	cp   #75						; 'u'
+	jp   z, main_action_unapi_test
 	jr   .snp_key
 
 ; =====================================================================
@@ -2030,6 +2034,10 @@ browse:
 	jp   z, main_action_wifi
 	cp   #77						; 'w'
 	jp   z, main_action_wifi
+	cp   #55						; 'U' -> test UNAPI (File-Hunter fase 0)
+	jp   z, main_action_unapi_test
+	cp   #75						; 'u'
+	jp   z, main_action_unapi_test
 	cp   #48						; 'H' -> help overlay
 	jp   z, .br_help
 	cp   #68						; 'h'
@@ -4692,6 +4700,11 @@ helpTitleStr:
 ; El codigo debe quedar por debajo de #A000; cadenas y tablas viven a partir de
 ; #A010, dejando #A000-#A00F como hueco para el registro NEXTOR_EMU_DATA que
 ; escribe el lanzador de .dsk (y que el depack machaca en cada arranque).
+; GUARD anti-desborde: si el codigo previo pasa de #A000, el ds sale NEGATIVO
+; y el ensamblado FALLA (sin esto, el .org solapaba secciones EN SILENCIO y
+; corrompia el binario - descubierto al anadir la fase 0 de File-Hunter, cuyo
+; bloque vive ahora al FINAL de la seccion de datos, tras los structs).
+	ds   #A000-$
 	.org #A010
 help1Str:
 	.db "Arriba/Abajo          : mover (Izq/Der = pagina)",0
@@ -4889,6 +4902,290 @@ structs_end:
 	.db 0
 
 
+; --- FASE 0 FILE-HUNTER: test UNAPI desde el menu (tecla U) ------------------
+; Verifica en HW la cadena completa PRE-DOS: hook EXTBIO (instalado por el INIT
+; del ROM ESP, que corre antes que el menu por orden de slots) -> discovery
+; "TCP/IP" -> UNAPI_GET_INFO (nombre+version del driver) -> TCPIP_NET_STATE ->
+; DNS de api.file-hunter.com. Al terminar DESINSTALA la parte volatil que el
+; driver asigna en su PRIMERA llamada (30 bytes bajo HIMEM = #F363-#F380 + hook
+; H.TIMI): sin esa limpieza, el stack de boot (SP #F380) pisaria el area y el
+; backup de H.TIMI se ejecutaria corrupto -> crash. El hook EXTBIO se queda
+; (vive en ROM+SLTWRK): bajo DOS el driver re-asigna limpio bajo el HIMEM de
+; Nextor. Refs: spec MSX-UNAPI/TCP-IP UNAPI (Konamiman) + ESPUNAPI.asm (ducasp).
+FH_EXTBIO	equ	#FFCA			; hook ext-BIOS (RST30+slot+DO_EXTBIO del ESP)
+FH_HOKVLD	equ	#FB20			; bit0 = hook EXTBIO valido
+FH_ARG		equ	#F847			; buffer identificador para EXTBIO
+FH_HTIMI	equ	#FD9F			; hook H.TIMI (el driver lo engancha al asignar)
+FH_HIMEM	equ	#FC4A			; tope de RAM libre (el driver le resta 30)
+FH_SLTWRK_P	equ	#FD1E			; SLTWRK del slot 0-2: puntero al area del driver
+
+main_action_unapi_test:
+	call init_screen				; SCREEN 0 (como Ajustes)
+	ld   hl, fh_title
+	call ver_puts
+
+	; salvaguardas ANTES de la 1a llamada (que dispara la asignacion del driver)
+	di
+	ld   (FH_SAVE_SP), sp
+	ld   sp, #F300					; stack privado POR DEBAJO del area (#F363)
+	ld   hl, (FH_HIMEM)
+	ld   (FH_SAVE_HIMEM), hl
+	ld   hl, FH_HTIMI				; backup propio de H.TIMI (5 bytes)
+	ld   de, FH_SAVE_HTIMI
+	ld   bc, 5
+	ldir
+	ei
+
+	; 1) hook EXTBIO presente?
+	ld   a, (FH_HOKVLD)
+	bit  0, a
+	ld   hl, fh_m_noextb
+	jp   z, .fh_fail
+
+	; 2) discovery: cuantas implementaciones "TCP/IP"?
+	ld   hl, fh_id
+	ld   de, FH_ARG
+	ld   bc, 7
+	ldir
+	xor  a							; A=0: contar implementaciones
+	ld   b, a
+	ld   de, #2222
+	call FH_EXTBIO					; -> B = numero de implementaciones
+	ld   a, b
+	or   a
+	ld   hl, fh_m_noimpl
+	jp   z, .fh_fail
+
+	; 3) datos de la implementacion 1 (AQUI el driver asigna HIMEM+H.TIMI)
+	ld   a, 1
+	ld   de, #2222
+	call FH_EXTBIO					; -> A=slot, HL=entry (usar SIEMPRE estos)
+	ld   (FH_UNAPI_SLT), a
+	ld   (FH_UNAPI_ADR), hl
+
+	ld   hl, fh_m_impl
+	call ver_puts
+	ld   a, (FH_UNAPI_SLT)
+	call fh_hex8
+	ld   hl, fh_m_entry
+	call ver_puts
+	ld   a, (FH_UNAPI_ADR+1)
+	call fh_hex8
+	ld   a, (FH_UNAPI_ADR)
+	call fh_hex8
+
+	; 4) sesion de red: mapear el ROM del driver en pagina 1 + GET_INFO
+	di
+	ld   a, (FH_UNAPI_SLT)
+	ld   hl, #4000
+	call ENASLT
+	ei
+	ld   hl, fh_m_drv
+	call ver_puts
+	xor  a							; fn 0: UNAPI_GET_INFO
+	call fh_unapi					; -> HL=nombre (en pag.1), BC=version impl
+	push bc
+	call ver_puts					; nombre ASCIIZ del driver (ROM mapeado)
+	ld   a, ' '
+	call #00A2
+	pop  bc
+	ld   a, b						; version B.C en decimal
+	push bc
+	call fh_dec8
+	ld   a, '.'
+	call #00A2
+	pop  bc
+	ld   a, c
+	call fh_dec8
+
+	; 5) estado de red (fn 3), reintentos ~10 s (Wi-Fi On Period puede tardar)
+	ld   hl, fh_m_net
+	call ver_puts
+	ld   c, 20						; 20 intentos x 30 halts = ~10 s
+.fh_net_poll:
+	push bc
+	ld   a, 3						; TCPIP_NET_STATE -> B=estado (2=abierta)
+	call fh_unapi
+	ld   a, b
+	pop  bc
+	cp   2
+	jr   z, .fh_net_open
+	push bc
+	push af
+	ld   a, '.'
+	call #00A2
+	ld   b, 30
+.fh_net_wait:
+	halt
+	djnz .fh_net_wait
+	pop  af
+	pop  bc
+	dec  c
+	jr   nz, .fh_net_poll
+	push af							; sin red: estado y saltar DNS
+	ld   hl, fh_m_notopen
+	call ver_puts
+	pop  af
+	call fh_dec8
+	ld   a, ')'
+	call #00A2
+	jp   .fh_cleanup
+
+.fh_net_open:
+	ld   hl, fh_m_open
+	call ver_puts
+
+	; 6) DNS de api.file-hunter.com (fn 6 + poll fn 7)
+	ld   hl, fh_m_dns
+	call ver_puts
+	ld   hl, fh_host
+	ld   b, 0						; flags = 0 (resolver hostname)
+	ld   a, 6						; TCPIP_DNS_Q
+	call fh_unapi
+	or   a
+	jr   nz, .fh_dns_err
+	ld   a, 40						; 40 x 15 halts = ~10 s
+	ld   (FH_TRIES), a
+.fh_dns_poll:
+	ld   b, 15
+.fh_dns_wait:
+	halt
+	djnz .fh_dns_wait
+	ld   b, 1						; bit0: limpiar resultado al leerlo
+	ld   a, 7						; TCPIP_DNS_S
+	call fh_unapi					; -> A=err, B=1 en curso/2 resuelto
+	or   a
+	jr   nz, .fh_dns_err
+	ld   a, b
+	cp   2
+	jr   z, .fh_dns_done
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jr   nz, .fh_dns_poll
+	ld   a, 15						; agotado (15 = timeout del driver)
+.fh_dns_err:
+	push af
+	ld   hl, fh_m_dnserr
+	call ver_puts
+	pop  af
+	call fh_dec8
+	jr   .fh_cleanup
+
+.fh_dns_done:						; IP resuelta en L.H.E.D (orden del spec!)
+	push de
+	push hl
+	ld   a, l
+	call fh_dec8
+	ld   a, '.'
+	call #00A2
+	pop  hl
+	ld   a, h
+	call fh_dec8
+	ld   a, '.'
+	call #00A2
+	pop  de
+	push de
+	ld   a, e
+	call fh_dec8
+	ld   a, '.'
+	call #00A2
+	pop  de
+	ld   a, d
+	call fh_dec8
+	ld   hl, fh_m_ok
+	call ver_puts
+
+	; 7) limpieza OBLIGATORIA: pagina 1 al menu + desinstalar area del driver
+.fh_cleanup:
+	di
+	ld   a, #87						; pagina 1 -> ROM del menu (slot 3-1)
+	ld   hl, #4000
+	call ENASLT
+	ld   hl, FH_SAVE_HTIMI			; H.TIMI original de vuelta
+	ld   de, FH_HTIMI
+	ld   bc, 5
+	ldir
+	ld   hl, (FH_SAVE_HIMEM)		; HIMEM de vuelta (deshace el -30)
+	ld   (FH_HIMEM), hl
+	xor  a							; anular puntero del area en SLTWRK: el
+	ld   (FH_SLTWRK_P), a			; driver re-asignara limpio en el proximo
+	ld   (FH_SLTWRK_P+1), a			; uso (menu o DOS)
+	ld   sp, (FH_SAVE_SP)			; stack original del menu
+	ei
+	ld   hl, fh_m_key
+	call ver_puts
+	call CHGET
+	jp   main_menu_restart
+
+.fh_fail:							; HL = mensaje; sin llamadas UNAPI hechas,
+	call ver_puts					; la limpieza (valores identicos) es inocua
+	jr   .fh_cleanup
+
+; llama a la funcion UNAPI A (ROM del driver YA mapeado en pagina 1);
+; conserva todos los registros de entrada, incluida HL
+fh_unapi:
+	push hl
+	ld   hl, (FH_UNAPI_ADR)
+	ex   (sp), hl
+	ret								; = jp (entry)
+
+; imprime A en hexadecimal (2 digitos)
+fh_hex8:
+	push af
+	rrca
+	rrca
+	rrca
+	rrca
+	call ver_hex1
+	pop  af
+	jp   ver_hex1
+
+; imprime A en decimal (1-3 digitos, sin ceros a la izquierda); usa B,C,D,E
+fh_dec8:
+	ld   c, 0						; c=1 cuando ya hay un digito impreso
+	ld   b, 100
+	call .fd_dig
+	ld   b, 10
+	call .fd_dig
+	add  a, '0'						; unidades: siempre
+	jp   #00A2
+.fd_dig:
+	ld   d, '0'-1
+.fd_sub:
+	inc  d
+	sub  b
+	jr   nc, .fd_sub
+	add  a, b						; A = resto
+	ld   e, a
+	ld   a, d
+	cp   '0'
+	jr   nz, .fd_out				; digito != 0 -> imprimir
+	bit  0, c
+	jr   z, .fd_done				; cero a la izquierda -> omitir
+.fd_out:
+	call #00A2
+	ld   c, 1
+.fd_done:
+	ld   a, e
+	ret
+
+fh_title:	.db "MSXnano - Test UNAPI (File-Hunter fase 0)",13,10,10,0
+fh_id:		.db "TCP/IP",0
+fh_host:	.db "api.file-hunter.com",0
+fh_m_noextb:	.db "EXTBIO: NO instalado (ESP offline o",13,10,"desactivado en el setup WiFi)",0
+fh_m_noimpl:	.db "UNAPI TCP/IP: no encontrado",0
+fh_m_impl:	.db "UNAPI: slot #",0
+fh_m_entry:	.db "  entry #",0
+fh_m_drv:	.db 13,10,"Driver: ",0
+fh_m_net:	.db 13,10,"Red: ",0
+fh_m_open:	.db " ABIERTA",0
+fh_m_notopen:	.db " NO abierta (estado ",0
+fh_m_dns:	.db 13,10,"DNS api.file-hunter.com: ",0
+fh_m_dnserr:	.db "error ",0
+fh_m_ok:	.db 13,10,10,"TEST OK - UNAPI operativo en el menu",0
+fh_m_key:	.db 13,10,10,"Pulsa una tecla para volver",0
+
 ; ############## Variables
 
 	var_mapper: ds 1
@@ -4905,6 +5202,14 @@ ENDIF
 	var_stereo: ds 1
 	var_aspct: ds 1
 	var_btturb: ds 1
+
+	; File-Hunter fase 0 (test UNAPI)
+	FH_SAVE_SP:    ds 2
+	FH_SAVE_HIMEM: ds 2
+	FH_SAVE_HTIMI: ds 5
+	FH_UNAPI_SLT:  ds 1
+	FH_UNAPI_ADR:  ds 2
+	FH_TRIES:      ds 1
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
