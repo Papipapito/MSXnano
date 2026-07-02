@@ -5055,6 +5055,10 @@ main_action_unapi_test:
 
 	; 7) limpieza OBLIGATORIA: pagina 1 al menu + desinstalar area del driver
 .fh_cleanup:
+	ld   a, 20						; WIFIRELEASE ('h'): soltar la retencion de
+	out  (#06), a					; radio del WIFIHOLD de fh_dns_wake (si no se
+	ld   a, 'h'						; llego a mandar, un release suelto es inocuo:
+	out  (#07), a					; el propio INIT del driver lo hace igual)
 	di
 	ld   a, #87						; pagina 1 -> ROM del menu (slot 3-1)
 	ld   hl, #4000
@@ -5697,9 +5701,23 @@ fh_strcpy:
 ; ~6s si da error, con un punto de progreso cada ~3s.
 ; CF=0: IP resuelta y copiada a FH_TCPP+0..3. CF=1: agotado.
 fh_dns_wake:
+	; WIFIHOLD: el INIT del ESP suelta la conexion en el boot (WIFIRELEASE) y
+	; NADA de la UNAPI la despierta (visto en HW: ni el DNS_Q). El setup W si:
+	; manda CMD_WIFIHOLD ('H') por la UART al entrar (ESPUNAPI.asm
+	; ENTERING_ESPSETUP: CLEAR_UART + SEND_DATA). Replicamos ese par de OUTs
+	; (variante I/O: cmd=#06, tx=#07); el release ('h') va en el cierre de
+	; sesion (fh_net_end y la limpieza de la tecla U).
+	ld   a, 20						; CLEAR_UART
+	out  (#06), a
+	ld   a, 'H'						; CMD_WIFIHOLD_ESP: retener/encender la radio
+	out  (#07), a
+	ld   b, 12						; ~200ms de cortesia antes del primer DNS_Q
+.dw_settle:
+	halt
+	djnz .dw_settle
 	ld   a, 160						; 160 sondeos x ~200ms = ~32s
 	ld   (FH_TRIES), a
-	call .dw_q						; 1er DNS_Q (despierta/reconecta la radio)
+	call .dw_q						; 1er DNS_Q (la radio ya esta despertando)
 .dw_poll:
 	ld   b, 12
 .dw_w:
@@ -5814,6 +5832,10 @@ fh_net_begin:
 fh_net_end:
 	pop  hl
 	ld   (FH_RETTMP), hl
+	ld   a, 20						; CLEAR_UART + WIFIRELEASE ('h'): soltar la
+	out  (#06), a					; retencion de radio (simetrico del WIFIHOLD
+	ld   a, 'h'						; de fh_dns_wake; el ESP vuelve a su politica
+	out  (#07), a					; de Wi-Fi On Period)
 	di
 	ld   a, #87						; pag.1 -> ROM del menu
 	ld   hl, #4000
