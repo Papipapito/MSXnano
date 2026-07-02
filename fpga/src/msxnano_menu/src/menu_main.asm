@@ -5012,100 +5012,43 @@ main_action_unapi_test:
 	ld   a, c
 	call fh_dec8
 
-	; 5) estado de red (fn 3), reintentos ~10 s (Wi-Fi On Period puede tardar)
+	; 5) estado de red (1 lectura, INFORMATIVA): el gate real es el DNS con
+	; despertador - tras el WIFIRELEASE del boot la radio puede estar dormida
+	; y NET_STATE no abre nunca por si solo (bug visto en HW: U daba "sin red"
+	; hasta pasar por el setup W). Ver fh_dns_wake.
 	ld   hl, fh_m_net
 	call ver_puts
-	ld   c, 20						; 20 intentos x 30 halts = ~10 s
-.fh_net_poll:
-	push bc
 	ld   a, 3						; TCPIP_NET_STATE -> B=estado (2=abierta)
 	call fh_unapi
 	ld   a, b
-	pop  bc
-	cp   2
-	jr   z, .fh_net_open
-	push bc
-	push af
-	ld   a, '.'
-	call #00A2
-	ld   b, 30
-.fh_net_wait:
-	halt
-	djnz .fh_net_wait
-	pop  af
-	pop  bc
-	dec  c
-	jr   nz, .fh_net_poll
-	push af							; sin red: estado y saltar DNS
-	ld   hl, fh_m_notopen
-	call ver_puts
-	pop  af
 	call fh_dec8
-	ld   a, ')'
-	call #00A2
-	jp   .fh_cleanup
 
-.fh_net_open:
-	ld   hl, fh_m_open
-	call ver_puts
-
-	; 6) DNS de api.file-hunter.com (fn 6 + poll fn 7)
+	; 6) DNS de api.file-hunter.com con despertador de radio (~32s max)
 	ld   hl, fh_m_dns
 	call ver_puts
-	ld   hl, fh_host
-	ld   b, 0						; flags = 0 (resolver hostname)
-	ld   a, 6						; TCPIP_DNS_Q
-	call fh_unapi
-	or   a
-	jr   nz, .fh_dns_err
-	ld   a, 40						; 40 x 15 halts = ~10 s
-	ld   (FH_TRIES), a
-.fh_dns_poll:
-	ld   b, 15
-.fh_dns_wait:
-	halt
-	djnz .fh_dns_wait
-	ld   b, 1						; bit0: limpiar resultado al leerlo
-	ld   a, 7						; TCPIP_DNS_S
-	call fh_unapi					; -> A=err, B=1 en curso/2 resuelto
-	or   a
-	jr   nz, .fh_dns_err
-	ld   a, b
-	cp   2
-	jr   z, .fh_dns_done
-	ld   a, (FH_TRIES)
-	dec  a
-	ld   (FH_TRIES), a
-	jr   nz, .fh_dns_poll
-	ld   a, 15						; agotado (15 = timeout del driver)
-.fh_dns_err:
-	push af
+	call fh_dns_wake				; CF=1 agotado; IP en FH_TCPP+0..3
+	jr   nc, .fh_dns_done
 	ld   hl, fh_m_dnserr
 	call ver_puts
-	pop  af
+	ld   a, 15
 	call fh_dec8
-	jr   .fh_cleanup
-
-.fh_dns_done:						; IP resuelta en L.H.E.D (orden del spec!)
-	push de
-	push hl
-	ld   a, l
+	jp   .fh_cleanup
+.fh_dns_done:
+	ld   a, ' '
+	call #00A2
+	ld   a, (FH_TCPP+0)
 	call fh_dec8
 	ld   a, '.'
 	call #00A2
-	pop  hl
-	ld   a, h
+	ld   a, (FH_TCPP+1)
 	call fh_dec8
 	ld   a, '.'
 	call #00A2
-	pop  de
-	push de
-	ld   a, e
+	ld   a, (FH_TCPP+2)
 	call fh_dec8
 	ld   a, '.'
 	call #00A2
-	pop  de
-	ld   a, d
+	ld   a, (FH_TCPP+3)
 	call fh_dec8
 	ld   hl, fh_m_ok
 	call ver_puts
@@ -5278,64 +5221,11 @@ fh_browse:
 	; ---- sesion de red (salvaguardas fase 0) ----
 	call fh_net_begin				; CF=1 -> HL=mensaje (todo restaurado)
 	jp   c, fh_neterr
-	ld   c, 20						; red abierta? ~10 s de reintentos
-.f1_net:
-	push bc
-	ld   a, 3						; TCPIP_NET_STATE -> B=2 abierta
-	call fh_unapi
-	ld   a, b
-	pop  bc
-	cp   2
-	jr   z, .f1_dns
-	push bc
-	ld   b, 30
-.f1_nw:
-	halt
-	djnz .f1_nw
-	pop  bc
-	dec  c
-	jr   nz, .f1_net
-	ld   hl, fh1_e_red
-	jp   fh_neterr_end
-.f1_dns:
-	ld   hl, fh_host				; "api.file-hunter.com" (fase 0)
-	ld   b, 0
-	ld   a, 6						; TCPIP_DNS_Q
-	call fh_unapi
-	or   a
-	ld   hl, fh1_e_dns
-	jp   nz, fh_neterr_end
-	ld   a, 40
-	ld   (FH_TRIES), a
-.f1_dp:
-	ld   b, 15
-.f1_dw:
-	halt
-	djnz .f1_dw
-	ld   b, 1						; limpiar resultado al leer
-	ld   a, 7						; TCPIP_DNS_S -> B=2, IP en L.H.E.D
-	call fh_unapi
-	or   a
-	ld   hl, fh1_e_dns
-	jp   nz, fh_neterr_end
-	ld   a, b
-	cp   2
-	jr   z, .f1_dok
-	ld   a, (FH_TRIES)
-	dec  a
-	ld   (FH_TRIES), a
-	jr   nz, .f1_dp
+	call fh_dns_wake				; DNS con despertador de radio (~32s, puntos)
+	jr   nc, .f1_open
 	ld   hl, fh1_e_dns
 	jp   fh_neterr_end
-.f1_dok:
-	ld   a, l
-	ld   (FH_TCPP+0), a				; IP directa al bloque de params TCP
-	ld   a, h
-	ld   (FH_TCPP+1), a
-	ld   a, e
-	ld   (FH_TCPP+2), a
-	ld   a, d
-	ld   (FH_TCPP+3), a
+.f1_open:
 
 	; ---- TCP OPEN (bloque de 13 bytes en RAM) ----
 	ld   hl, FH_TCPP+4
@@ -5390,6 +5280,8 @@ fh_browse:
 	or   a
 	sbc  hl, bc
 	ld   (FH_REQLEN), hl
+	ld   a, 100						; tope de reintentos de envio (~2s)
+	ld   (FH_TRIES), a
 .f1_send:
 	ld   a, (FH_CONN)
 	ld   b, a
@@ -5400,9 +5292,13 @@ fh_browse:
 	call fh_unapi
 	or   a
 	jr   z, .f1_rx0
-	cp   13							; ERR_BUFFER -> reintentar
+	cp   13							; ERR_BUFFER -> reintentar (ACOTADO)
 	ld   hl, fh1_e_con
 	jp   nz, fh_neterr_end
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jp   z, fh_neterr_end			; agotado (HL ya = fh1_e_con)
 	halt
 	jr   .f1_send
 
@@ -5416,6 +5312,7 @@ fh_browse:
 	ld   (FH_CRLF), a
 	ld   (FH_HPOS), a
 	ld   (FH_FULL), a
+	ld   (FH_DOTC), a
 	ld   a, 120
 	ld   (FH_TRIES), a				; timeout de inactividad ~10 s
 .f1_rx:
@@ -5444,6 +5341,14 @@ fh_browse:
 .f1_data:
 	ld   a, 120
 	ld   (FH_TRIES), a
+	ld   a, (FH_DOTC)				; un punto cada 8 chunks (~4KB)
+	inc  a
+	ld   (FH_DOTC), a
+	and  #07
+	jr   nz, .f1_nd
+	ld   a, '.'
+	call #00A2
+.f1_nd:
 	ld   hl, SD_BUF
 .f1_dl:
 	ld   a, (hl)
@@ -5783,6 +5688,66 @@ fh_strcpy:
 	inc  de
 	jr   fh_strcpy
 
+; ---- DNS con "despertador" de radio ----
+; Tras el WIFIRELEASE que manda el INIT del ESP en el boot, la radio puede
+; quedarse dormida y TCPIP_NET_STATE NUNCA pasa a abierta por si solo (visto
+; en HW: la tecla U fallaba "sin red" hasta entrar una vez al setup W, que la
+; despierta con sus comandos). Una OPERACION de red si reconecta: usamos
+; DNS_Q como despertador y sondeamos DNS_S ~32s re-lanzando la query cada
+; ~6s si da error, con un punto de progreso cada ~3s.
+; CF=0: IP resuelta y copiada a FH_TCPP+0..3. CF=1: agotado.
+fh_dns_wake:
+	ld   a, 160						; 160 sondeos x ~200ms = ~32s
+	ld   (FH_TRIES), a
+	call .dw_q						; 1er DNS_Q (despierta/reconecta la radio)
+.dw_poll:
+	ld   b, 12
+.dw_w:
+	halt
+	djnz .dw_w
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jr   z, .dw_fail
+	and  #0F						; un punto cada ~3s
+	jr   nz, .dw_np
+	ld   a, '.'
+	call #00A2
+.dw_np:
+	ld   b, 1						; limpiar resultado al leerlo
+	ld   a, 7						; TCPIP_DNS_S
+	call fh_unapi
+	or   a
+	jr   nz, .dw_req				; error (radio aun dormida): re-lanzar
+	ld   a, b
+	cp   2
+	jr   nz, .dw_poll				; 1 = en curso
+	ld   a, l						; resuelto: IP (L.H.E.D) -> FH_TCPP
+	ld   (FH_TCPP+0), a
+	ld   a, h
+	ld   (FH_TCPP+1), a
+	ld   a, e
+	ld   (FH_TCPP+2), a
+	ld   a, d
+	ld   (FH_TCPP+3), a
+	or   a							; CF=0
+	ret
+.dw_req:
+	ld   a, (FH_TRIES)
+	and  #1F						; re-DNS_Q como mucho cada ~6s
+	jr   nz, .dw_poll
+	call .dw_q
+	jr   .dw_poll
+.dw_fail:
+	scf
+	ret
+.dw_q:
+	ld   hl, fh_host
+	ld   b, 0
+	ld   a, 6						; TCPIP_DNS_Q
+	call fh_unapi
+	ret
+
 ; ---- abre la sesion de red (salvaguardas fase 0, en subrutina) ----
 ; Cambia de stack: guarda su retorno en FH_RETTMP. CF=0 ok (driver mapeado en
 ; pag.1); CF=1 fallo con TODO restaurado y HL=mensaje.
@@ -5921,6 +5886,7 @@ ENDIF
 	FH_WPTR:    ds 2
 	FH_RPTR:    ds 2
 	FH_RETTMP:  ds 2
+	FH_DOTC:    ds 1
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
