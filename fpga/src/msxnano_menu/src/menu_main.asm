@@ -5692,32 +5692,58 @@ fh_strcpy:
 	inc  de
 	jr   fh_strcpy
 
-; ---- DNS con "despertador" de radio ----
-; Tras el WIFIRELEASE que manda el INIT del ESP en el boot, la radio puede
-; quedarse dormida y TCPIP_NET_STATE NUNCA pasa a abierta por si solo (visto
-; en HW: la tecla U fallaba "sin red" hasta entrar una vez al setup W, que la
-; despierta con sus comandos). Una OPERACION de red si reconecta: usamos
-; DNS_Q como despertador y sondeamos DNS_S ~32s re-lanzando la query cada
-; ~6s si da error, con un punto de progreso cada ~3s.
+; ---- DNS con "despertador" de radio (v3: warm-reset del ESP) ----
+; Tras el WIFIRELEASE que manda el INIT del ESP en el boot, la radio queda
+; dormida y NADA de la UNAPI la despierta (probado en HW: ni DNS_Q ni el
+; WIFIHOLD 'H', que solo RETIENE una conexion ya viva). Lo que hace el
+; setup W (y por eso "arregla" la red) es un WARM RESET del ESP nada mas
+; entrar (ESPUNAPI.asm RESET_ESP: CLEAR_UART + SET_SPEED + 'W'): al rebotar,
+; el firmware del ESP se conecta SOLO a la red guardada. Replicamos eso como
+; fase 2 del despertador; la fase 1 es un intento directo rapido para no
+; pagar el reset (~5s) cuando la radio ya esta despierta. El driver siempre
+; trabaja a la velocidad UART por defecto (SET_SPEED solo se usa en el reset),
+; asi que el reset no desincroniza nada. NOTA: con "Auto Clock" activado en el
+; setup W, el propio INIT del boot ya conecta la WiFi (pide la hora por NTP)
+; y ademas pone en hora el reloj del MSX: recomendado.
 ; CF=0: IP resuelta y copiada a FH_TCPP+0..3. CF=1: agotado.
 fh_dns_wake:
-	; WIFIHOLD: el INIT del ESP suelta la conexion en el boot (WIFIRELEASE) y
-	; NADA de la UNAPI la despierta (visto en HW: ni el DNS_Q). El setup W si:
-	; manda CMD_WIFIHOLD ('H') por la UART al entrar (ESPUNAPI.asm
-	; ENTERING_ESPSETUP: CLEAR_UART + SEND_DATA). Replicamos ese par de OUTs
-	; (variante I/O: cmd=#06, tx=#07); el release ('h') va en el cierre de
-	; sesion (fh_net_end y la limpieza de la tecla U).
-	ld   a, 20						; CLEAR_UART
-	out  (#06), a
-	ld   a, 'H'						; CMD_WIFIHOLD_ESP: retener/encender la radio
-	out  (#07), a
-	ld   b, 12						; ~200ms de cortesia antes del primer DNS_Q
-.dw_settle:
+	; fase 1: intento directo (~4s) por si la radio ya esta despierta
+	ld   a, 20						; 20 sondeos x ~200ms = ~4s
+	ld   (FH_TRIES), a
+	call .dw_q
+	call .dw_poll
+	ret  nc							; resuelto sin reset
+	; fase 2: despertador real = warm-reset del ESP (protocolo del setup W)
+	ld   a, 20
+	out  (#06), a					; CLEAR_UART
+	xor  a
+	out  (#06), a					; SET_SPEED (velocidad por defecto)
 	halt
-	djnz .dw_settle
+	halt
+	ld   a, 'W'						; CMD_WRESET_ESP: al rebotar reconecta solo
+	out  (#07), a
+	ld   b, 180						; ~3s: reboot del ESP + asociacion en marcha
+.dw_boot:
+	halt
+	djnz .dw_boot
+	ld   c, 64						; drenar la respuesta "Ready" del FIFO (acotado)
+.dw_drain:
+	in   a, (#07)
+	bit  0, a						; bit0 = hay dato
+	jr   z, .dw_drained
+	in   a, (#06)
+	dec  c
+	jr   nz, .dw_drain
+.dw_drained:
+	ld   a, 20
+	out  (#06), a					; UART limpia para el driver
 	ld   a, 160						; 160 sondeos x ~200ms = ~32s
 	ld   (FH_TRIES), a
-	call .dw_q						; 1er DNS_Q (la radio ya esta despertando)
+	call .dw_q
+	jp   .dw_poll					; CF final = veredicto
+
+; sondea DNS_S re-lanzando DNS_Q en error; punto de progreso cada ~3s
+; CF=0 resuelto (IP en FH_TCPP) / CF=1 agotado. Usa FH_TRIES como contador.
 .dw_poll:
 	ld   b, 12
 .dw_w:
@@ -5736,7 +5762,7 @@ fh_dns_wake:
 	ld   a, 7						; TCPIP_DNS_S
 	call fh_unapi
 	or   a
-	jr   nz, .dw_req				; error (radio aun dormida): re-lanzar
+	jr   nz, .dw_req				; error (radio dormida/asociando): re-lanzar
 	ld   a, b
 	cp   2
 	jr   nz, .dw_poll				; 1 = en curso
