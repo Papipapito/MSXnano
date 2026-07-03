@@ -4950,9 +4950,12 @@ main_action_unapi_test:
 	ldir
 	ei
 
-	; 1) diagnostico del discovery: imprime HOKVLD y el numero de
-	; implementaciones ANTES de decidir (para distinguir en frio si falta el
-	; hook o si el driver responde 0)
+	; 1) diagnostico del discovery: imprime HOKVLD, num de implementaciones
+	; y los bytes del hook ANTES de decidir; si el discovery da 0, instala el
+	; hook del driver A MANO (fh_hook_install) y reintenta una vez
+	xor  a
+	ld   (FH_RETRIED), a
+.fh_disc:
 	ld   hl, fh_m_hok
 	call ver_puts
 	ld   a, (FH_HOKVLD)
@@ -4972,14 +4975,38 @@ main_action_unapi_test:
 	push bc
 	call fh_dec8					; N:0 = driver instalado "sin ESP"
 	pop  bc
+	ld   hl, fh_m_hook				; K: bytes crudos del hook #FFCA-#FFCE
+	call ver_puts
+	ld   hl, #FFCA
+	ld   c, 5
+.fh_kdmp:
+	ld   a, (hl)
+	inc  hl
+	push bc
+	push hl
+	call fh_hex8
+	pop  hl
+	pop  bc
+	dec  c
+	jr   nz, .fh_kdmp
 	ld   a, (FH_HOKVLD)
 	bit  0, a
-	ld   hl, fh_m_noextb
-	jp   z, .fh_fail
+	jr   z, .fh_inst				; sin hook valido -> instalar a mano
 	ld   a, b
 	or   a
+	jr   nz, .fh_disc_ok
+.fh_inst:
+	ld   a, (FH_RETRIED)			; discovery fallido: instalar el hook a
+	or   a							; mano UNA vez y reintentar
 	ld   hl, fh_m_noimpl
-	jp   z, .fh_fail
+	jp   nz, .fh_fail
+	ld   a, 1
+	ld   (FH_RETRIED), a
+	ld   hl, fh_m_inst
+	call ver_puts
+	call fh_hook_install
+	jp   .fh_disc
+.fh_disc_ok:
 
 	; 3) datos de la implementacion 1 (AQUI el driver asigna HIMEM+H.TIMI)
 	ld   a, 1
@@ -5280,6 +5307,8 @@ fh_m_key:	.db 13,10,10,"Pulsa una tecla para volver",0
 fh_m_u7:	.db 13,10,"U7:",0
 fh_m_rein:	.db 13,10,"Re-iniciando driver ESP...",13,10,0
 fh_m_hok:	.db 13,10,"H:",0
+fh_m_hook:	.db " K:",0
+fh_m_inst:	.db 13,10,"Instalando hook del driver...",0
 fh_m_nimp:	.db " N:",0
 fh_m_dq:	.db 13,10,"D:",0
 fh_m_p1:	.db 13,10,"P:",0
@@ -5831,6 +5860,28 @@ fh_strcpy:
 	inc  de
 	jr   fh_strcpy
 
+; ---- instalacion manual del hook EXTBIO del driver ESP ----
+; En frio el INIT del ESP aborta sin instalar (H:1 puede ser HOKVLD residual
+; con el hook en RETs) -> el discovery da 0 implementaciones. El menu instala
+; el hook EL MISMO: convencion MSX de hook inter-slot (RST #30 + slot + addr
+; + RET) apuntando a DO_EXTBIO (#4C73) del esp8266e.rom EXACTO del pack
+; (build pineado, slot 0-2 = #88) + HOKVLD bit0. El driver funciona sin mas
+; estado previo (su area de trabajo se asigna perezosamente via GETWRK).
+fh_hook_install:
+	di
+	ld   a, #F7						; RST #30 (CALLF inter-slot)
+	ld   (#FFCA), a
+	ld   a, ESP_SLOT				; slot 0-2 expandido (#88)
+	ld   (#FFCB), a
+	ld   hl, #4C73					; DO_EXTBIO de ESTE build de esp8266e.rom
+	ld   (#FFCC), hl
+	ld   a, #C9						; RET de cierre del hook
+	ld   (#FFCE), a
+	ld   hl, #FB20					; HOKVLD bit0 = ext-BIOS valido
+	set  0, (hl)
+	ei
+	ret
+
 ; ---- re-init del driver ESP (NO USADO: colgaba llamado desde el menu; el
 ;      fix real es el retraso de power-on en la FPGA. Se conserva de referencia) ----
 ; En frio, el INIT de boot del cartucho ESP corre ANTES de que el ESP-01 haya
@@ -5977,20 +6028,32 @@ fh_net_begin:
 	ld   bc, 5
 	ldir
 	ei
-	ld   a, (FH_HOKVLD)
-	bit  0, a
-	jr   z, .nb_no
+	xor  a
+	ld   (FH_RETRIED), a
+.nb_disc:
 	ld   hl, fh_id
 	ld   de, FH_ARG
 	ld   bc, 7
 	ldir
+	ld   a, (FH_HOKVLD)
+	bit  0, a
+	jr   z, .nb_inst
 	xor  a
 	ld   b, a
 	ld   de, #2222
 	call FH_EXTBIO					; contar implementaciones
 	ld   a, b
 	or   a
-	jr   z, .nb_no
+	jr   nz, .nb_disc_ok
+.nb_inst:
+	ld   a, (FH_RETRIED)			; en frio el INIT del ESP no instala:
+	or   a							; instalar el hook a mano y reintentar
+	jr   nz, .nb_no
+	ld   a, 1
+	ld   (FH_RETRIED), a
+	call fh_hook_install
+	jr   .nb_disc
+.nb_disc_ok:
 	ld   a, 1
 	ld   de, #2222
 	call FH_EXTBIO					; datos: A=slot, HL=entry (asigna area!)
