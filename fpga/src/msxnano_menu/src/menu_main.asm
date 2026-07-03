@@ -4950,11 +4950,14 @@ main_action_unapi_test:
 	ldir
 	ei
 
+	xor  a
+	ld   (FH_RETRIED), a
+.fh_disc:
 	; 1) hook EXTBIO presente?
 	ld   a, (FH_HOKVLD)
 	bit  0, a
 	ld   hl, fh_m_noextb
-	jp   z, .fh_fail
+	jp   z, .fh_retry
 
 	; 2) discovery: cuantas implementaciones "TCP/IP"?
 	ld   hl, fh_id
@@ -4968,7 +4971,18 @@ main_action_unapi_test:
 	ld   a, b
 	or   a
 	ld   hl, fh_m_noimpl
-	jp   z, .fh_fail
+	jp   nz, .fh_disc_ok
+.fh_retry:
+	; discovery fallido: en frio el INIT de boot corrio con el ESP aun
+	; arrancando -> re-lanzar el INIT del driver UNA vez y reintentar
+	ld   a, (FH_RETRIED)
+	or   a
+	jp   nz, .fh_fail				; ya reintentado: error de verdad (HL=msg)
+	ld   a, 1
+	ld   (FH_RETRIED), a
+	call fh_reinit_driver
+	jp   .fh_disc
+.fh_disc_ok:
 
 	; 3) datos de la implementacion 1 (AQUI el driver asigna HIMEM+H.TIMI)
 	ld   a, 1
@@ -5267,6 +5281,7 @@ fh_m_dnserr:	.db "error ",0
 fh_m_ok:	.db 13,10,10,"TEST OK - UNAPI operativo en el menu",0
 fh_m_key:	.db 13,10,10,"Pulsa una tecla para volver",0
 fh_m_u7:	.db 13,10,"U7:",0
+fh_m_rein:	.db 13,10,"Re-iniciando driver ESP...",13,10,0
 fh_m_dq:	.db 13,10,"D:",0
 fh_m_p1:	.db 13,10,"P:",0
 fh_m_rst:	.db 13,10,"R:",0
@@ -5817,6 +5832,35 @@ fh_strcpy:
 	inc  de
 	jr   fh_strcpy
 
+; ---- re-init del driver ESP (la cura real del fallo en frio) ----
+; En frio, el INIT de boot del cartucho ESP corre ANTES de que el ESP-01 haya
+; terminado de arrancar: el driver queda instalado "sin ESP" y su DO_EXTBIO
+; responde 0 implementaciones PARA SIEMPRE (y el 2o pase del goauld se corta
+; por el flag #EF/#F0 del puerto F2). Pasar por el setup W lo arregla porque
+; su salida re-ejecuta INIT_UNAPI. Hacemos lo equivalente sin UI: F2:=0
+; (semantica power-on -> el INIT hace el camino completo con re-deteccion) y
+; CALL al INIT del cartucho (#4010, build pineado del pack). Imprime su
+; welcome en pantalla (inofensivo) y puede tardar ~2-10s (con Auto Clock
+; ademas conecta la WiFi y pone la hora). Usa (TXTTAB) como scratch igual
+; que el setup W (probado en HW a diario). Deja pagina 1 = ROM del menu.
+fh_reinit_driver:
+	ld   hl, fh_m_rein
+	call ver_puts
+	di
+	ld   a, ESP_SLOT
+	ld   hl, #4000
+	call ENASLT
+	ei
+	xor  a
+	out  (#F2), a					; F2=0: fuerza el camino power-on del INIT
+	call #4010						; INIT del cartucho ESP (ret al acabar)
+	di
+	ld   a, #87
+	ld   hl, #4000
+	call ENASLT
+	ei
+	ret
+
 ; ---- DNS con "despertador" de radio (v3: warm-reset del ESP) ----
 ; Tras el WIFIRELEASE que manda el INIT del ESP en el boot, la radio queda
 ; dormida y NADA de la UNAPI la despierta (probado en HW: ni DNS_Q ni el
@@ -5933,9 +5977,12 @@ fh_net_begin:
 	ld   bc, 5
 	ldir
 	ei
+	xor  a
+	ld   (FH_RETRIED), a
+.nb_disc:
 	ld   a, (FH_HOKVLD)
 	bit  0, a
-	jr   z, .nb_no
+	jr   z, .nb_retry
 	ld   hl, fh_id
 	ld   de, FH_ARG
 	ld   bc, 7
@@ -5946,7 +5993,16 @@ fh_net_begin:
 	call FH_EXTBIO					; contar implementaciones
 	ld   a, b
 	or   a
-	jr   z, .nb_no
+	jr   nz, .nb_disc_ok
+.nb_retry:
+	ld   a, (FH_RETRIED)			; discovery fallido: re-init del driver
+	or   a							; (fallo en frio) y UN reintento
+	jr   nz, .nb_no
+	ld   a, 1
+	ld   (FH_RETRIED), a
+	call fh_reinit_driver
+	jr   .nb_disc
+.nb_disc_ok:
 	ld   a, 1
 	ld   de, #2222
 	call FH_EXTBIO					; datos: A=slot, HL=entry (asigna area!)
@@ -6060,6 +6116,7 @@ ENDIF
 	FH_RPTR:    ds 2
 	FH_RETTMP:  ds 2
 	FH_DOTC:    ds 1
+	FH_RETRIED: ds 1
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
