@@ -48,3 +48,4 @@ fpga/src/rom/Nextor-2.1.4.WonderTANG.ROM.bin
 fpga/src/rom/pack_*.bin
 fpga/src/rom/msxnano_v*.fs
 fpga/src/rom/*_diag*.bin
+files/
