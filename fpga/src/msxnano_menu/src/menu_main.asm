@@ -2029,9 +2029,9 @@ browse:
 	cp   #1D						; cursor left (prev column)
 	jp   z, .br_left
 	cp   #0D						; RETURN
-	jp   z, .br_enter
+	jp   z, browse_enter
 	cp   #08						; BACKSPACE -> parent folder
-	jp   z, .br_back
+	jp   z, browse_back
 	cp   '/'						; busqueda por nombre
 	jp   z, .br_search
 	cp   #09						; TAB -> next partition (multi-partition cards)
@@ -2270,10 +2270,11 @@ browse:
 .br_scroll:
 	call draw_rows					; redraw the visible rows WITHOUT clearing screen
 	jp   .br_key
+browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 .br_enter:
 	ld   a, (ENT_COUNT)
 	or   a
-	jp   z, .br_key					; empty list
+	jp   z, browse				; (hook FH global)					; empty list
 	ld   a, (BR_SEL)
 	call ent_addr					; hl = record
 	ld   a, (hl)					; type (0=dir, 1=rom, 2=dsk)
@@ -2288,7 +2289,7 @@ browse:
 	; --- directory: push current cluster, descend ---
 	ld   a, (DIR_SP)
 	cp   8
-	jp   nc, .br_key				; stack full -> ignore
+	jp   nc, browse				; (hook FH global)				; stack full -> ignore
 	add  a, a						; DIR_STACK[DIR_SP] = CUR_CLUS (4 bytes/nivel)
 	add  a, a
 	ld   e, a
@@ -2311,7 +2312,7 @@ browse:
 	ld   (BR_SEL), a
 	ld   (BR_TOP), a
 	call refresh_list				; soft repaint of the new directory (no flicker)
-	jp   .br_key
+	jp   browse					; (redraw+loop: hook FH global)
 .br_selrom:
 	; --- selected file: load it straight into the megaram, then offer to launch.
 	;     No debug dump, no separate "load" step -> fastest path to launch. ---
@@ -2407,7 +2408,7 @@ browse:
 	cp   #0D
 	jp   z, launch_rom
 	cp   #1B
-	jp   z, .br_redraw
+	jp   z, browse				; (hook FH global)
 	cp   'M'
 	jr   z, .bsr_map
 	cp   'm'
@@ -2529,7 +2530,7 @@ browse:
 	ld   hl, conNoBiosStr			; falta la BIOS
 	call print_string
 	call browse_getkey
-	jp   .br_redraw
+	jp   browse					; (redraw: hook FH global)
 .bsc_bios:
 	inc  hl							; +1 = cluster de COLECO.ROM
 	ld   de, FILE_CLUS
@@ -2555,7 +2556,7 @@ browse:
 	cp   #0D
 	jp   z, launch_console
 	cp   #1B
-	jp   z, .br_redraw
+	jp   z, browse				; (hook FH global)
 	jr   .bsc_lk
 
 .br_seldsk:
@@ -2591,7 +2592,7 @@ browse:
 	cp   #0D
 	jr   z, .bsd_go					; RETURN -> mount + launch
 	cp   #1B
-	jp   z, .br_redraw				; ESC -> back to the browser
+	jp   z, browse				; (hook FH global)				; ESC -> back to the browser
 	jr   .bsd_ask
 .bsd_go:
 	ld   hl, #0107
@@ -2606,7 +2607,7 @@ browse:
 	ld   hl, dskFragStr
 	call print_string
 	call browse_getkey
-	jp   .br_redraw
+	jp   browse					; (redraw: hook FH global)
 .bsd_contig:
 	; 2) absolute start LBA of the .dsk -> DSK_LBA
 	ld   hl, FILE_CLUS
@@ -2669,7 +2670,7 @@ browse:
 	ld   hl, dskNoEmuStr
 	call print_string
 	call browse_getkey
-	jp   .br_redraw
+	jp   browse					; (redraw: hook FH global)
 .bsd_haveemu:
 	; FILE_CLUS now = NEXTOR.EMU first cluster -> its abs LBA = the data-file sector.
 	; Safety net: never write with cluster < 2 (would target the root dir /
@@ -2700,7 +2701,7 @@ browse:
 	ld   hl, dskWrErrStr
 	call print_string
 	call browse_getkey
-	jp   .br_redraw
+	jp   browse					; (redraw: hook FH global)
 .bsd_wrok:
 	; 6) one-time pointer at #A000 -> the data file (device 1, LUN 1, EMU_LBA)
 	ld   hl, emuSig
@@ -2718,10 +2719,11 @@ browse:
 	ld   a, 1
 	ld   (DSK_PEND), a				; el 2o pase del INIT reescribira el registro
 	jp   boot_system				; continue boot with Nextor ON -> Nextor emulates A:
+browse_back:						; global (pareja del anterior)
 .br_back:
 	ld   a, (DIR_SP)
 	or   a
-	jp   z, .br_key					; already at root
+	jp   z, browse				; (hook FH global)					; already at root
 	dec  a
 	ld   (DIR_SP), a
 	add  a, a						; CUR_CLUS = DIR_STACK[DIR_SP] (4 bytes/nivel)
@@ -2737,7 +2739,7 @@ browse:
 	ld   (BR_SEL), a
 	ld   (BR_TOP), a
 	call refresh_list				; soft repaint of the parent directory (no flicker)
-	jp   .br_key
+	jp   browse					; (redraw+loop: hook FH global)
 
 ; print_rom_kb: print the selected ROM's size in KB (decimal) from BR_REC.
 print_rom_kb:
@@ -5836,14 +5838,6 @@ fh_key_filter:
 	pop  af
 	jp   fh_browse
 
-fh_enter_item:
-	ld   hl, #0100
-	call POSIT
-	ld   hl, fh1_m_f2
-	call ver_puts
-	call CHGET
-	jp   browse						; redibujar (limpia la fila 0)
-
 fh_exit:
 	xor  a
 	ld   (FH_MODE), a
@@ -6123,6 +6117,1276 @@ fh1_e_con:	.db "FH: fallo de conexion. Pulsa una tecla",0
 fh1_req1:	.db "GET /index4.php?base=1BA0&type=rom&msx=&char=",0
 fh1_req2:	.db " HTTP/1.1",13,10,"Host: api.file-hunter.com",13,10,"Connection: close",13,10,13,10,0
 
+; --- FASE 2+3 FILE-HUNTER: descargar a FHUNT y lanzar (RETURN en la lista) ---
+; RETURN sobre un item FH: re-consulta la API con download=N (N = indice del
+; item guardado en el campo cluster por la fase 1), parsea la linea meta
+; (size: y name:), y ESCRIBE el payload en la SD en la carpeta FHUNT de la
+; raiz (creandola si no existe) con el nombre original en 8.3, en streaming
+; sector a sector con encadenado FAT16 multi-cluster. Al terminar, lista la
+; carpeta con el scan normal del navegador y AUTO-LANZA el fichero via
+; browse_enter (el camino probado de carga+mapper+launch de la SD).
+; El fichero QUEDA SIEMPRE en FHUNT (cache: si ya existe con el mismo tamano,
+; se salta la descarga y se lanza directo).
+; Limitaciones v1: FAT16 (como el flujo NEXTOR.EMU; error limpio en FAT32),
+; nombres 8.3 (el menu no escribe LFN), carpeta FHUNT de 1 cluster, y si se
+; re-descarga un nombre existente con distinto tamano la cadena vieja queda
+; huerfana (recuperable con chkdsk; v1).
+; Durante el streaming: TCP_RCV llena FH_RXB (el ESP esta en pag.1); el
+; sector se monta en SD_BUF; cada operacion SD re-mapea pag.1 a 3-2 y vuelve
+; a #87, asi que tras cada flush se re-mapea el ESP (#88) antes del siguiente
+; RCV. El TCP hace flow-control, no se pierde nada.
+
+; Buffers grandes en el espacio de ENT_ARRAY (#C300-#E6F0): durante la
+; descarga el listado esta muerto (se reconstruye despues con scan_current)
+FH_RXB		equ	#C400			; 512B: buffer RX de TCP (el request va en SD_BUF)
+FH_SAVED	equ	#C600			; 512B: salva SD_BUF mientras fh2_alloc usa la FAT
+FH_METAB	equ	#C800			; 120B: linea meta de la descarga
+
+FH_ADIR		equ	#10				; attr directorio
+FH_AARC		equ	#20				; attr archivo
+
+fh_enter_item:
+	; ---- item seleccionado ----
+	ld   a, (BR_SEL)
+	call ent_addr					; HL -> ENT_ARRAY[sel]
+	inc  hl
+	ld   a, (hl)					; +1 = cluster.lo = indice del item en la query
+	ld   (FH_ITEM), a
+
+	; ---- FAT16 solamente (el escritor, como el flujo NEXTOR.EMU) ----
+	ld   a, (FS32)
+	or   a
+	ld   hl, fh2_e_fat32
+	jp   nz, fh_neterr				; mensaje + tecla + volver
+
+	ld   hl, #0100
+	call POSIT
+	ld   hl, fh2_m_prep				; "FH: preparando..."
+	call ver_puts
+
+	; ---- asegurar la carpeta FHUNT en la raiz (SD, sin red aun) ----
+	call fh2_fhunt_ensure			; -> FH_DIRCLUS / CF=1 error (HL=msg)
+	jp   c, fh_neterr
+
+	; ---- sesion de red + DNS + TCP open (como la fase 1) ----
+	call fh_net_begin
+	jp   c, fh_neterr
+	call fh_dns_wake
+	jr   nc, .f2_open
+	ld   hl, fh1_e_dns
+	jp   fh_neterr_end
+.f2_open:
+	ld   hl, FH_TCPP+4
+	ld   (hl), 80
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), #FF
+	inc  hl
+	ld   (hl), #FF
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), 0
+	inc  hl
+	ld   (hl), 0
+	ld   hl, FH_TCPP
+	ld   a, 13						; TCPIP_TCP_OPEN
+	call fh_unapi
+	or   a
+	ld   hl, fh1_e_con
+	jp   nz, fh_neterr_end
+	ld   a, b
+	ld   (FH_CONN), a
+
+	; ---- GET con download=N (query original conservada en FH_QUERY) ----
+	ld   hl, fh1_req1
+	ld   de, SD_BUF
+	call fh_strcpy
+	ld   hl, FH_QUERY
+.f2_q:
+	ld   a, (hl)
+	inc  hl
+	or   a
+	jr   z, .f2_q2
+	cp   ' '
+	jr   nz, .f2_q1
+	ld   a, '+'
+.f2_q1:
+	ld   (de), a
+	inc  de
+	jr   .f2_q
+.f2_q2:
+	ld   hl, fh2_req_dl				; "&download="
+	call fh_strcpy
+	ld   a, (FH_ITEM)
+	call fh2_wdec8					; escribe A en decimal en (DE)
+	ld   hl, fh1_req2				; " HTTP/1.1..." + Host + close
+	call fh_strcpy
+	ex   de, hl
+	ld   bc, SD_BUF
+	or   a
+	sbc  hl, bc
+	ld   (FH_REQLEN), hl
+	ld   a, 100
+	ld   (FH_TRIES), a
+.f2_send:
+	ld   a, (FH_CONN)
+	ld   b, a
+	ld   de, SD_BUF
+	ld   hl, (FH_REQLEN)
+	ld   c, 1
+	ld   a, 17						; TCPIP_TCP_SEND
+	call fh_unapi
+	or   a
+	jr   z, .f2_rx0
+	cp   13
+	ld   hl, fh1_e_con
+	jp   nz, fh_neterr_end
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jp   z, fh_neterr_end
+	halt
+	jr   .f2_send
+
+	; ---- recepcion: cabeceras + linea meta, luego payload en streaming ----
+.f2_rx0:
+	xor  a
+	ld   (FH_STATE), a				; 0=cabeceras 1=meta 2=payload 8=error
+	ld   (FH_CRLF), a
+	ld   (FH_HPOS), a
+	ld   (FH_SECN), a
+	ld   hl, 0
+	ld   (FH_FILL), hl
+	ld   (FH_PREV), hl
+	ld   (FH_CLUS0), hl
+	ld   (FH_DOTK), hl
+	ld   hl, FH_METAB
+	ld   (FH_METAP), hl
+	ld   a, 120
+	ld   (FH_TRIES), a
+.f2_rx:
+	ld   a, (FH_CONN)
+	ld   b, a
+	ld   de, FH_RXB
+	ld   hl, 512
+	ld   a, 18						; TCPIP_TCP_RCV -> BC bytes
+	call fh_unapi
+	cp   11							; conexion cerrada y drenada
+	jp   z, .f2_eof
+	or   a
+	jp   nz, .f2_eof
+	ld   a, b
+	or   c
+	jr   nz, .f2_data
+	ld   b, 5
+.f2_rw:
+	halt
+	djnz .f2_rw
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jp   nz, .f2_rx
+	ld   hl, fh2_e_dl				; timeout de inactividad
+	jp   fh_neterr_end
+.f2_data:
+	ld   a, 120
+	ld   (FH_TRIES), a
+	ld   (FH_RXN), bc				; bytes en FH_RXB
+	ld   hl, FH_RXB
+	ld   (FH_RXP), hl
+.f2_consume:
+	; fase por bytes hasta que el estado llegue a 2 (payload)
+	ld   a, (FH_STATE)
+	cp   2
+	jr   z, .f2_bulk
+	cp   8
+	jr   z, .f2_apierr
+	ld   bc, (FH_RXN)
+	ld   a, b
+	or   c
+	jp   z, .f2_rx					; buffer agotado: mas red
+	ld   hl, (FH_RXP)
+	ld   a, (hl)
+	inc  hl
+	ld   (FH_RXP), hl
+	dec  bc
+	ld   (FH_RXN), bc
+	call fh2_rx_byte				; consume 1 byte (cabeceras/meta)
+	jr   .f2_consume
+.f2_apierr:
+	ld   hl, fh2_e_api
+	jp   fh_neterr_end
+.f2_bulk:
+	; payload en bloque: copiar min(FH_RXN, 512-FH_FILL, FH_WLEFT.bajo) a SD_BUF
+	ld   bc, (FH_RXN)
+	ld   a, b
+	or   c
+	jp   z, .f2_rx					; buffer agotado
+	; limite por hueco del sector
+	ld   hl, 512
+	ld   de, (FH_FILL)
+	or   a
+	sbc  hl, de						; HL = hueco en SD_BUF
+	; BC = min(BC, HL)
+	ld   a, h
+	cp   b
+	jr   c, .f2_bhl
+	jr   nz, .f2_bbc
+	ld   a, l
+	cp   c
+	jr   nc, .f2_bbc
+.f2_bhl:
+	ld   b, h
+	ld   c, l
+.f2_bbc:
+	; limite por lo que queda del fichero (si WLEFT alto=0 y bajo<BC)
+	ld   a, (FH_WLEFT+2)
+	or   a
+	jr   nz, .f2_bcp
+	ld   hl, (FH_WLEFT+0)
+	ld   a, h
+	cp   b
+	jr   c, .f2_bwl
+	jr   nz, .f2_bcp
+	ld   a, l
+	cp   c
+	jr   nc, .f2_bcp
+.f2_bwl:
+	ld   b, h
+	ld   c, l
+.f2_bcp:
+	; copiar BC bytes RXP -> SD_BUF+FILL
+	ld   a, b
+	or   c
+	jp   z, .f2_fin					; WLEFT=0: descarga completa
+	push bc
+	ld   hl, (FH_RXP)
+	ld   de, (FH_FILL)
+	push hl
+	ld   hl, SD_BUF
+	add  hl, de
+	ex   de, hl						; DE = destino
+	pop  hl							; HL = origen
+	ldir
+	ld   (FH_RXP), hl
+	pop  bc
+	; actualizar contadores
+	ld   hl, (FH_RXN)
+	or   a
+	sbc  hl, bc
+	ld   (FH_RXN), hl
+	ld   hl, (FH_FILL)
+	add  hl, bc
+	ld   (FH_FILL), hl
+	ld   hl, (FH_WLEFT+0)			; WLEFT -= BC (32 bits)
+	or   a
+	sbc  hl, bc
+	ld   (FH_WLEFT+0), hl
+	jr   nc, .f2_nbw
+	ld   hl, (FH_WLEFT+2)
+	dec  hl
+	ld   (FH_WLEFT+2), hl
+.f2_nbw:
+	; sector completo?
+	ld   hl, (FH_FILL)
+	ld   de, 512
+	or   a
+	sbc  hl, de
+	jr   nz, .f2_wend
+	call fh2_flush					; escribe el sector (CF=1 error+HL=msg)
+	jp   c, fh_neterr_end
+	ld   hl, 0
+	ld   (FH_FILL), hl
+.f2_wend:
+	; fin del fichero? (bytes 0-2; el tamano esta capado a 1MB)
+	ld   a, (FH_WLEFT+0)
+	ld   hl, (FH_WLEFT+1)
+	or   h
+	or   l
+	jp   nz, .f2_bulk
+	jr   .f2_fin
+.f2_eof:
+	; conexion cerrada: valido solo si ya no queda nada por recibir
+	ld   a, (FH_WLEFT+0)
+	ld   hl, (FH_WLEFT+1)
+	or   h
+	or   l
+	ld   hl, fh2_e_dl
+	jp   nz, fh_neterr_end
+.f2_fin:
+	; ultimo sector parcial pendiente?
+	ld   hl, (FH_FILL)
+	ld   a, h
+	or   l
+	jr   z, .f2_nofl
+	call fh2_flush
+	jp   c, fh_neterr_end
+.f2_nofl:
+	; cerrar conexion y sesion
+	ld   a, (FH_CONN)
+	ld   b, a
+	ld   a, 15						; TCPIP_TCP_ABORT
+	call fh_unapi
+	call fh_net_end
+	; entrada de directorio en FHUNT (nombre 8.3, cluster0, tamano real)
+	call fh2_dirent
+	jp   c, .f2_derr
+.f2_launch:
+	; listar FHUNT con el scan normal y auto-lanzar el fichero
+	xor  a
+	ld   (FH_MODE), a
+	ld   (DIR_SP), a
+	ld   (BR_TOP), a
+	ld   a, 2
+	ld   (FILTER), a				; ALL
+	ld   a, 1
+	ld   (SD_READY), a				; listado valido (no re-montar)
+	ld   hl, (FH_DIRCLUS)
+	ld   (CUR_CLUS+0), hl
+	ld   hl, 0
+	ld   (CUR_CLUS+2), hl
+	call scan_current				; ENT_ARRAY = contenido de FHUNT
+	call fh2_findsel				; BR_SEL = indice del fichero (CF=1 no)
+	jp   c, browse					; no encontrado: ensena la carpeta
+	jp   browse_enter				; LANZAR (no vuelve)
+.f2_derr:
+	ld   hl, fh2_e_dir
+	jp   fh_neterr
+
+; ---- consume 1 byte (A) en fases cabeceras/meta ----
+; estados: 0 = cabeceras HTTP (status 2xx + CRLFCRLF), 1 = linea meta hasta LF,
+; al parsearla pasa a 2 (payload) o 8 (error API)
+fh2_rx_byte:
+	ld   c, a
+	ld   a, (FH_STATE)
+	or   a
+	jr   z, .g_hdr
+	; estado 1: acumular meta hasta LF
+	ld   a, c
+	cp   10
+	jr   z, .g_meta
+	cp   13
+	ret  z							; CR: ignorar
+	ld   hl, (FH_METAP)
+	ld   de, FH_METAB+118
+	or   a
+	sbc  hl, de
+	jr   nc, .g_over				; meta demasiado larga: error
+	ld   hl, (FH_METAP)
+	ld   (hl), c
+	inc  hl
+	ld   (FH_METAP), hl
+	ret
+.g_over:
+	ld   a, 8
+	ld   (FH_STATE), a
+	ret
+.g_meta:
+	ld   hl, (FH_METAP)
+	ld   (hl), 0					; cerrar ASCIIZ
+	jp   fh2_meta					; parsea y fija FH_STATE (2 u 8)
+.g_hdr:
+	ld   a, (FH_HPOS)
+	inc  a
+	jr   z, .g_h2
+	ld   (FH_HPOS), a
+	cp   10
+	jr   nz, .g_h2
+	ld   a, c
+	cp   '2'
+	jr   z, .g_h2
+	ld   a, 8
+	ld   (FH_STATE), a
+	ret
+.g_h2:
+	ld   a, c
+	cp   13
+	jr   z, .g_cr
+	cp   10
+	jr   z, .g_lf
+	xor  a
+	ld   (FH_CRLF), a
+	ret
+.g_cr:
+	ld   a, (FH_CRLF)
+	cp   2
+	jr   z, .g_c3
+	ld   a, 1
+	ld   (FH_CRLF), a
+	ret
+.g_c3:
+	ld   a, 3
+	ld   (FH_CRLF), a
+	ret
+.g_lf:
+	ld   a, (FH_CRLF)
+	cp   1
+	jr   z, .g_l2
+	cp   3
+	jr   z, .g_body
+	xor  a
+	ld   (FH_CRLF), a
+	ret
+.g_l2:
+	ld   a, 2
+	ld   (FH_CRLF), a
+	ret
+.g_body:
+	ld   a, 1						; empieza la linea meta
+	ld   (FH_STATE), a
+	ret
+
+; ---- parsea FH_METAB: "type:...,size:NNN,name:XXXX.rom" ----
+fh2_meta:
+	; size:
+	ld   hl, FH_METAB
+	ld   de, fh2_k_size
+	call fh2_find					; HL -> tras "size:" / CF=1
+	jp   c, .m_bad
+	call fh2_pdec					; FH_FSIZE (32b) desde (HL)
+	; sanity: 0 < size <= 1MB
+	ld   a, (FH_FSIZE+3)
+	or   a
+	jp   nz, .m_bad
+	ld   a, (FH_FSIZE+2)
+	cp   #11
+	jp   nc, .m_bad
+	ld   hl, (FH_FSIZE+0)
+	ld   a, h
+	or   l
+	ld   a, (FH_FSIZE+2)
+	or   h
+	or   l
+	jp   z, .m_bad
+	ld   hl, (FH_FSIZE+0)
+	ld   (FH_WLEFT+0), hl
+	ld   hl, (FH_FSIZE+2)
+	ld   (FH_WLEFT+2), hl
+	; name:
+	ld   hl, FH_METAB
+	ld   de, fh2_k_name
+	call fh2_find
+	jp   c, .m_bad
+	call fh2_make83					; FH_NAME83 + FH_NAMEDOT
+	; mostrar "-> NOMBRE tamKB"
+	push hl
+	ld   hl, #0100
+	call POSIT
+	ld   hl, fh2_m_down
+	call ver_puts
+	ld   hl, FH_NAMEDOT
+	call ver_puts
+	ld   a, ' '
+	call #00A2
+	pop  hl
+	ld   a, 2
+	ld   (FH_STATE), a				; payload
+	ret
+.m_bad:
+	ld   a, 8
+	ld   (FH_STATE), a
+	ret
+
+; ---- busca la subcadena (DE, ASCIIZ) en (HL, ASCIIZ); HL -> tras ella ----
+fh2_find:
+	push de
+.ff_try:
+	pop  de
+	push de
+	ld   a, (hl)
+	or   a
+	jr   z, .ff_no
+	push hl
+.ff_cmp:
+	ld   a, (de)
+	or   a
+	jr   z, .ff_hit
+	ld   c, a
+	ld   a, (hl)
+	cp   c
+	jr   nz, .ff_miss
+	inc  hl
+	inc  de
+	jr   .ff_cmp
+.ff_miss:
+	pop  hl
+	inc  hl
+	jr   .ff_try
+.ff_hit:
+	pop  af							; descartar el HL guardado
+	pop  de
+	or   a							; CF=0, HL tras la clave
+	ret
+.ff_no:
+	pop  de
+	scf
+	ret
+
+; ---- parsea decimal ASCII en (HL) -> FH_FSIZE (32 bits) ----
+fh2_pdec:
+	xor  a
+	ld   (FH_FSIZE+0), a
+	ld   (FH_FSIZE+1), a
+	ld   (FH_FSIZE+2), a
+	ld   (FH_FSIZE+3), a
+.pd_l:
+	ld   a, (hl)
+	sub  '0'
+	ret  c
+	cp   10
+	ret  nc
+	inc  hl
+	push hl
+	push af
+	; FSIZE = FSIZE*10 = (FSIZE*2) + (FSIZE*8)
+	call .pd_x2						; *2
+	ld   hl, (FH_FSIZE+0)
+	ld   (FH_T10+0), hl
+	ld   hl, (FH_FSIZE+2)
+	ld   (FH_T10+2), hl				; T10 = x*2
+	call .pd_x2
+	call .pd_x2						; FSIZE = x*8
+	ld   hl, (FH_T10+0)				; FSIZE += T10 -> x*10
+	ld   de, (FH_FSIZE+0)
+	add  hl, de
+	ld   (FH_FSIZE+0), hl
+	ld   hl, (FH_T10+2)
+	ld   de, (FH_FSIZE+2)
+	adc  hl, de
+	ld   (FH_FSIZE+2), hl
+	pop  af							; + digito
+	ld   e, a
+	ld   d, 0
+	ld   hl, (FH_FSIZE+0)
+	add  hl, de
+	ld   (FH_FSIZE+0), hl
+	jr   nc, .pd_nc
+	ld   hl, (FH_FSIZE+2)
+	inc  hl
+	ld   (FH_FSIZE+2), hl
+.pd_nc:
+	pop  hl
+	jr   .pd_l
+.pd_x2:
+	ld   hl, (FH_FSIZE+0)
+	add  hl, hl
+	ld   (FH_FSIZE+0), hl
+	ld   hl, (FH_FSIZE+2)
+	adc  hl, hl
+	ld   (FH_FSIZE+2), hl
+	ret
+
+; ---- nombre de la API (HL, hasta NUL) -> FH_NAME83 (11B) + FH_NAMEDOT ----
+fh2_make83:
+	push hl
+	ld   hl, FH_NAME83				; rellenar con espacios
+	ld   b, 11
+.m8_sp:
+	ld   (hl), ' '
+	inc  hl
+	djnz .m8_sp
+	pop  hl
+	; localizar el ULTIMO punto (extension)
+	push hl
+	ld   de, 0						; DE = ptr ultimo punto (0 = ninguno)
+.m8_dot:
+	ld   a, (hl)
+	or   a
+	jr   z, .m8_dend
+	cp   '.'
+	jr   nz, .m8_dn
+	ld   d, h
+	ld   e, l
+.m8_dn:
+	inc  hl
+	jr   .m8_dot
+.m8_dend:
+	ld   (FH_EXTP), de
+	pop  hl
+	; base: hasta 8 chars validos (para antes del ultimo punto)
+	ld   ix, FH_NAME83
+	ld   b, 8
+.m8_b:
+	ld   a, (hl)
+	or   a
+	jr   z, .m8_ext
+	ld   de, (FH_EXTP)
+	ld   c, a
+	ld   a, d
+	or   e
+	jr   z, .m8_b1
+	push hl
+	or   a
+	sbc  hl, de
+	pop  hl
+	jr   nc, .m8_ext				; llegamos al punto de la extension
+.m8_b1:
+	ld   a, c
+	inc  hl
+	call fh2_valid					; CF=1 invalido (saltar)
+	jr   c, .m8_b
+	ld   (ix+0), a
+	inc  ix
+	djnz .m8_b
+.m8_ext:
+	; extension: 3 validos tras el ultimo punto
+	ld   hl, (FH_EXTP)
+	ld   a, h
+	or   l
+	jr   z, .m8_dotname
+	inc  hl							; saltar el punto
+	ld   ix, FH_NAME83+8
+	ld   b, 3
+.m8_e:
+	ld   a, (hl)
+	or   a
+	jr   z, .m8_dotname
+	inc  hl
+	call fh2_valid
+	jr   c, .m8_e
+	ld   (ix+0), a
+	inc  ix
+	djnz .m8_e
+.m8_dotname:
+	; construir "BASE.EXT",0 en FH_NAMEDOT (para el matching del listado)
+	ld   hl, FH_NAME83
+	ld   de, FH_NAMEDOT
+	ld   b, 8
+.m8_c1:
+	ld   a, (hl)
+	cp   ' '
+	jr   z, .m8_c1n
+	ld   (de), a
+	inc  de
+.m8_c1n:
+	inc  hl
+	djnz .m8_c1
+	ld   a, (FH_NAME83+8)
+	cp   ' '
+	jr   z, .m8_c3
+	ld   a, '.'
+	ld   (de), a
+	inc  de
+	ld   hl, FH_NAME83+8
+	ld   b, 3
+.m8_c2:
+	ld   a, (hl)
+	cp   ' '
+	jr   z, .m8_c2n
+	ld   (de), a
+	inc  de
+.m8_c2n:
+	inc  hl
+	djnz .m8_c2
+.m8_c3:
+	xor  a
+	ld   (de), a
+	ret
+
+; char valido 8.3: A-Z 0-9 (a-z se sube); resto invalido (CF=1)
+fh2_valid:
+	cp   'a'
+	jr   c, .v_1
+	cp   'z'+1
+	jr   nc, .v_1
+	sub  #20						; a mayusculas
+.v_1:
+	cp   '0'
+	jr   c, .v_no
+	cp   '9'+1
+	jr   c, .v_ok
+	cp   'A'
+	jr   c, .v_no
+	cp   'Z'+1
+	jr   nc, .v_no
+.v_ok:
+	or   a
+	ret
+.v_no:
+	scf
+	ret
+
+; ---- escribe A en decimal ASCII en (DE) (1-3 digitos) ----
+fh2_wdec8:
+	ld   c, 0
+	ld   b, 100
+	call .w_dig
+	ld   b, 10
+	call .w_dig
+	add  a, '0'
+	ld   (de), a
+	inc  de
+	ret
+.w_dig:
+	ld   l, '0'-1
+.w_sub:
+	inc  l
+	sub  b
+	jr   nc, .w_sub
+	add  a, b
+	ld   h, a
+	ld   a, l
+	cp   '0'
+	jr   nz, .w_out
+	bit  0, c
+	jr   z, .w_skip
+.w_out:
+	ld   (de), a
+	inc  de
+	ld   c, 1
+.w_skip:
+	ld   a, h
+	ret
+
+; ---- HL = cluster FAT16 -> SD_LBA = DATA_LBA + (HL-2) << SPC_SHIFT ----
+fh2_clus2lba:
+	dec  hl
+	dec  hl
+	ld   e, 0						; E = bits 16-23 del offset
+	ld   a, (SPC_SHIFT)
+	or   a
+	jr   z, .cl_add
+	ld   b, a
+.cl_sh:
+	add  hl, hl
+	rl   e
+	djnz .cl_sh
+.cl_add:
+	ld   a, e
+	ld   de, (DATA_LBA+0)
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   l, a
+	ld   h, 0
+	ld   de, (DATA_LBA+2)
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	ret
+
+; ---- FAT16[NEW_CLUS] = FH_FATVAL en ambas copias (patron mark_cluster_eof) --
+fh2_fat_set:
+	ld   hl, (NEW_CLUS)
+	ld   a, h
+	ld   (FH2_SEC), a
+	ld   h, 0
+	ld   a, (NEW_CLUS+0)
+	ld   l, a
+	add  hl, hl
+	ld   (FH2_OFF), hl
+	ld   hl, (FAT_LBA+0)
+	ld   a, (FH2_SEC)
+	ld   e, a
+	ld   d, 0
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (FAT_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .fs_err
+	ld   hl, SD_BUF
+	ld   de, (FH2_OFF)
+	add  hl, de
+	ld   a, (FH_FATVAL+0)
+	ld   (hl), a
+	inc  hl
+	ld   a, (FH_FATVAL+1)
+	ld   (hl), a
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .fs_err
+	ld   a, (NUM_FATS)
+	cp   2
+	jr   c, .fs_ok
+	ld   hl, (SD_LBA+0)
+	ld   de, (FAT_SZ)
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (SD_LBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .fs_err
+.fs_ok:
+	or   a
+	ret
+.fs_err:
+	scf
+	ret
+
+; ---- asigna el siguiente cluster de la cadena (EOF + enlace desde FH_PREV) --
+fh2_alloc:
+	call find_free_cluster			; DE = libre / CF=1
+	ret  c
+	ld   (FH_CURC), de
+	ld   (NEW_CLUS), de
+	call mark_cluster_eof			; EOF en el nuevo (lo saca del pool)
+	ret  c
+	ld   hl, (FH_PREV)
+	ld   a, h
+	or   l
+	jr   z, .al_first
+	ld   (NEW_CLUS), hl				; enlazar FH_PREV -> FH_CURC
+	ld   hl, (FH_CURC)
+	ld   (FH_FATVAL), hl
+	call fh2_fat_set
+	ret  c
+	jr   .al_done
+.al_first:
+	ld   hl, (FH_CURC)
+	ld   (FH_CLUS0), hl
+.al_done:
+	ld   hl, (FH_CURC)
+	ld   (FH_PREV), hl
+	ld   (NEW_CLUS), hl
+	or   a
+	ret
+
+; ---- vuelca SD_BUF al sector actual del fichero (asigna cluster si toca) ----
+; CF=1 error con HL = mensaje. Deja el ESP re-mapeado en pag.1 al salir.
+fh2_flush:
+	ld   a, (FH_SECN)
+	or   a
+	jr   nz, .fl_have
+	; sector 0 del cluster: asignar el siguiente de la cadena.
+	; OJO: fh2_alloc/find_free usan SD_BUF -> preservar el sector montado
+	ld   hl, SD_BUF
+	ld   de, FH_SAVED
+	ld   bc, 512
+	ldir
+	call fh2_alloc
+	jp   c, .fl_nsp
+	ld   hl, FH_SAVED
+	ld   de, SD_BUF
+	ld   bc, 512
+	ldir
+.fl_have:
+	ld   hl, (FH_CURC)
+	call fh2_clus2lba				; SD_LBA = base del cluster
+	ld   a, (FH_SECN)
+	ld   e, a
+	ld   d, 0
+	ld   hl, (SD_LBA+0)
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	jr   nc, .fl_w
+	ld   hl, (SD_LBA+2)
+	inc  hl
+	ld   (SD_LBA+2), hl
+.fl_w:
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jp   nz, .fl_err
+	ld   a, (FH_SECN)
+	inc  a
+	ld   c, a
+	ld   a, (SEC_PER_CLUS)
+	cp   c
+	jr   nz, .fl_ns
+	ld   c, 0
+.fl_ns:
+	ld   a, c
+	ld   (FH_SECN), a
+	; progreso: un punto cada 32KB (64 sectores)
+	ld   hl, (FH_DOTK)
+	inc  hl
+	ld   (FH_DOTK), hl
+	ld   a, l
+	and  #3F
+	jr   nz, .fl_map
+	ld   a, '.'
+	call #00A2
+.fl_map:
+	di								; el ESP de vuelta a pag.1 para el RCV
+	ld   a, ESP_SLOT
+	ld   hl, #4000
+	call ENASLT
+	ei
+	or   a
+	ret
+.fl_nsp:
+	ld   hl, fh2_e_full
+	jr   .fl_e2
+.fl_err:
+	ld   hl, fh2_e_sd
+.fl_e2:
+	push hl
+	di
+	ld   a, ESP_SLOT
+	ld   hl, #4000
+	call ENASLT
+	ei
+	pop  hl
+	scf
+	ret
+
+; ---- asegura la carpeta FHUNT en la raiz -> FH_DIRCLUS / CF=1 (HL=msg) ----
+fh2_fhunt_ensure:
+	ld   hl, (ROOT_LBA+0)
+	ld   (FH_DLBA+0), hl
+	ld   hl, (ROOT_LBA+2)
+	ld   (FH_DLBA+2), hl
+	ld   a, (ROOT_SECS)
+	ld   (FH_DSECS), a
+	ld   hl, fh2_n_fhunt
+	call fh2_dfind					; busca en la raiz / CF=1 no esta
+	jr   c, .fe_mk
+	; existe: cluster en DE (comprobar que es carpeta: attr bit4)
+	bit  4, b
+	ld   hl, fh2_e_dir
+	jr   z, .fe_bad
+	ld   (FH_DIRCLUS), de
+	or   a
+	ret
+.fe_bad:
+	scf
+	ret
+.fe_mk:
+	; crear FHUNT: cluster + EOF + limpiar + "." / ".." + dirent en la raiz
+	call find_free_cluster
+	ld   hl, fh2_e_full
+	ret  c
+	ld   (FH_DIRCLUS), de
+	ld   (NEW_CLUS), de
+	call mark_cluster_eof
+	ld   hl, fh2_e_sd
+	ret  c
+	; limpiar los sectores del cluster
+	ld   hl, SD_BUF					; SD_BUF = 512 ceros
+	ld   d, h
+	ld   e, l
+	inc  de
+	ld   (hl), 0
+	ld   bc, 511
+	ldir
+	ld   a, (SEC_PER_CLUS)
+	ld   (FH2_LEFT), a
+	ld   hl, (FH_DIRCLUS)
+	call fh2_clus2lba
+.fe_z:
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	ld   hl, fh2_e_sd
+	jp   nz, .fe_sderr
+	call inc_sd_lba
+	ld   a, (FH2_LEFT)
+	dec  a
+	ld   (FH2_LEFT), a
+	jr   nz, .fe_z
+	; "." y ".." en el primer sector del cluster
+	ld   hl, SD_BUF
+	ld   d, h
+	ld   e, l
+	inc  de
+	ld   (hl), 0
+	ld   bc, 511
+	ldir
+	ld   ix, SD_BUF
+	ld   b, 11
+	ld   hl, fh2_n_dot
+.fe_d1:
+	ld   a, (hl)
+	ld   (ix+0), a
+	inc  hl
+	inc  ix
+	djnz .fe_d1
+	ld   ix, SD_BUF
+	ld   (ix+11), FH_ADIR
+	ld   hl, (FH_DIRCLUS)
+	ld   (ix+26), l
+	ld   (ix+27), h
+	ld   ix, SD_BUF+32
+	ld   b, 11
+	ld   hl, fh2_n_ddot
+.fe_d2:
+	ld   a, (hl)
+	ld   (ix+0), a
+	inc  hl
+	inc  ix
+	djnz .fe_d2
+	ld   ix, SD_BUF+32
+	ld   (ix+11), FH_ADIR			; ".." cluster 0 = raiz (FAT16)
+	ld   hl, (FH_DIRCLUS)
+	call fh2_clus2lba
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	ld   hl, fh2_e_sd
+	jp   nz, .fe_sderr
+	; dirent "FHUNT" en la raiz
+	ld   hl, (FH_DIRCLUS)
+	ld   (FH_DE_CLUS), hl
+	xor  a
+	ld   (FH_DE_ATTR), a			; se fija abajo
+	ld   a, FH_ADIR
+	ld   (FH_DE_ATTR), a
+	ld   hl, 0
+	ld   (FH_DE_SIZ+0), hl
+	ld   (FH_DE_SIZ+2), hl
+	ld   hl, (ROOT_LBA+0)
+	ld   (FH_DLBA+0), hl
+	ld   hl, (ROOT_LBA+2)
+	ld   (FH_DLBA+2), hl
+	ld   a, (ROOT_SECS)
+	ld   (FH_DSECS), a
+	ld   hl, fh2_n_fhunt
+	call fh2_dwrite
+	ld   hl, fh2_e_dir
+	ret  c
+	or   a
+	ret
+.fe_sderr:
+	scf
+	ret
+
+; ---- busca nombre (HL, 11B) en la region de directorio FH_DLBA/FH_DSECS ----
+; CF=0: DE = cluster de la entrada, B = attr, FH_FSIZ2 = size (4B)
+fh2_dfind:
+	ld   (FH_NPTR), hl
+	ld   hl, (FH_DLBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (FH_DLBA+2)
+	ld   (SD_LBA+2), hl
+	ld   a, (FH_DSECS)
+	ld   (FH2_LEFT), a
+.df_sec:
+	ld   a, (FH2_LEFT)
+	or   a
+	jp   z, .df_no
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jp   nz, .df_no
+	ld   ix, SD_BUF
+	ld   b, 16
+.df_ent:
+	ld   a, (ix+0)
+	or   a
+	jp   z, .df_no					; fin de directorio
+	cp   #E5
+	jr   z, .df_next
+	push bc
+	ld   hl, (FH_NPTR)
+	push ix
+	pop  de
+	ld   b, 11
+.df_cmp:
+	ld   a, (de)
+	cp   (hl)
+	jr   nz, .df_nm
+	inc  hl
+	inc  de
+	djnz .df_cmp
+	pop  bc
+	; match!
+	ld   e, (ix+26)
+	ld   d, (ix+27)
+	ld   b, (ix+11)
+	ld   l, (ix+28)
+	ld   h, (ix+29)
+	ld   (FH_FSIZ2+0), hl
+	ld   l, (ix+30)
+	ld   h, (ix+31)
+	ld   (FH_FSIZ2+2), hl
+	or   a
+	ret
+.df_nm:
+	pop  bc
+.df_next:
+	ld   de, 32
+	add  ix, de
+	djnz .df_ent
+	call inc_sd_lba
+	ld   a, (FH2_LEFT)
+	dec  a
+	ld   (FH2_LEFT), a
+	jr   .df_sec
+.df_no:
+	scf
+	ret
+
+; ---- crea/sobrescribe la entrada (HL=nombre 11B) en FH_DLBA/FH_DSECS ----
+; campos: FH_DE_ATTR, FH_DE_CLUS, FH_DE_SIZ. CF=1 sin hueco / error SD.
+fh2_dwrite:
+	ld   (FH_NPTR), hl
+	ld   hl, (FH_DLBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (FH_DLBA+2)
+	ld   (SD_LBA+2), hl
+	ld   a, (FH_DSECS)
+	ld   (FH2_LEFT), a
+.dw_sec:
+	ld   a, (FH2_LEFT)
+	or   a
+	jp   z, .dw_err
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jp   nz, .dw_err
+	ld   ix, SD_BUF
+	ld   b, 16
+.dw_ent:
+	ld   a, (ix+0)
+	or   a
+	jp   z, .dw_put					; libre (fin de dir)
+	cp   #E5
+	jp   z, .dw_put					; borrado: reutilizar
+	push bc
+	ld   hl, (FH_NPTR)				; mismo nombre: sobrescribir
+	push ix
+	pop  de
+	ld   b, 11
+.dw_cmp:
+	ld   a, (de)
+	cp   (hl)
+	jr   nz, .dw_nm
+	inc  hl
+	inc  de
+	djnz .dw_cmp
+	pop  bc
+	jr   .dw_put
+.dw_nm:
+	pop  bc
+	ld   de, 32
+	add  ix, de
+	djnz .dw_ent
+	call inc_sd_lba
+	ld   a, (FH2_LEFT)
+	dec  a
+	ld   (FH2_LEFT), a
+	jr   .dw_sec
+.dw_put:
+	push ix							; limpiar los 32 bytes
+	pop  hl
+	ld   d, h
+	ld   e, l
+	inc  de
+	ld   (hl), 0
+	ld   bc, 31
+	ldir
+	push ix							; nombre 11B
+	pop  de
+	ld   hl, (FH_NPTR)
+	ld   b, 11
+.dw_nc:
+	ld   a, (hl)
+	ld   (de), a
+	inc  hl
+	inc  de
+	djnz .dw_nc
+	ld   a, (FH_DE_ATTR)
+	ld   (ix+11), a
+	ld   hl, (FH_DE_CLUS)
+	ld   (ix+26), l
+	ld   (ix+27), h
+	ld   a, (FH_DE_SIZ+0)
+	ld   (ix+28), a
+	ld   a, (FH_DE_SIZ+1)
+	ld   (ix+29), a
+	ld   a, (FH_DE_SIZ+2)
+	ld   (ix+30), a
+	ld   a, (FH_DE_SIZ+3)
+	ld   (ix+31), a
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jp   nz, .dw_err
+	or   a
+	ret
+.dw_err:
+	scf
+	ret
+
+; ---- entrada final del fichero descargado en FHUNT ----
+fh2_dirent:
+	ld   hl, (FH_DIRCLUS)
+	call fh2_clus2lba				; region = cluster de FHUNT
+	ld   hl, (SD_LBA+0)
+	ld   (FH_DLBA+0), hl
+	ld   hl, (SD_LBA+2)
+	ld   (FH_DLBA+2), hl
+	ld   a, (SEC_PER_CLUS)
+	ld   (FH_DSECS), a
+	ld   a, FH_AARC
+	ld   (FH_DE_ATTR), a
+	ld   hl, (FH_CLUS0)
+	ld   (FH_DE_CLUS), hl
+	ld   hl, (FH_FSIZE+0)
+	ld   (FH_DE_SIZ+0), hl
+	ld   hl, (FH_FSIZE+2)
+	ld   (FH_DE_SIZ+2), hl
+	ld   hl, FH_NAME83
+	jp   fh2_dwrite					; CF segun resultado
+
+; ---- localiza FH_NAMEDOT en ENT_ARRAY -> BR_SEL (CF=1 no encontrado) ----
+fh2_findsel:
+	ld   a, (ENT_COUNT)
+	or   a
+	jr   z, .fs_no
+	ld   c, a						; C = entradas restantes
+	ld   b, 0						; B = indice
+.fs_i:
+	ld   a, b
+	push bc
+	call ent_addr					; HL -> entrada
+	ld   de, 9
+	add  hl, de						; +9 = nombre
+	ld   de, FH_NAMEDOT
+.fs_c:
+	ld   a, (de)
+	cp   (hl)
+	jr   nz, .fs_n
+	or   a
+	jr   z, .fs_hit					; ambos NUL: match completo
+	inc  hl
+	inc  de
+	jr   .fs_c
+.fs_hit:
+	pop  bc
+	ld   a, b
+	ld   (BR_SEL), a
+	or   a
+	ret
+.fs_n:
+	pop  bc
+	inc  b
+	dec  c
+	jr   nz, .fs_i
+.fs_no:
+	scf
+	ret
+
+fh2_k_size:	.db "size:",0
+fh2_k_name:	.db "name:",0
+fh2_n_fhunt:	.db "FHUNT      "
+fh2_n_dot:	.db ".          "
+fh2_n_ddot:	.db "..         "
+fh2_req_dl:	.db "&download=",0
+fh2_m_prep:	.db "FH: preparando descarga...",0
+fh2_m_down:	.db "FH: bajando ",0
+fh2_e_fat32:	.db "FH: la SD es FAT32 (v1 solo FAT16). Tecla",0
+fh2_e_dl:	.db "FH: error/timeout de descarga. Tecla",0
+fh2_e_api:	.db "FH: respuesta inesperada de la API. Tecla",0
+fh2_e_sd:	.db "FH: error escribiendo en la SD. Tecla",0
+fh2_e_full:	.db "FH: sin espacio libre en la SD. Tecla",0
+fh2_e_dir:	.db "FH: error con la carpeta FHUNT. Tecla",0
+
+
 ; ############## Variables
 
 	var_mapper: ds 1
@@ -6168,6 +7432,36 @@ ENDIF
 	FH_RETTMP:  ds 2
 	FH_DOTC:    ds 1
 	FH_RETRIED: ds 1
+
+	; File-Hunter fase 2 (descarga a FHUNT + lanzar)
+	FH_ITEM:    ds 1
+	FH_METAP:   ds 2
+	FH_NAME83:  ds 11
+	FH_NAMEDOT: ds 13
+	FH_EXTP:    ds 2
+	FH_DIRCLUS: ds 2
+	FH_CURC:    ds 2
+	FH_PREV:    ds 2
+	FH_CLUS0:   ds 2
+	FH_SECN:    ds 1
+	FH_FILL:    ds 2
+	FH_FATVAL:  ds 2
+	FH2_SEC:    ds 1
+	FH2_OFF:    ds 2
+	FH2_LEFT:   ds 1
+	FH_WLEFT:   ds 4
+	FH_FSIZE:   ds 4
+	FH_FSIZ2:   ds 4
+	FH_T10:     ds 4
+	FH_DOTK:    ds 2
+	FH_DLBA:    ds 4
+	FH_DSECS:   ds 1
+	FH_NPTR:    ds 2
+	FH_DE_ATTR: ds 1
+	FH_DE_CLUS: ds 2
+	FH_DE_SIZ:  ds 4
+	FH_RXN:     ds 2
+	FH_RXP:     ds 2
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
