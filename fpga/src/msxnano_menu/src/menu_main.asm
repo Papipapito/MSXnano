@@ -4950,16 +4950,14 @@ main_action_unapi_test:
 	ldir
 	ei
 
-	xor  a
-	ld   (FH_RETRIED), a
-.fh_disc:
-	; 1) hook EXTBIO presente?
+	; 1) diagnostico del discovery: imprime HOKVLD y el numero de
+	; implementaciones ANTES de decidir (para distinguir en frio si falta el
+	; hook o si el driver responde 0)
+	ld   hl, fh_m_hok
+	call ver_puts
 	ld   a, (FH_HOKVLD)
-	bit  0, a
-	ld   hl, fh_m_noextb
-	jp   z, .fh_retry
-
-	; 2) discovery: cuantas implementaciones "TCP/IP"?
+	and  1
+	call fh_dec8					; H:0 = hook EXTBIO ausente
 	ld   hl, fh_id
 	ld   de, FH_ARG
 	ld   bc, 7
@@ -4968,21 +4966,20 @@ main_action_unapi_test:
 	ld   b, a
 	ld   de, #2222
 	call FH_EXTBIO					; -> B = numero de implementaciones
+	ld   hl, fh_m_nimp
+	call ver_puts
+	ld   a, b
+	push bc
+	call fh_dec8					; N:0 = driver instalado "sin ESP"
+	pop  bc
+	ld   a, (FH_HOKVLD)
+	bit  0, a
+	ld   hl, fh_m_noextb
+	jp   z, .fh_fail
 	ld   a, b
 	or   a
 	ld   hl, fh_m_noimpl
-	jp   nz, .fh_disc_ok
-.fh_retry:
-	; discovery fallido: en frio el INIT de boot corrio con el ESP aun
-	; arrancando -> re-lanzar el INIT del driver UNA vez y reintentar
-	ld   a, (FH_RETRIED)
-	or   a
-	jp   nz, .fh_fail				; ya reintentado: error de verdad (HL=msg)
-	ld   a, 1
-	ld   (FH_RETRIED), a
-	call fh_reinit_driver
-	jp   .fh_disc
-.fh_disc_ok:
+	jp   z, .fh_fail
 
 	; 3) datos de la implementacion 1 (AQUI el driver asigna HIMEM+H.TIMI)
 	ld   a, 1
@@ -5282,6 +5279,8 @@ fh_m_ok:	.db 13,10,10,"TEST OK - UNAPI operativo en el menu",0
 fh_m_key:	.db 13,10,10,"Pulsa una tecla para volver",0
 fh_m_u7:	.db 13,10,"U7:",0
 fh_m_rein:	.db 13,10,"Re-iniciando driver ESP...",13,10,0
+fh_m_hok:	.db 13,10,"H:",0
+fh_m_nimp:	.db " N:",0
 fh_m_dq:	.db 13,10,"D:",0
 fh_m_p1:	.db 13,10,"P:",0
 fh_m_rst:	.db 13,10,"R:",0
@@ -5832,7 +5831,8 @@ fh_strcpy:
 	inc  de
 	jr   fh_strcpy
 
-; ---- re-init del driver ESP (la cura real del fallo en frio) ----
+; ---- re-init del driver ESP (NO USADO: colgaba llamado desde el menu; el
+;      fix real es el retraso de power-on en la FPGA. Se conserva de referencia) ----
 ; En frio, el INIT de boot del cartucho ESP corre ANTES de que el ESP-01 haya
 ; terminado de arrancar: el driver queda instalado "sin ESP" y su DO_EXTBIO
 ; responde 0 implementaciones PARA SIEMPRE (y el 2o pase del goauld se corta
@@ -5977,12 +5977,9 @@ fh_net_begin:
 	ld   bc, 5
 	ldir
 	ei
-	xor  a
-	ld   (FH_RETRIED), a
-.nb_disc:
 	ld   a, (FH_HOKVLD)
 	bit  0, a
-	jr   z, .nb_retry
+	jr   z, .nb_no
 	ld   hl, fh_id
 	ld   de, FH_ARG
 	ld   bc, 7
@@ -5993,16 +5990,7 @@ fh_net_begin:
 	call FH_EXTBIO					; contar implementaciones
 	ld   a, b
 	or   a
-	jr   nz, .nb_disc_ok
-.nb_retry:
-	ld   a, (FH_RETRIED)			; discovery fallido: re-init del driver
-	or   a							; (fallo en frio) y UN reintento
-	jr   nz, .nb_no
-	ld   a, 1
-	ld   (FH_RETRIED), a
-	call fh_reinit_driver
-	jr   .nb_disc
-.nb_disc_ok:
+	jr   z, .nb_no
 	ld   a, 1
 	ld   de, #2222
 	call FH_EXTBIO					; datos: A=slot, HL=entry (asigna area!)

@@ -819,6 +819,30 @@ assign keyboard_addr = ppi_port_c[3:0];
     end
 `endif
 
+    // ===== v1.9-fh: retraso de power-on para el ESP-01S (WiFi) =====
+    // El INIT del driver ESP corre en el escaneo de slots ~1-2s tras dar
+    // corriente, pero el ESP-01S tarda ~3-5s en arrancar: quedaba instalado
+    // "sin ESP" (discovery UNAPI = 0 implementaciones) hasta re-init manual
+    // via el setup W. Retener el Z80 en reset ~3s SOLO en el power-on da
+    // tiempo al ESP y el INIT lo encuentra a la primera. El contador SATURA
+    // y no se re-arma: los soft-reset siguen siendo instantaneos (regla de la
+    // megaram) y el coste real es ~1.5-2s extra (el stream de flash ya tapa
+    // parte). Sin ENABLE_WIFI no aplica.
+`ifdef ENABLE_WIFI
+    reg [26:0] esp_boot_cnt = 0;
+    reg        esp_boot_ok  = 0;
+    always @(posedge clk_27m) begin
+        if (!esp_boot_ok) begin
+            if (esp_boot_cnt == 27'd81000000)   // ~3.0s @ 27 MHz
+                esp_boot_ok <= 1;
+            else
+                esp_boot_cnt <= esp_boot_cnt + 1'b1;
+        end
+    end
+`else
+    wire esp_boot_ok = 1'b1;
+`endif
+
     // ===== Turbo mode toggle (F11) =====
     // Default turbo=0 -> M1 wait active -> ~100% real-MSX speed (3.58MHz behaviour).
     // Press F11 (USB HID usage 0x44 = keyboard[68]) to toggle. v1.9: turbo=1 switches
@@ -933,7 +957,7 @@ assign keyboard_addr = ppi_port_c[3:0];
         //.T2Write (0),     //0 => WR_n active in T3, /=0 => WR_n active in T2
         .IOWait   (1)      // 0 => Single I/O cycle, 1 => Std I/O cycle
     ) cpu1 (
-        .RESET_n   (bus_reset_n & reset3_n & flash_idle),
+        .RESET_n   (bus_reset_n & reset3_n & flash_idle & esp_boot_ok),
         .CLK_n     (clk_54m),
     `ifdef ENABLE_WAIT
       `ifdef ENABLE_M1_WAIT
