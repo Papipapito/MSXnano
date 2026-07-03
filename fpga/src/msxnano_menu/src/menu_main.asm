@@ -5012,30 +5012,149 @@ main_action_unapi_test:
 	ld   a, c
 	call fh_dec8
 
-	; 5) estado de red (1 lectura, INFORMATIVA): el gate real es el DNS con
-	; despertador - tras el WIFIRELEASE del boot la radio puede estar dormida
-	; y NET_STATE no abre nunca por si solo (bug visto en HW: U daba "sin red"
-	; hasta pasar por el setup W). Ver fh_dns_wake.
-	ld   hl, fh_m_net
+	; 5+6) DIAGNOSTICO de red (temporal): imprime codigos crudos de cada paso
+	; para cazar por que el driver falla en frio hasta pasar por el setup W.
+	; Formato: U7:<status UART> / S:e<err>b<estado> (NET_STATE) /
+	; D:<err DNS_Q> / P: a<err>b<B> x8 (DNS_S cada ~2s) / R:<drenados> tras
+	; warm-reset / P2: otra tanda de DNS_S / IP si resuelve.
+	ld   hl, fh_m_u7
 	call ver_puts
-	ld   a, 3						; TCPIP_NET_STATE -> B=estado (2=abierta)
+	in   a, (#07)					; status UART al entrar (bit0=dato pendiente!)
+	call fh_hex8
+
+	ld   hl, fh_m_net				; "Red: " -> S:e<A>b<B>
+	call ver_puts
+	ld   a, 3						; TCPIP_NET_STATE
 	call fh_unapi
+	push bc
+	push af
+	ld   a, 'e'
+	call #00A2
+	pop  af
+	call fh_dec8					; err devuelto (15=timeout driver!)
+	ld   a, 'b'
+	call #00A2
+	pop  bc
+	ld   a, b
+	call fh_dec8					; estado (solo valido si err=0)
+
+	ld   hl, fh_m_dq				; " D:" primer DNS_Q en frio
+	call ver_puts
+	ld   hl, fh_host
+	ld   b, 0
+	ld   a, 6						; TCPIP_DNS_Q
+	call fh_unapi
+	call fh_dec8					; err del DNS_Q
+
+	ld   hl, fh_m_p1				; " P:" sondeos DNS_S
+	call ver_puts
+	ld   a, 8
+	ld   (FH_TRIES), a
+.fh_dg1:
+	ld   b, 120						; ~2s
+.fh_dg1w:
+	halt
+	djnz .fh_dg1w
+	ld   b, 1
+	ld   a, 7						; TCPIP_DNS_S
+	call fh_unapi
+	push bc
+	push af
+	ld   a, 'a'
+	call #00A2
+	pop  af
+	call fh_dec8
+	ld   a, 'b'
+	call #00A2
+	pop  bc
 	ld   a, b
 	call fh_dec8
-
-	; 6) DNS de api.file-hunter.com con despertador de radio (~32s max)
-	ld   hl, fh_m_dns
-	call ver_puts
-	call fh_dns_wake				; CF=1 agotado; IP en FH_TCPP+0..3
-	jr   nc, .fh_dns_done
-	ld   hl, fh_m_dnserr
-	call ver_puts
-	ld   a, 15
-	call fh_dec8
-	jp   .fh_cleanup
-.fh_dns_done:
 	ld   a, ' '
 	call #00A2
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jr   nz, .fh_dg1
+
+	ld   hl, fh_m_rst				; warm-reset del ESP + drenaje contado
+	call ver_puts
+	ld   a, 20
+	out  (#06), a					; CLEAR_UART
+	xor  a
+	out  (#06), a					; SET_SPEED
+	halt
+	halt
+	ld   a, 'W'						; CMD_WRESET_ESP
+	out  (#07), a
+	ld   b, 180						; ~3s reboot
+.fh_dgb:
+	halt
+	djnz .fh_dgb
+	ld   c, 0						; contar drenados
+.fh_dgd:
+	in   a, (#07)
+	bit  0, a
+	jr   z, .fh_dgdd
+	in   a, (#06)
+	inc  c
+	ld   a, c
+	cp   200
+	jr   c, .fh_dgd
+.fh_dgdd:
+	ld   a, c
+	call fh_dec8					; bytes drenados tras el reset
+	ld   a, 20
+	out  (#06), a					; UART limpia
+
+	ld   hl, fh_m_p2				; " P2:" DNS de nuevo tras el reset
+	call ver_puts
+	ld   hl, fh_host
+	ld   b, 0
+	ld   a, 6
+	call fh_unapi
+	call fh_dec8					; err del DNS_Q post-reset
+	ld   a, ' '
+	call #00A2
+	ld   a, 10
+	ld   (FH_TRIES), a
+.fh_dg2:
+	ld   b, 120
+.fh_dg2w:
+	halt
+	djnz .fh_dg2w
+	ld   b, 1
+	ld   a, 7
+	call fh_unapi
+	or   a
+	jr   nz, .fh_dg2e
+	ld   a, b
+	cp   2
+	jr   z, .fh_dgok				; resuelto!
+	ld   a, b
+.fh_dg2e:
+	push af
+	ld   a, 'a'
+	call #00A2
+	pop  af
+	call fh_dec8
+	ld   a, ' '
+	call #00A2
+	ld   a, (FH_TRIES)
+	dec  a
+	ld   (FH_TRIES), a
+	jr   nz, .fh_dg2
+	jr   .fh_dgfin					; agotado
+.fh_dgok:
+	ld   a, l						; IP resuelta: L.H.E.D
+	ld   (FH_TCPP+0), a
+	ld   a, h
+	ld   (FH_TCPP+1), a
+	ld   a, e
+	ld   (FH_TCPP+2), a
+	ld   a, d
+	ld   (FH_TCPP+3), a
+	ld   hl, fh_m_dns
+	call ver_puts
 	ld   a, (FH_TCPP+0)
 	call fh_dec8
 	ld   a, '.'
@@ -5052,6 +5171,7 @@ main_action_unapi_test:
 	call fh_dec8
 	ld   hl, fh_m_ok
 	call ver_puts
+.fh_dgfin:
 
 	; 7) limpieza OBLIGATORIA: pagina 1 al menu + desinstalar area del driver
 .fh_cleanup:
@@ -5146,6 +5266,11 @@ fh_m_dns:	.db 13,10,"DNS api.file-hunter.com: ",0
 fh_m_dnserr:	.db "error ",0
 fh_m_ok:	.db 13,10,10,"TEST OK - UNAPI operativo en el menu",0
 fh_m_key:	.db 13,10,10,"Pulsa una tecla para volver",0
+fh_m_u7:	.db 13,10,"U7:",0
+fh_m_dq:	.db 13,10,"D:",0
+fh_m_p1:	.db 13,10,"P:",0
+fh_m_rst:	.db 13,10,"R:",0
+fh_m_p2:	.db 13,10,"P2:",0
 
 ; --- FASE 1 FILE-HUNTER: buscar y listar online (tecla F) --------------------
 ; Pide una busqueda (>=2 chars), consulta la API index4 de file-hunter.com por
