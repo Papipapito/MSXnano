@@ -6163,19 +6163,28 @@ fh_enter_item:
 	call POSIT
 	ld   hl, fh2_m_prep				; "FH: preparando..."
 	call ver_puts
+	ld   a, 'A'
+	call #00A2						; DIAG fase 2
 
 	; ---- asegurar la carpeta FHUNT en la raiz (SD, sin red aun) ----
 	call fh2_fhunt_ensure			; -> FH_DIRCLUS / CF=1 error (HL=msg)
 	jp   c, fh_neterr
+	ld   a, 'B'
+	call #00A2						; DIAG fase 2
 
 	; ---- sesion de red + DNS + TCP open (como la fase 1) ----
 	call fh_net_begin
 	jp   c, fh_neterr
+	ld   a, 'C'
+	call #00A2						; DIAG fase 2
 	call fh_dns_wake
 	jr   nc, .f2_open
 	ld   hl, fh1_e_dns
 	jp   fh_neterr_end
 .f2_open:
+	ld   a, 'D'
+	call #00A2						; DIAG fase 2
+
 	ld   hl, FH_TCPP+4
 	ld   (hl), 80
 	inc  hl
@@ -6202,6 +6211,8 @@ fh_enter_item:
 	jp   nz, fh_neterr_end
 	ld   a, b
 	ld   (FH_CONN), a
+	ld   a, 'E'
+	call #00A2						; DIAG fase 2
 
 	; ---- GET con download=N (query original conservada en FH_QUERY) ----
 	ld   hl, fh1_req1
@@ -6256,6 +6267,8 @@ fh_enter_item:
 
 	; ---- recepcion: cabeceras + linea meta, luego payload en streaming ----
 .f2_rx0:
+	ld   a, 'F'
+	call #00A2						; DIAG fase 2
 	xor  a
 	ld   (FH_STATE), a				; 0=cabeceras 1=meta 2=payload 8=error
 	ld   (FH_CRLF), a
@@ -6585,6 +6598,8 @@ fh2_meta:
 	ld   a, ' '
 	call #00A2
 	pop  hl
+	ld   a, 'G'
+	call #00A2						; DIAG fase 2
 	ld   a, 2
 	ld   (FH_STATE), a				; payload
 	ret
