@@ -6276,6 +6276,7 @@ fh_enter_item:
 .f2_rx0:
 	xor  a
 	ld   (FH_STATE), a				; 0=cabeceras 1=meta 2=payload 8=error
+	ld   (FH_DOOVR), a				; sin sobreescritura pedida aun
 	ld   (FH_CRLF), a
 	ld   (FH_HPOS), a
 	ld   (FH_SECN), a
@@ -6473,37 +6474,19 @@ fh_enter_item:
 	ld   a, 15						; TCPIP_TCP_ABORT
 	call fh_unapi
 	call fh_net_end
-	; ya existe en FHUNT (mismo nombre completo + tamano)?
-	call fh2_check_exists			; CF=0 existe (FH_OLDCLUS) / CF=1 no
-	jp   c, .f2_wnew
-	call fh2_ask_overwrite			; A = tecla
-	cp   'S'
-	jr   z, .f2_ovr
-	cp   's'
-	jr   z, .f2_ovr
-	; N: descartar el nuevo (liberar sus clusters), lanzar el viejo
-	ld   hl, (FH_CLUS0)
-	call fh2_free_chain
-	ld   hl, (FH_OLDCLUS)
-	ld   (FH_LAUNCHC), hl
-	jp   .f2_launch
-.f2_ovr:
-	; S: escribir el nuevo, luego borrar el viejo (dirents + cadena)
-	call fh2_dirent
+	call fh2_dirent					; escribir el nuevo (LFN+SFN)
 	jp   c, .f2_derr
-	call fh2_del_dirents			; CF=1 si no se borro el dirent viejo
-	jr   c, .f2_ovr_nofree			; -> NO liberar su cadena (evita cross-link)
+	ld   a, (FH_DOOVR)				; sobreescritura pedida en la meta?
+	or   a
+	jr   z, .f2_nofl_new
+	call fh2_del_dirents			; CF=1 si no se borro -> no liberar (cross-link)
+	jr   c, .f2_nofl_new
 	ld   hl, (FH_OLDCLUS)
 	call fh2_free_chain
-.f2_ovr_nofree:
+.f2_nofl_new:
 	ld   hl, (FH_CLUS0)
 	ld   (FH_LAUNCHC), hl
-	jp   .f2_launch
-.f2_wnew:
-	call fh2_dirent
-	jp   c, .f2_derr
-	ld   hl, (FH_CLUS0)
-	ld   (FH_LAUNCHC), hl
+fh2_launch:							; alias global (fh2_abort_old salta aqui)
 .f2_launch:
 	; listar FHUNT con el scan normal y auto-lanzar el fichero
 	xor  a
@@ -6652,6 +6635,26 @@ fh2_meta:
 	ld   a, ' '
 	call #00A2
 	pop  hl
+	; precheck: ya existe? (nombre+tamano) ANTES de bajar el payload
+	call fh2_check_exists			; CF=0 existe (FH_OLDCLUS)
+	push af
+	di								; sd_* dejaron pag.1 en el menu; volver al ESP
+	ld   a, ESP_SLOT
+	ld   hl, #4000
+	call ENASLT
+	ei
+	pop  af
+	jr   c, .m_go					; no existe -> descargar
+	call fh2_ask_overwrite			; A = tecla
+	cp   'S'
+	jr   z, .m_ovr
+	cp   's'
+	jr   z, .m_ovr
+	jp   fh2_abort_old				; N -> abortar SIN bajar el payload
+.m_ovr:
+	ld   a, 1
+	ld   (FH_DOOVR), a				; borrar el viejo al terminar
+.m_go:
 	ld   a, 2
 	ld   (FH_STATE), a				; payload
 	ret
@@ -7821,82 +7824,131 @@ fh2_findsel:
 	scf
 	ret
 
-; ---- comprueba si el fichero ya existe en FHUNT (mismo nombre + tamano) ----
-; Clave: nombre (primeros 70, lo que guarda el scan) + tamano exacto. Los hacks
-; comparten prefijo largo, por eso se exige tambien el tamano identico.
-; CF=0 existe (FH_OLDCLUS = su 1er cluster) / CF=1 no existe.
+; ---- existe en FHUNT? (scan DIRECTO: SD_BUF + LFN_BUF, NO ENT_ARRAY/FH_RXB) ----
+; Se llama TRAS parsear la meta y ANTES de bajar el payload, para poder abortar
+; sin descargar el juego. Reconstruye el nombre largo de cada fichero con
+; lfn_accumulate (a LFN_BUF, #C02C) y compara nombre(70)+tamano con FH_METAB +
+; FH_FSIZE. Usa SD_BUF/LFN_BUF (pag.3 baja), que NO solapan FH_RXB(#C400) ni
+; FH_METAB(#EA00), asi el resto del payload en FH_RXB sobrevive. CF=0 existe
+; (FH_OLDCLUS) / CF=1 no.
 fh2_check_exists:
-	ld   hl, (FH_DIRCLUS)			; scan FHUNT -> ENT_ARRAY (ficheros viejos)
-	ld   (CUR_CLUS+0), hl
-	ld   hl, 0
-	ld   (CUR_CLUS+2), hl
-	ld   a, 2
-	ld   (FILTER), a				; ALL
-	call scan_current
-	ld   hl, FH_METAB				; nombre objetivo (completo, en la meta)
+	ld   hl, FH_METAB
 	ld   de, fh2_k_name
 	call fh2_find
-	ret  c							; sin name: -> tratar como no existe
+	ret  c							; sin name -> no existe
 	ld   (FH_FNPTR), hl
-	ld   a, (ENT_COUNT)
+	ld   hl, (FH_DIRCLUS)
+	call fh2_clus2lba				; SD_LBA = 1er sector del cluster FHUNT
+	ld   a, (SEC_PER_CLUS)
+	ld   (FH2_LEFT), a
+	xor  a
+	ld   (HAVE_LFN), a
+.cx_sec:
+	ld   a, (FH2_LEFT)
 	or   a
-	jr   z, .ce_no
-	ld   c, a
-	ld   b, 0
-.ce_i:
+	jr   z, .cx_no
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .cx_no
+	ld   ix, SD_BUF
+	ld   b, 16
+.cx_ent:
+	ld   a, (ix+0)
+	or   a
+	jr   z, .cx_no					; fin de dir
+	cp   #E5
+	jr   z, .cx_reset				; borrado
+	ld   a, (ix+11)
+	cp   #0F
+	jr   z, .cx_lfn					; entrada LFN -> acumular (NO reset)
+	and  #18						; dir (#10) o volume-label (#08)?
+	jr   nz, .cx_reset
+	ld   a, (HAVE_LFN)				; fichero: tiene nombre largo acumulado?
+	or   a
+	jr   z, .cx_reset				; no -> ignorar
+	push bc							; B = contador de 16 entradas; fh2_cmp_entry lo pisa
+	call fh2_cmp_entry				; CF=0 match (nombre+tamano)
+	pop  bc							; restaurar B en match Y en mismatch
+	jr   nc, .cx_hit
+.cx_reset:
+	xor  a
+	ld   (HAVE_LFN), a
+	ld   de, 32
+	add  ix, de
+	djnz .cx_ent
+	jr   .cx_nextsec
+.cx_lfn:
 	push bc
-	ld   a, b
-	call ent_addr					; HL -> entrada
-	push hl							; guardar puntero de entrada
-	ld   de, 5
-	add  hl, de						; +5 = tamano (4B)
-	ld   de, FH_FSIZE
-	ld   b, 4
-.ce_sz:
-	ld   a, (de)
-	cp   (hl)
-	jr   nz, .ce_nx
-	inc  hl
-	inc  de
-	djnz .ce_sz
-	; tamano igual -> comparar nombre (+9), primeros 70 o hasta NUL comun
-	pop  hl
-	push hl
-	ld   de, 9
-	add  hl, de						; +9 = nombre de la entrada
-	ex   de, hl						; DE = nombre entrada
-	ld   hl, (FH_FNPTR)				; HL = nombre objetivo
-	ld   b, 70
-.ce_nm:
-	ld   a, (hl)
-	ld   c, a
-	ld   a, (de)
-	cp   c
-	jr   nz, .ce_nx
-	or   a
-	jr   z, .ce_hit					; ambos NUL antes de 70 -> match exacto
-	inc  hl
-	inc  de
-	djnz .ce_nm
-.ce_hit:
-	pop  hl							; HL = entrada
-	inc  hl							; +1 = cluster lo
-	ld   e, (hl)
-	inc  hl
-	ld   d, (hl)					; DE = cluster viejo (FAT16)
-	ld   (FH_OLDCLUS), de
+	call lfn_accumulate				; IX = entrada LFN -> LFN_BUF
 	pop  bc
+	ld   de, 32
+	add  ix, de
+	djnz .cx_ent
+.cx_nextsec:
+	call inc_sd_lba
+	ld   a, (FH2_LEFT)
+	dec  a
+	ld   (FH2_LEFT), a
+	jr   .cx_sec
+.cx_hit:
+	ld   l, (ix+26)
+	ld   h, (ix+27)
+	ld   (FH_OLDCLUS), hl
 	or   a							; CF=0 existe
 	ret
-.ce_nx:
-	pop  hl							; descartar puntero de entrada
-	pop  bc
-	inc  b
-	dec  c
-	jr   nz, .ce_i
-.ce_no:
+.cx_no:
 	scf
 	ret
+
+; ---- compara LFN_BUF (nombre) + (ix+28..31 tamano) con FH_FNPTR + FH_FSIZE ----
+; CF=0 si ambos coinciden.
+fh2_cmp_entry:
+	push ix							; tamano: ix+28..31 vs FH_FSIZE (4B)
+	pop  hl
+	ld   de, 28
+	add  hl, de
+	ld   de, FH_FSIZE
+	ld   b, 4
+.cme_sz:
+	ld   a, (de)
+	cp   (hl)
+	jr   nz, .cme_no
+	inc  hl
+	inc  de
+	djnz .cme_sz
+	ld   hl, LFN_BUF				; nombre: hasta el NUL comun (long. + contenido)
+	ld   de, (FH_FNPTR)
+	ld   b, 79						; LFN_BUF garantiza NUL en byte 78 (max 78 chars)
+.cme_nm:
+	ld   a, (de)
+	ld   c, a
+	ld   a, (hl)
+	cp   c
+	jr   nz, .cme_no
+	or   a
+	jr   z, .cme_yes				; ambos NUL a la vez -> mismo largo y contenido
+	inc  hl
+	inc  de
+	djnz .cme_nm
+	jr   .cme_no					; 79 iguales sin NUL comun -> NO match (evita colision de prefijo)
+.cme_yes:
+	or   a							; CF=0
+	ret
+.cme_no:
+	scf
+	ret
+
+; ---- N (no sobreescribir): abortar TCP sin bajar el payload, lanzar el viejo ----
+fh2_abort_old:
+	ld   a, (FH_CONN)
+	ld   b, a
+	ld   a, 15						; TCPIP_TCP_ABORT (descarta el payload pendiente)
+	call fh_unapi
+	call fh_net_end
+	ld   hl, (FH_OLDCLUS)
+	ld   (FH_LAUNCHC), hl
+	jp   fh2_launch
 
 ; ---- pregunta "sobreescribir?" -> A = tecla ----
 fh2_ask_overwrite:
@@ -8179,6 +8231,7 @@ ENDIF
 	FH_FREECUR: ds 2
 	FH_LFNRUN:  ds 2
 	FH_LAUNCHC: ds 2
+	FH_DOOVR:   ds 1
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
