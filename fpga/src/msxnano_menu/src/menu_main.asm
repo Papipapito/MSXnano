@@ -6598,8 +6598,27 @@ fh2_meta:
 	ld   a, ' '
 	call #00A2
 	pop  hl
+	; DIAG fase 2: mostrar tamano parseado (hex) + nombre 8.3 + PAUSA
 	ld   a, 'G'
-	call #00A2						; DIAG fase 2
+	call #00A2
+	ld   a, (FH_FSIZE+3)
+	call fh_hex8
+	ld   a, (FH_FSIZE+2)
+	call fh_hex8
+	ld   a, (FH_FSIZE+1)
+	call fh_hex8
+	ld   a, (FH_FSIZE+0)
+	call fh_hex8
+	ld   a, ' '
+	call #00A2
+	ld   hl, FH_NAME83
+	ld   b, 11
+.dg_nm:
+	ld   a, (hl)
+	call #00A2
+	inc  hl
+	djnz .dg_nm
+	call CHGET						; pausa para foto
 	ld   a, 2
 	ld   (FH_STATE), a				; payload
 	ret
