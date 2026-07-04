@@ -2011,6 +2011,16 @@ boot_stub_end:
 ; the config menu; the direct PPI matrix scan missed row 8).
 ; -----------------------------------------------------------------------------
 browse:
+	; entering/re-entering the browser: assert the marquee gate. The SD_READY
+	; premount fast-path (main_action_sdrom: jp nz, browse) and the File-Hunter
+	; results path (.f1_fin) jump straight here WITHOUT calling select_partition,
+	; which is the only place that sets BROWSING=1. Since main_menu_restart clears
+	; BROWSING on every "return to menu", the flag stayed 0 and marquee_tick bailed
+	; out immediately -> the long-name scroll was silently frozen (regression
+	; f5e064d, the "mount SD under the logo" premount). Set it here so every entry
+	; and every redraw re-entry re-asserts it in one spot.
+	ld   a, 1
+	ld   (BROWSING), a
 .br_redraw:
 	call draw_browser
 .br_key:
@@ -6117,7 +6127,7 @@ fh1_e_unapi:	.db "FH: UNAPI no disponible. Pulsa una tecla",0
 fh1_e_red:	.db "FH: sin red (configurala con W). Pulsa una tecla",0
 fh1_e_dns:	.db "FH: fallo de DNS. Pulsa una tecla",0
 fh1_e_con:	.db "FH: fallo de conexion. Pulsa una tecla",0
-fh1_req1:	.db "GET /index4.php?base=1BA0&type=rom&msx=&char=",0
+fh1_req1:	.db "GET /MSXnano.php?base=1BA0&type=rom&msx=&char=",0
 fh1_req2:	.db " HTTP/1.1",13,10,"Host: api.file-hunter.com",13,10,"User-Agent: MSXnano/1.9",13,10,"Connection: close",13,10,13,10,0
 
 ; --- FASE 2+3 FILE-HUNTER: descargar a FHUNT y lanzar (RETURN en la lista) ---
@@ -6144,7 +6154,10 @@ fh1_req2:	.db " HTTP/1.1",13,10,"Host: api.file-hunter.com",13,10,"User-Agent: M
 FH_RXB		equ	#C400			; 512B: buffer RX de TCP (el request va en SD_BUF)
 FH_SAVED	equ	#C600			; 512B: salva SD_BUF mientras fh2_alloc usa la FAT
 FH_METALEN	equ	300				; meta real hasta 205B (nombre completo sin truncar)
-FH_METAB	equ	#C800			; FH_METALEN B: linea meta (#C800..#C92B, dentro de ENT_ARRAY muerto)
+; FH_METAB en page-3 libre (#EA00..#EB2C): NO en #C800 porque fh2_check_exists re-escanea
+; ENT_ARRAY (#C300..#E6F0) que SOLAPABA #C800 (entrada 16) y pisaba la meta viva; y no cabe
+; en page-2 (imagen del menu llena hasta ~#BEA1). #EA00 esta sobre los vars #E8xx y bajo #F000.
+FH_METAB	equ	#EA00
 
 FH_ADIR		equ	#10				; attr directorio
 FH_AARC		equ	#20				; attr archivo
@@ -6460,9 +6473,37 @@ fh_enter_item:
 	ld   a, 15						; TCPIP_TCP_ABORT
 	call fh_unapi
 	call fh_net_end
-	; entrada de directorio en FHUNT (nombre 8.3, cluster0, tamano real)
+	; ya existe en FHUNT (mismo nombre completo + tamano)?
+	call fh2_check_exists			; CF=0 existe (FH_OLDCLUS) / CF=1 no
+	jp   c, .f2_wnew
+	call fh2_ask_overwrite			; A = tecla
+	cp   'S'
+	jr   z, .f2_ovr
+	cp   's'
+	jr   z, .f2_ovr
+	; N: descartar el nuevo (liberar sus clusters), lanzar el viejo
+	ld   hl, (FH_CLUS0)
+	call fh2_free_chain
+	ld   hl, (FH_OLDCLUS)
+	ld   (FH_LAUNCHC), hl
+	jp   .f2_launch
+.f2_ovr:
+	; S: escribir el nuevo, luego borrar el viejo (dirents + cadena)
 	call fh2_dirent
 	jp   c, .f2_derr
+	call fh2_del_dirents			; CF=1 si no se borro el dirent viejo
+	jr   c, .f2_ovr_nofree			; -> NO liberar su cadena (evita cross-link)
+	ld   hl, (FH_OLDCLUS)
+	call fh2_free_chain
+.f2_ovr_nofree:
+	ld   hl, (FH_CLUS0)
+	ld   (FH_LAUNCHC), hl
+	jp   .f2_launch
+.f2_wnew:
+	call fh2_dirent
+	jp   c, .f2_derr
+	ld   hl, (FH_CLUS0)
+	ld   (FH_LAUNCHC), hl
 .f2_launch:
 	; listar FHUNT con el scan normal y auto-lanzar el fichero
 	xor  a
@@ -6478,7 +6519,7 @@ fh_enter_item:
 	ld   hl, 0
 	ld   (CUR_CLUS+2), hl
 	call scan_current				; ENT_ARRAY = contenido de FHUNT
-	call fh2_findsel				; BR_SEL = indice del fichero (CF=1 no)
+	call fh2_findsel				; BR_SEL por cluster (FH_LAUNCHC)
 	jp   c, browse					; no encontrado: ensena la carpeta
 	jp   browse_enter				; LANZAR (no vuelve)
 .f2_derr:
@@ -7758,7 +7799,7 @@ fh2_findsel:
 	push bc
 	call ent_addr					; HL -> entrada
 	inc  hl							; +1 = cluster lo
-	ld   de, (FH_CLUS0)
+	ld   de, (FH_LAUNCHC)
 	ld   a, (hl)
 	cp   e
 	jr   nz, .fs_n
@@ -7779,6 +7820,254 @@ fh2_findsel:
 .fs_no:
 	scf
 	ret
+
+; ---- comprueba si el fichero ya existe en FHUNT (mismo nombre + tamano) ----
+; Clave: nombre (primeros 70, lo que guarda el scan) + tamano exacto. Los hacks
+; comparten prefijo largo, por eso se exige tambien el tamano identico.
+; CF=0 existe (FH_OLDCLUS = su 1er cluster) / CF=1 no existe.
+fh2_check_exists:
+	ld   hl, (FH_DIRCLUS)			; scan FHUNT -> ENT_ARRAY (ficheros viejos)
+	ld   (CUR_CLUS+0), hl
+	ld   hl, 0
+	ld   (CUR_CLUS+2), hl
+	ld   a, 2
+	ld   (FILTER), a				; ALL
+	call scan_current
+	ld   hl, FH_METAB				; nombre objetivo (completo, en la meta)
+	ld   de, fh2_k_name
+	call fh2_find
+	ret  c							; sin name: -> tratar como no existe
+	ld   (FH_FNPTR), hl
+	ld   a, (ENT_COUNT)
+	or   a
+	jr   z, .ce_no
+	ld   c, a
+	ld   b, 0
+.ce_i:
+	push bc
+	ld   a, b
+	call ent_addr					; HL -> entrada
+	push hl							; guardar puntero de entrada
+	ld   de, 5
+	add  hl, de						; +5 = tamano (4B)
+	ld   de, FH_FSIZE
+	ld   b, 4
+.ce_sz:
+	ld   a, (de)
+	cp   (hl)
+	jr   nz, .ce_nx
+	inc  hl
+	inc  de
+	djnz .ce_sz
+	; tamano igual -> comparar nombre (+9), primeros 70 o hasta NUL comun
+	pop  hl
+	push hl
+	ld   de, 9
+	add  hl, de						; +9 = nombre de la entrada
+	ex   de, hl						; DE = nombre entrada
+	ld   hl, (FH_FNPTR)				; HL = nombre objetivo
+	ld   b, 70
+.ce_nm:
+	ld   a, (hl)
+	ld   c, a
+	ld   a, (de)
+	cp   c
+	jr   nz, .ce_nx
+	or   a
+	jr   z, .ce_hit					; ambos NUL antes de 70 -> match exacto
+	inc  hl
+	inc  de
+	djnz .ce_nm
+.ce_hit:
+	pop  hl							; HL = entrada
+	inc  hl							; +1 = cluster lo
+	ld   e, (hl)
+	inc  hl
+	ld   d, (hl)					; DE = cluster viejo (FAT16)
+	ld   (FH_OLDCLUS), de
+	pop  bc
+	or   a							; CF=0 existe
+	ret
+.ce_nx:
+	pop  hl							; descartar puntero de entrada
+	pop  bc
+	inc  b
+	dec  c
+	jr   nz, .ce_i
+.ce_no:
+	scf
+	ret
+
+; ---- pregunta "sobreescribir?" -> A = tecla ----
+fh2_ask_overwrite:
+	ld   hl, #0100
+	call POSIT
+	ld   hl, fh2_m_exists
+	call ver_puts
+	call CHGET
+	ret
+
+; ---- libera la cadena de clusters FAT16 desde HL ----
+fh2_free_chain:
+	ld   (FH_FREECUR), hl
+.fc_l:
+	ld   hl, (FH_FREECUR)
+	ld   a, h
+	cp   #FF
+	jr   z, .fc_hi					; hi=FF -> mirar lo (EOC/bad/reserved)
+	or   l
+	jr   z, .fc_done				; cluster 0 = libre -> fin
+	jr   .fc_free
+.fc_hi:
+	ld   a, l
+	cp   #F0						; >= 0xFFF0 -> EOC/reservado/bad -> fin
+	jr   nc, .fc_done
+.fc_free:
+	ld   hl, (FH_FREECUR)			; next = fatnext(cur)
+	ld   (W_TMP+0), hl
+	ld   hl, 0
+	ld   (W_TMP+2), hl
+	call fatnext
+	ret  c							; error leyendo FAT -> abortar (leak benigno, NO cross-link)
+	ld   hl, 0						; liberar cur en la FAT (ambas copias)
+	ld   (FH_FATVAL), hl
+	ld   hl, (FH_FREECUR)
+	ld   (NEW_CLUS), hl
+	call fh2_fat_set
+	ret  c							; error escribiendo FAT -> abortar
+	ld   hl, (W_TMP+0)				; cur = next (16b; EOC normalizado a 0xFFF8)
+	ld   (FH_FREECUR), hl
+	jr   .fc_l
+.fc_done:
+	ret
+
+; ---- borra (0xE5) el SFN cuyo cluster==FH_OLDCLUS + sus LFN previas ----
+; usa FH_DLBA/FH_DSECS (ya seteados a FHUNT por fh2_dirent en la ruta S)
+fh2_del_dirents:
+	ld   hl, (FH_DLBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (FH_DLBA+2)
+	ld   (SD_LBA+2), hl
+	ld   a, (FH_DSECS)
+	ld   (FH2_LEFT), a
+	ld   hl, 0
+	ld   (FH_DIDX), hl
+	ld   (FH_LFNRUN), hl
+.dd_sec:
+	ld   a, (FH2_LEFT)
+	or   a
+	jr   z, .dd_fail				; escaneado todo, no encontrado
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .dd_fail
+	ld   ix, SD_BUF
+	ld   b, 16
+.dd_ent:
+	ld   a, (ix+0)
+	or   a
+	jr   z, .dd_fail				; fin de dir -> no encontrado
+	cp   #E5
+	jr   z, .dd_reset
+	ld   a, (ix+11)
+	cp   #0F
+	jr   z, .dd_adv					; LFN -> el grupo continua (no reset)
+	ld   a, (ix+26)					; SFN: cluster == FH_OLDCLUS?
+	ld   hl, (FH_OLDCLUS)
+	cp   l
+	jr   nz, .dd_reset
+	ld   a, (ix+27)
+	cp   h
+	jr   nz, .dd_reset
+	jp   fh2_do_del					; MATCH -> borrar [FH_LFNRUN..FH_DIDX]
+.dd_reset:
+	ld   de, 32
+	add  ix, de
+	ld   hl, (FH_DIDX)
+	inc  hl
+	ld   (FH_DIDX), hl
+	ld   (FH_LFNRUN), hl			; el proximo grupo empieza aqui
+	djnz .dd_ent
+	call inc_sd_lba
+	ld   a, (FH2_LEFT)
+	dec  a
+	ld   (FH2_LEFT), a
+	jr   .dd_sec
+.dd_adv:
+	ld   de, 32
+	add  ix, de
+	ld   hl, (FH_DIDX)
+	inc  hl
+	ld   (FH_DIDX), hl
+	djnz .dd_ent
+	call inc_sd_lba
+	ld   a, (FH2_LEFT)
+	dec  a
+	ld   (FH2_LEFT), a
+	jr   .dd_sec
+
+.dd_fail:
+	scf								; CF=1: no se borro (error SD o no encontrado)
+	ret
+
+; marca 0xE5 desde FH_LFNRUN hasta FH_DIDX (inclusive); CF=0 ok / CF=1 error SD
+fh2_do_del:
+.dod_l:
+	call fh2_mark_e5				; marca la entrada FH_LFNRUN
+	ret  c							; error de SD marcando -> propagar (no liberar cadena)
+	ld   hl, (FH_LFNRUN)
+	ld   de, (FH_DIDX)
+	or   a
+	sbc  hl, de
+	ret  z							; LFNRUN == DIDX (CF=0) -> borrado completo OK
+	ld   hl, (FH_LFNRUN)
+	inc  hl
+	ld   (FH_LFNRUN), hl
+	jr   .dod_l
+
+; marca la entrada FH_LFNRUN como borrada (byte0 = 0xE5)
+fh2_mark_e5:
+	ld   hl, (FH_LFNRUN)
+	ld   a, l
+	and  #0F
+	ld   (FH_PUTSLOT), a
+	ld   b, 4
+.me_sh:
+	srl  h
+	rr   l
+	djnz .me_sh
+	ld   de, (FH_DLBA+0)
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (FH_DLBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	scf
+	ret  nz							; error de lectura -> CF=1
+	ld   a, (FH_PUTSLOT)
+	ld   l, a
+	ld   h, 0
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl
+	add  hl, hl						; *32
+	ld   de, SD_BUF
+	add  hl, de
+	ld   (hl), #E5					; byte0 = entrada borrada
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	scf
+	ret  nz							; error de escritura -> CF=1
+	or   a							; CF=0 ok
+	ret
+
+fh2_m_exists:	.db "Ya existe. Sobreescribir? (S/N)",0
 
 fh2_k_size:	.db "size:",0
 fh2_k_name:	.db "name:",0
@@ -7886,6 +8175,10 @@ ENDIF
 	FH_SFNN:    ds 1
 	FH_MASK40:  ds 1
 	FH_CGI:     ds 2
+	FH_OLDCLUS: ds 2
+	FH_FREECUR: ds 2
+	FH_LFNRUN:  ds 2
+	FH_LAUNCHC: ds 2
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
