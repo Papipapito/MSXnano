@@ -7345,50 +7345,427 @@ fh2_dwrite:
 	ret
 
 ; ---- entrada final del fichero descargado en FHUNT ----
+; ---- entrada final del fichero en FHUNT: LFN (nombre completo) + SFN 8.3 ----
+; Escribe el nombre ORIGINAL de File-Hunter como entradas VFAT largas (LFN) +
+; una entrada corta 8.3 unica "BASE~N". El nombre largo vive aun en FH_METAB
+; (no se toca durante el streaming); se re-localiza con fh2_find "name:".
+; Formato LFN validado contra referencia Python (checksum verbatim del spec
+; FAT, 13 chars/entrada en offsets 1,3,5,7,9,14,16,18,20,22,24,28,30, orden
+; fisico inverso: seq mas alta con #40 primero, luego SFN). Limitacion v1:
+; FHUNT es 1 cluster; si no cabe (nlfn+1 entradas) -> error limpio.
+FH_MAXNAME	equ	195				; cap del nombre largo (15 entradas LFN)
+
 fh2_dirent:
+	; region de directorio = cluster de FHUNT
 	ld   hl, (FH_DIRCLUS)
-	call fh2_clus2lba				; region = cluster de FHUNT
+	call fh2_clus2lba
 	ld   hl, (SD_LBA+0)
 	ld   (FH_DLBA+0), hl
 	ld   hl, (SD_LBA+2)
 	ld   (FH_DLBA+2), hl
 	ld   a, (SEC_PER_CLUS)
 	ld   (FH_DSECS), a
-	ld   a, FH_AARC
-	ld   (FH_DE_ATTR), a
-	ld   hl, (FH_CLUS0)
-	ld   (FH_DE_CLUS), hl
-	ld   hl, (FH_FSIZE+0)
-	ld   (FH_DE_SIZ+0), hl
-	ld   hl, (FH_FSIZE+2)
-	ld   (FH_DE_SIZ+2), hl
+
+	; 1) SFN unico "BASE~N" en FH_NAME83 (busca N libre en FHUNT)
+	call fh2_mk_sfn
+	; 2) checksum del SFN (enlaza las LFN con el 8.3)
+	call fh2_lfn_cksum
+	; 3) puntero + longitud del nombre completo (en FH_METAB)
+	ld   hl, FH_METAB
+	ld   de, fh2_k_name
+	call fh2_find					; HL -> tras "name:" / CF=1
+	jp   c, fh2_de_sfn				; sin name: (raro) -> solo SFN
+	ld   (FH_FNPTR), hl
+	call fh2_strlen					; FH_FNLEN = min(len, FH_MAXNAME)
+	; nlfn = ceil(FH_FNLEN/13) por resta repetida (<=15 vueltas)
+	ld   hl, (FH_FNLEN)
+	ld   c, 0
+	ld   de, 13
+.de_nl:
+	ld   a, h
+	or   l
+	jr   z, .de_nld
+	inc  c
+	or   a
+	sbc  hl, de
+	jr   nc, .de_nl
+.de_nld:
+	ld   a, c
+	ld   (FH_NLFN), a
+	or   a
+	jp   z, fh2_de_sfn				; nombre vacio -> solo SFN (djnz b=0 daria 256!)
+	; 4) end-of-dir index en FHUNT + sitio para nlfn+1 entradas
+	call fh2_dir_eod				; FH_DIDX = 1a entrada libre / CF=1 lleno
+	jp   c, fh2_de_err
+	; total entradas del cluster = FH_DSECS*16 ; necesita FH_DIDX+nlfn+1 <=
+	ld   a, (FH_DSECS)
+	ld   l, a
+	ld   h, 0
+	add  hl, hl						; *2
+	add  hl, hl						; *4
+	add  hl, hl						; *8
+	add  hl, hl						; *16
+	ex   de, hl						; DE = total entradas
+	ld   hl, (FH_DIDX)
+	ld   a, (FH_NLFN)
+	ld   c, a
+	ld   b, 0
+	add  hl, bc						; + nlfn
+	inc  hl							; + SFN
+	; HL <= DE ?
+	ex   de, hl
+	or   a
+	sbc  hl, de						; total - (didx+nlfn+1)
+	jp   c, fh2_de_err				; no cabe
+	; 5) escribir: LFN k=nlfn..1 (rev), luego SFN
+	ld   hl, (FH_DIDX)
+	ld   (FH_PUTIDX), hl
+	ld   a, (FH_NLFN)
+	ld   b, a						; b = k actual (empieza en nlfn)
+	ld   a, #40						; primera fisica lleva #40
+	ld   (FH_MASK40), a
+.de_lfn:
+	ld   a, b
+	push bc
+	call fh2_build_lfn				; construye FH_ENT32 para seq A=k
+	call fh2_dir_put				; escribe en FH_PUTIDX, incrementa
+	pop  bc
+	jp   c, fh2_de_err
+	xor  a
+	ld   (FH_MASK40), a				; solo la 1a lleva #40
+	djnz .de_lfn
+	; SFN entry
+	call fh2_build_sfn				; FH_ENT32 = entrada corta
+	call fh2_dir_put
+	ret								; CF de fh2_dir_put
+
+; solo SFN (sin nombre largo disponible)
+fh2_de_sfn:
+	call fh2_dir_eod
+	jr   c, fh2_de_err
+	ld   hl, (FH_DIDX)
+	ld   (FH_PUTIDX), hl
+	call fh2_build_sfn
+	jp   fh2_dir_put
+fh2_de_err:
+	scf
+	ret
+
+; ---- muta FH_NAME83 a "BASE~N" 8.3 unico dentro de FHUNT (usa FH_DLBA/DSECS) --
+fh2_mk_sfn:
+	ld   hl, FH_NAME83				; base = chars no-espacio (hasta 6)
+	ld   de, FH_SFNBASE
+	ld   c, 0
+	ld   b, 6
+.ms_b:
+	ld   a, (hl)
+	cp   ' '
+	jr   z, .ms_bd
+	ld   (de), a
+	inc  hl
+	inc  de
+	inc  c
+	djnz .ms_b
+.ms_bd:
+	ld   a, c
+	ld   (FH_SFNBLEN), a
+	ld   a, 1
+	ld   (FH_SFNN), a
+.ms_try:
+	ld   hl, FH_SFNBASE				; FH_NAME83[0..7] = base + '~' + N + pad
+	ld   de, FH_NAME83
+	ld   a, (FH_SFNBLEN)
+	or   a
+	jr   z, .ms_tl
+	ld   b, a
+.ms_cp:
+	ld   a, (hl)
+	ld   (de), a
+	inc  hl
+	inc  de
+	djnz .ms_cp
+.ms_tl:
+	ld   a, '~'
+	ld   (de), a
+	inc  de
+	ld   a, (FH_SFNN)
+	add  a, '0'
+	ld   (de), a
+	inc  de
+	ld   a, 6						; pad = 6 - blen espacios (base+2 escritos)
+	ld   hl, FH_SFNBLEN
+	sub  (hl)
+	jr   z, .ms_chk
+	ld   b, a
+.ms_pad:
+	ld   a, ' '
+	ld   (de), a
+	inc  de
+	djnz .ms_pad
+.ms_chk:
 	ld   hl, FH_NAME83
-	jp   fh2_dwrite					; CF segun resultado
+	call fh2_dfind					; CF=1 = libre (no existe) -> usar
+	ret  c
+	ld   a, (FH_SFNN)
+	inc  a
+	ld   (FH_SFNN), a
+	cp   10
+	jr   c, .ms_try					; 1..9; si se agotan, se reusa el 9
+	ret
+
+; ---- checksum LFN del SFN (FH_NAME83, 11B) -> FH_CKSUM ----
+fh2_lfn_cksum:
+	ld   hl, FH_NAME83
+	ld   b, 11
+	ld   c, 0						; sum
+.lc:
+	ld   a, c
+	rrca							; ((sum&1)<<7) | (sum>>1)
+	add  a, (hl)
+	ld   c, a
+	inc  hl
+	djnz .lc
+	ld   a, c
+	ld   (FH_CKSUM), a
+	ret
+
+; ---- strlen(FH_FNPTR) capado a FH_MAXNAME -> FH_FNLEN ----
+fh2_strlen:
+	ld   hl, (FH_FNPTR)
+	ld   bc, 0
+.sl:
+	ld   a, (hl)
+	or   a
+	jr   z, .sl_e
+	inc  hl
+	inc  bc
+	ld   a, c
+	cp   FH_MAXNAME
+	jr   c, .sl
+.sl_e:
+	ld   (FH_FNLEN), bc
+	ret
+
+; ---- FH_DIDX = indice de la 1a entrada 0x00 en FHUNT ; CF=1 si lleno ----
+fh2_dir_eod:
+	ld   hl, (FH_DLBA+0)
+	ld   (SD_LBA+0), hl
+	ld   hl, (FH_DLBA+2)
+	ld   (SD_LBA+2), hl
+	ld   a, (FH_DSECS)
+	ld   (FH2_LEFT), a
+	ld   hl, 0
+	ld   (FH_DIDX), hl
+.eo_sec:
+	ld   a, (FH2_LEFT)
+	or   a
+	jr   z, .eo_full
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .eo_full
+	ld   ix, SD_BUF
+	ld   b, 16
+.eo_ent:
+	ld   a, (ix+0)
+	or   a
+	jr   z, .eo_found				; 0x00 = fin de dir (todo libre despues)
+	ld   de, 32
+	add  ix, de
+	ld   hl, (FH_DIDX)
+	inc  hl
+	ld   (FH_DIDX), hl
+	djnz .eo_ent
+	call inc_sd_lba
+	ld   a, (FH2_LEFT)
+	dec  a
+	ld   (FH2_LEFT), a
+	jr   .eo_sec
+.eo_found:
+	or   a
+	ret
+.eo_full:
+	scf
+	ret
+
+; ---- escribe FH_ENT32 en la entrada FH_PUTIDX de FHUNT, luego FH_PUTIDX++ ----
+; CF=1 error de SD.
+fh2_dir_put:
+	ld   hl, (FH_PUTIDX)
+	ld   a, l
+	and  #0F
+	ld   (FH_PUTSLOT), a			; slot 0..15
+	ld   b, 4						; sec offset = idx>>4
+.dp_sh:
+	srl  h
+	rr   l
+	djnz .dp_sh
+	ld   de, (FH_DLBA+0)
+	add  hl, de
+	ld   (SD_LBA+0), hl
+	ld   hl, (FH_DLBA+2)
+	ld   de, 0
+	adc  hl, de
+	ld   (SD_LBA+2), hl
+	call sd_read_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .dp_err
+	ld   a, (FH_PUTSLOT)			; dest = SD_BUF + slot*32
+	ld   l, a
+	ld   h, 0
+	add  hl, hl						; *2
+	add  hl, hl						; *4
+	add  hl, hl						; *8
+	add  hl, hl						; *16
+	add  hl, hl						; *32
+	ld   de, SD_BUF
+	add  hl, de
+	ex   de, hl						; DE = destino
+	ld   hl, FH_ENT32
+	ld   bc, 32
+	ldir
+	call sd_write_sector
+	ld   a, (SD_STATUS)
+	or   a
+	jr   nz, .dp_err
+	ld   hl, (FH_PUTIDX)
+	inc  hl
+	ld   (FH_PUTIDX), hl
+	or   a
+	ret
+.dp_err:
+	scf
+	ret
+
+; ---- construye la entrada LFN seq A (1-based) en FH_ENT32 ----
+fh2_build_lfn:
+	push af
+	ld   hl, FH_ENT32				; limpiar 32 bytes
+	ld   de, FH_ENT32+1
+	ld   (hl), 0
+	ld   bc, 31
+	ldir
+	ld   a, #0F
+	ld   (FH_ENT32+11), a
+	ld   a, (FH_CKSUM)
+	ld   (FH_ENT32+13), a
+	pop  af
+	ld   c, a						; seq | mask
+	ld   a, (FH_MASK40)
+	or   c
+	ld   (FH_ENT32), a
+	; char base = (seq-1)*13
+	ld   a, c						; c = seq (sin mask)
+	dec  a
+	ld   l, a
+	ld   h, 0
+	push hl							; *13 = *8 + *4 + *1
+	add  hl, hl						; *2
+	add  hl, hl						; *4
+	push hl							; guarda *4
+	add  hl, hl						; *8
+	pop  de							; de = *4
+	add  hl, de						; *12
+	pop  de							; de = *1
+	add  hl, de						; *13
+	ld   (FH_CGI), hl				; gi corriente
+	; recorrer 13 slots
+	ld   ix, fh2_lfn_slots
+	ld   b, 13
+.bl_c:
+	push bc
+	; cp: comparar CGI con FNLEN
+	ld   hl, (FH_CGI)
+	ld   de, (FH_FNLEN)
+	or   a
+	sbc  hl, de						; CGI - FNLEN
+	jr   c, .bl_char				; CGI < len -> char real
+	jr   z, .bl_term				; CGI == len -> 0x0000
+	; CGI > len -> 0xFFFF (byte alto en B: DE se reusa para el puntero)
+	ld   c, #FF
+	ld   b, #FF
+	jr   .bl_put
+.bl_term:
+	ld   c, 0
+	ld   b, 0
+	jr   .bl_put
+.bl_char:
+	ld   hl, (FH_FNPTR)
+	ld   de, (FH_CGI)
+	add  hl, de
+	ld   c, (hl)					; low = char (latin-1)
+	ld   b, 0						; high = 0 (B es scratch: push/pop bc lo salva)
+.bl_put:
+	ld   a, (ix+0)					; slot offset dentro de la entrada
+	ld   l, a
+	ld   h, 0
+	ld   de, FH_ENT32
+	add  hl, de						; HL = FH_ENT32 + slot
+	ld   (hl), c					; byte bajo
+	inc  hl
+	ld   a, b						; byte alto (0 o #FF), NO E (la pisa ld de arriba)
+	ld   (hl), a
+	inc  ix
+	ld   hl, (FH_CGI)
+	inc  hl
+	ld   (FH_CGI), hl
+	pop  bc
+	djnz .bl_c
+	ret
+
+; ---- construye la entrada SFN 8.3 en FH_ENT32 ----
+fh2_build_sfn:
+	ld   hl, FH_ENT32
+	ld   de, FH_ENT32+1
+	ld   (hl), 0
+	ld   bc, 31
+	ldir
+	ld   hl, FH_NAME83				; nombre 8.3 (11B)
+	ld   de, FH_ENT32
+	ld   bc, 11
+	ldir
+	ld   a, FH_AARC					; attr archivo
+	ld   (FH_ENT32+11), a
+	ld   hl, (FH_CLUS0)
+	ld   a, l
+	ld   (FH_ENT32+26), a
+	ld   a, h
+	ld   (FH_ENT32+27), a
+	ld   a, (FH_FSIZE+0)
+	ld   (FH_ENT32+28), a
+	ld   a, (FH_FSIZE+1)
+	ld   (FH_ENT32+29), a
+	ld   a, (FH_FSIZE+2)
+	ld   (FH_ENT32+30), a
+	ld   a, (FH_FSIZE+3)
+	ld   (FH_ENT32+31), a
+	ret
+
+fh2_lfn_slots:	.db 1,3,5,7,9,14,16,18,20,22,24,28,30
 
 ; ---- localiza FH_NAMEDOT en ENT_ARRAY -> BR_SEL (CF=1 no encontrado) ----
 fh2_findsel:
+	; match por CLUSTER (FH_CLUS0) en vez de por nombre: con LFN el listado
+	; guarda el nombre LARGO, no el 8.3, asi que el cluster es el ancla fiable
 	ld   a, (ENT_COUNT)
 	or   a
 	jr   z, .fs_no
-	ld   c, a						; C = entradas restantes
-	ld   b, 0						; B = indice
+	ld   c, a
+	ld   b, 0
 .fs_i:
 	ld   a, b
 	push bc
 	call ent_addr					; HL -> entrada
-	ld   de, 9
-	add  hl, de						; +9 = nombre
-	ld   de, FH_NAMEDOT
-.fs_c:
-	ld   a, (de)
-	cp   (hl)
+	inc  hl							; +1 = cluster lo
+	ld   de, (FH_CLUS0)
+	ld   a, (hl)
+	cp   e
 	jr   nz, .fs_n
-	or   a
-	jr   z, .fs_hit					; ambos NUL: match completo
 	inc  hl
-	inc  de
-	jr   .fs_c
-.fs_hit:
+	ld   a, (hl)					; +2 = cluster hi
+	cp   d
+	jr   nz, .fs_n
 	pop  bc
 	ld   a, b
 	ld   (BR_SEL), a
@@ -7494,6 +7871,21 @@ ENDIF
 	FH_DE_SIZ:  ds 4
 	FH_RXN:     ds 2
 	FH_RXP:     ds 2
+
+	; File-Hunter fase 2 - LFN (nombre largo)
+	FH_ENT32:   ds 32
+	FH_CKSUM:   ds 1
+	FH_FNPTR:   ds 2
+	FH_FNLEN:   ds 2
+	FH_NLFN:    ds 1
+	FH_DIDX:    ds 2
+	FH_PUTIDX:  ds 2
+	FH_PUTSLOT: ds 1
+	FH_SFNBASE: ds 6
+	FH_SFNBLEN: ds 1
+	FH_SFNN:    ds 1
+	FH_MASK40:  ds 1
+	FH_CGI:     ds 2
 IFDEF ENABLE_MEGARAM
 	var_megslt: ds 1
 ENDIF
