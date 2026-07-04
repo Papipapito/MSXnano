@@ -5567,6 +5567,9 @@ fh_neterr_end:
 	pop  hl
 ; error con sesion ya cerrada (HL=msg): fila 0 + tecla + volver al menu
 fh_neterr:
+	xor  a							; salir de File-Hunter: FH_MODE off y forzar
+	ld   (FH_MODE), a				; re-scan de la SD (los buffers RX/meta pisan
+	ld   (SD_READY), a				; ENT_ARRAY -> si no, la lista sale corrupta)
 	push hl
 	ld   hl, #0100
 	call POSIT
@@ -6115,7 +6118,7 @@ fh1_e_red:	.db "FH: sin red (configurala con W). Pulsa una tecla",0
 fh1_e_dns:	.db "FH: fallo de DNS. Pulsa una tecla",0
 fh1_e_con:	.db "FH: fallo de conexion. Pulsa una tecla",0
 fh1_req1:	.db "GET /index4.php?base=1BA0&type=rom&msx=&char=",0
-fh1_req2:	.db " HTTP/1.1",13,10,"Host: api.file-hunter.com",13,10,"Connection: close",13,10,13,10,0
+fh1_req2:	.db " HTTP/1.1",13,10,"Host: api.file-hunter.com",13,10,"User-Agent: MSXnano/1.9",13,10,"Connection: close",13,10,13,10,0
 
 ; --- FASE 2+3 FILE-HUNTER: descargar a FHUNT y lanzar (RETURN en la lista) ---
 ; RETURN sobre un item FH: re-consulta la API con download=N (N = indice del
@@ -6140,7 +6143,8 @@ fh1_req2:	.db " HTTP/1.1",13,10,"Host: api.file-hunter.com",13,10,"Connection: c
 ; descarga el listado esta muerto (se reconstruye despues con scan_current)
 FH_RXB		equ	#C400			; 512B: buffer RX de TCP (el request va en SD_BUF)
 FH_SAVED	equ	#C600			; 512B: salva SD_BUF mientras fh2_alloc usa la FAT
-FH_METAB	equ	#C800			; 120B: linea meta de la descarga
+FH_METALEN	equ	300				; meta real hasta 205B (nombre completo sin truncar)
+FH_METAB	equ	#C800			; FH_METALEN B: linea meta (#C800..#C92B, dentro de ENT_ARRAY muerto)
 
 FH_ADIR		equ	#10				; attr directorio
 FH_AARC		equ	#20				; attr archivo
@@ -6163,27 +6167,19 @@ fh_enter_item:
 	call POSIT
 	ld   hl, fh2_m_prep				; "FH: preparando..."
 	call ver_puts
-	ld   a, 'A'
-	call #00A2						; DIAG fase 2
 
 	; ---- asegurar la carpeta FHUNT en la raiz (SD, sin red aun) ----
 	call fh2_fhunt_ensure			; -> FH_DIRCLUS / CF=1 error (HL=msg)
 	jp   c, fh_neterr
-	ld   a, 'B'
-	call #00A2						; DIAG fase 2
 
 	; ---- sesion de red + DNS + TCP open (como la fase 1) ----
 	call fh_net_begin
 	jp   c, fh_neterr
-	ld   a, 'C'
-	call #00A2						; DIAG fase 2
 	call fh_dns_wake
 	jr   nc, .f2_open
 	ld   hl, fh1_e_dns
 	jp   fh_neterr_end
 .f2_open:
-	ld   a, 'D'
-	call #00A2						; DIAG fase 2
 
 	ld   hl, FH_TCPP+4
 	ld   (hl), 80
@@ -6211,8 +6207,6 @@ fh_enter_item:
 	jp   nz, fh_neterr_end
 	ld   a, b
 	ld   (FH_CONN), a
-	ld   a, 'E'
-	call #00A2						; DIAG fase 2
 
 	; ---- GET con download=N (query original conservada en FH_QUERY) ----
 	ld   hl, fh1_req1
@@ -6267,8 +6261,6 @@ fh_enter_item:
 
 	; ---- recepcion: cabeceras + linea meta, luego payload en streaming ----
 .f2_rx0:
-	ld   a, 'F'
-	call #00A2						; DIAG fase 2
 	xor  a
 	ld   (FH_STATE), a				; 0=cabeceras 1=meta 2=payload 8=error
 	ld   (FH_CRLF), a
@@ -6438,6 +6430,27 @@ fh_enter_item:
 	ld   a, h
 	or   l
 	jr   z, .f2_nofl
+	; zero-pad la cola (FH_FILL..511) para no escribir basura de SD_BUF
+	ld   de, (FH_FILL)
+	ld   hl, SD_BUF
+	add  hl, de
+	ld   (hl), 0
+	ld   d, h
+	ld   e, l
+	inc  de
+	push hl
+	ld   hl, 511
+	ld   bc, (FH_FILL)
+	or   a
+	sbc  hl, bc
+	ld   b, h
+	ld   c, l
+	pop  hl
+	ld   a, b
+	or   c
+	jr   z, .f2_padded
+	ldir
+.f2_padded:
 	call fh2_flush
 	jp   c, fh_neterr_end
 .f2_nofl:
@@ -6487,7 +6500,7 @@ fh2_rx_byte:
 	cp   13
 	ret  z							; CR: ignorar
 	ld   hl, (FH_METAP)
-	ld   de, FH_METAB+118
+	ld   de, FH_METAB+FH_METALEN-2	; guard atado al tamano (1B para el NUL)
 	or   a
 	sbc  hl, de
 	jr   nc, .g_over				; meta demasiado larga: error
@@ -6598,27 +6611,6 @@ fh2_meta:
 	ld   a, ' '
 	call #00A2
 	pop  hl
-	; DIAG fase 2: mostrar tamano parseado (hex) + nombre 8.3 + PAUSA
-	ld   a, 'G'
-	call #00A2
-	ld   a, (FH_FSIZE+3)
-	call fh_hex8
-	ld   a, (FH_FSIZE+2)
-	call fh_hex8
-	ld   a, (FH_FSIZE+1)
-	call fh_hex8
-	ld   a, (FH_FSIZE+0)
-	call fh_hex8
-	ld   a, ' '
-	call #00A2
-	ld   hl, FH_NAME83
-	ld   b, 11
-.dg_nm:
-	ld   a, (hl)
-	call #00A2
-	inc  hl
-	djnz .dg_nm
-	call CHGET						; pausa para foto
 	ld   a, 2
 	ld   (FH_STATE), a				; payload
 	ret
@@ -7214,6 +7206,9 @@ fh2_dfind:
 	jp   z, .df_no					; fin de directorio
 	cp   #E5
 	jr   z, .df_next
+	ld   a, (ix+11)					; saltar volume-label (#08) y LFN (#0F)
+	and  #08
+	jr   nz, .df_next
 	push bc
 	ld   hl, (FH_NPTR)
 	push ix
@@ -7280,6 +7275,9 @@ fh2_dwrite:
 	jp   z, .dw_put					; libre (fin de dir)
 	cp   #E5
 	jp   z, .dw_put					; borrado: reutilizar
+	ld   a, (ix+11)					; no confundir volume-label/LFN con el nombre
+	and  #08
+	jr   nz, .dw_nm
 	push bc
 	ld   hl, (FH_NPTR)				; mismo nombre: sobrescribir
 	push ix
