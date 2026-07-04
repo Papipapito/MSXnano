@@ -1256,6 +1256,40 @@ lfn_copy13:
 	inc  de
 	ret
 
+; fh2_lfn_acc: como lfn_accumulate pero acumula en FH_LNBUF (208B) hasta 15
+; entradas (195 chars = FH_MAXNAME), para que el precheck compare el nombre
+; largo COMPLETO (no los 78 de LFN_BUF). Reusa HAVE_LFN como flag de grupo.
+fh2_lfn_acc:
+	ld   a, (HAVE_LFN)
+	or   a
+	jr   nz, .fla_seq
+	ld   hl, FH_LNBUF				; primera del grupo: limpiar el buffer entero
+	ld   (hl), 0
+	ld   de, FH_LNBUF+1
+	ld   bc, FH_LNBUFLEN-1
+	ldir
+	ld   a, 1
+	ld   (HAVE_LFN), a
+.fla_seq:
+	ld   a, (ix+0)
+	and  #3F						; numero de secuencia (1-based)
+	dec  a							; 0-based
+	cp   15							; seq >=16 -> nombre >195, ignorar el resto
+	ret  nc
+	ld   hl, 0
+	or   a
+	jr   z, .fla_dst
+	ld   b, a
+	ld   de, 13
+.fla_mul:
+	add  hl, de
+	djnz .fla_mul					; hl = (seq-1)*13
+.fla_dst:
+	ld   de, FH_LNBUF
+	add  hl, de
+	ex   de, hl						; de = FH_LNBUF + (seq-1)*13
+	jp   lfn_copy13					; copia 13 chars (termina en ret)
+
 ; copy_name: copy name from HL to DE, up to NAME_MAX chars, stopping at NUL or
 ; 0xFF (LFN padding); then NUL-terminate the destination.
 copy_name:
@@ -2826,6 +2860,21 @@ ensure_visible:
 	ret  c							; sel < top+VISIBLE -> already visible
 	sub  VISIBLE - 1
 	ld   (BR_TOP), a				; top = sel - (VISIBLE-1)
+	ret
+
+; prompt_getkey: como browse_getkey pero SOLO teclado y SIN marquee_tick. Un
+; prompt de texto en la fila 0 (busqueda File-Hunter) no debe ser perturbado por
+; el marquee, que al hacer scroll de un nombre largo reposiciona el cursor a la
+; fila de la lista -> lo tecleado caia sobre la lista, no sobre el prompt.
+prompt_getkey:
+	ei
+.pgk_loop:
+	halt
+	call CHSNS						; tecla pendiente?
+	jr   z, .pgk_loop
+	call CHGET
+	or   a
+	jr   z, .pgk_loop
 	ret
 
 ; browse_getkey: wait for input from the keyboard (cursors via CHGET) OR the
@@ -5358,7 +5407,7 @@ fh_browse:
 .f1_key:
 	push hl
 	push bc
-	call browse_getkey
+	call prompt_getkey				; teclado sin marquee (no descoloca el prompt)
 	pop  bc
 	pop  hl
 	cp   #0D
@@ -6158,6 +6207,15 @@ FH_METALEN	equ	300				; meta real hasta 205B (nombre completo sin truncar)
 ; ENT_ARRAY (#C300..#E6F0) que SOLAPABA #C800 (entrada 16) y pisaba la meta viva; y no cabe
 ; en page-2 (imagen del menu llena hasta ~#BEA1). #EA00 esta sobre los vars #E8xx y bajo #F000.
 FH_METAB	equ	#EA00
+
+; FH_LNBUF: nombre largo COMPLETO reconstruido por el precheck (fh2_check_exists).
+; El lector antiguo (lfn_accumulate -> LFN_BUF) capa en 78 chars (6 entradas, buffer
+; de 80B), pero el ESCRITOR graba hasta FH_MAXNAME=195. Comparar contra 78 daba
+; falsos negativos (nombres >78 nunca casaban -> duplicados) y falsos positivos por
+; prefijo. FH_LNBUF captura los 195 -> comparacion EXACTA. Va tras la meta (#EB2C),
+; ambos vivos a la vez durante el precheck; #EB2C..#EBFB, bajo los vars #F000.
+FH_LNBUFLEN	equ	208				; 16*13 (cubre FH_MAXNAME=195 + NUL)
+FH_LNBUF	equ	FH_METAB+FH_METALEN	; #EB2C
 
 FH_ADIR		equ	#10				; attr directorio
 FH_AARC		equ	#20				; attr archivo
@@ -7826,9 +7884,9 @@ fh2_findsel:
 
 ; ---- existe en FHUNT? (scan DIRECTO: SD_BUF + LFN_BUF, NO ENT_ARRAY/FH_RXB) ----
 ; Se llama TRAS parsear la meta y ANTES de bajar el payload, para poder abortar
-; sin descargar el juego. Reconstruye el nombre largo de cada fichero con
-; lfn_accumulate (a LFN_BUF, #C02C) y compara nombre(70)+tamano con FH_METAB +
-; FH_FSIZE. Usa SD_BUF/LFN_BUF (pag.3 baja), que NO solapan FH_RXB(#C400) ni
+; sin descargar el juego. Reconstruye el nombre largo COMPLETO de cada fichero con
+; fh2_lfn_acc (a FH_LNBUF, #EB2C, hasta 195) y compara nombre+tamano EXACTOS con
+; FH_METAB + FH_FSIZE. Usa SD_BUF/FH_LNBUF, que NO solapan FH_RXB(#C400) ni
 ; FH_METAB(#EA00), asi el resto del payload en FH_RXB sobrevive. CF=0 existe
 ; (FH_OLDCLUS) / CF=1 no.
 fh2_check_exists:
@@ -7880,7 +7938,7 @@ fh2_check_exists:
 	jr   .cx_nextsec
 .cx_lfn:
 	push bc
-	call lfn_accumulate				; IX = entrada LFN -> LFN_BUF
+	call fh2_lfn_acc				; IX = entrada LFN -> FH_LNBUF (nombre completo)
 	pop  bc
 	ld   de, 32
 	add  ix, de
@@ -7917,9 +7975,9 @@ fh2_cmp_entry:
 	inc  hl
 	inc  de
 	djnz .cme_sz
-	ld   hl, LFN_BUF				; nombre: hasta el NUL comun (long. + contenido)
+	ld   hl, FH_LNBUF				; nombre COMPLETO reconstruido (<=195)
 	ld   de, (FH_FNPTR)
-	ld   b, 79						; LFN_BUF garantiza NUL en byte 78 (max 78 chars)
+	ld   b, FH_MAXNAME				; el escritor capa a 195; comparar como mucho 195
 .cme_nm:
 	ld   a, (de)
 	ld   c, a
@@ -7927,11 +7985,12 @@ fh2_cmp_entry:
 	cp   c
 	jr   nz, .cme_no
 	or   a
-	jr   z, .cme_yes				; ambos NUL a la vez -> mismo largo y contenido
+	jr   z, .cme_yes				; ambos NUL a la vez -> mismo largo y contenido exactos
 	inc  hl
 	inc  de
 	djnz .cme_nm
-	jr   .cme_no					; 79 iguales sin NUL comun -> NO match (evita colision de prefijo)
+	; 195 chars iguales sin NUL comun: ambos nombres son >=195; el escritor los
+	; trunca a 195, asi que en disco quedarian identicos -> match (tamano ya OK)
 .cme_yes:
 	or   a							; CF=0
 	ret
