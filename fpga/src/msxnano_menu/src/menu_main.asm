@@ -2395,6 +2395,9 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	ld   (TAGPTR), hl
 	xor  a
 	ld   (SRAM_FLAG), a
+	call .bsr_isascii				; la SRAM emulada SOLO existe en ASCII8/16; en
+	jr   nc, .bsr_srdone			; Konami/SCC ni se activa (evita liar con juegos
+									; parcheados que fingen Game Master y cuelgan)
 	ld   hl, tag_koei
 	call name_contains
 	jr   c, .bsr_sron
@@ -2443,10 +2446,8 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	ld   hl, loadingStr
 	call print_string
 	call load_rom					; carga ahora (barra de progreso, fila 13)
-	ld   hl, #0108					; al acabar la carga, el mensaje de teclas tapa
-	call POSIT						; "Cargando..." en la misma fila (launch2Str es
-	ld   hl, launch2Str				; mas largo -> lo cubre por completo)
-	call print_string
+	call .bsr_footer				; al acabar la carga, el mensaje de teclas (con o
+									; sin S=SRAM segun mapper) tapa "Cargando..."
 .bsr_lk:
 	call browse_getkey
 	cp   #0D
@@ -2463,12 +2464,16 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	jr   z, .bsr_srtg
 	jr   .bsr_lk
 .bsr_srtg:
+	call .bsr_isascii				; la tecla S solo actua en ASCII8/16 (en Konami/
+	jr   nc, .bsr_lk				; SCC no hay SRAM: ignorar para no confundir)
 	ld   a, (SRAM_FLAG)				; conmutar SRAM de cartucho para este lanzamiento
 	xor  1
 	ld   (SRAM_FLAG), a
 	call .bsr_sprint
 	jr   .bsr_lk
 .bsr_sprint:
+	call .bsr_isascii				; SRAM solo en ASCII8/16: en otros mappers NO se
+	jr   nc, .bsr_sprcl				; muestra la opcion (fila 6 en blanco)
 	ld   hl, #0106
 	call POSIT
 	ld   hl, sramStr				; "SRAM:"
@@ -2476,6 +2481,35 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	ld   hl, #0806
 	ld   a, (SRAM_FLAG)
 	jp   print_on_off				; imprime On/Off y retorna al llamador
+.bsr_sprcl:
+	ld   hl, #0106					; no-ASCII: borrar la fila (por si se venia de ASCII
+	call POSIT						; via tecla M)
+	ld   b, 14
+.bsr_sprcl2:
+	ld   a, ' '
+	call CHPUT
+	djnz .bsr_sprcl2
+	ret
+.bsr_isascii:						; CF=1 si MAPPER_ID es ASCII8/16 (unica con SRAM)
+	ld   a, (MAPPER_ID)
+	cp   MAP_A8_ID
+	jr   z, .bsr_isa1
+	cp   MAP_A16_ID
+	jr   z, .bsr_isa1
+	or   a							; CF=0
+	ret
+.bsr_isa1:
+	scf
+	ret
+.bsr_footer:						; pie (fila 8) con "S=SRAM" solo en ASCII8/16
+	ld   hl, #0108
+	call POSIT
+	call .bsr_isascii
+	ld   hl, launch2Str				; ASCII: incluye S=SRAM
+	jr   c, .bsr_ftpr
+	ld   hl, launch2bStr			; resto: sin S=SRAM (mismo largo, tapa el anterior)
+.bsr_ftpr:
+	jp   print_string
 .bsr_map:
 	ld   a, (MAPPER_ID)				; ciclar plain->Konami->SCC->ASCII8->ASCII16
 	cp   MAP_PLAIN
@@ -2509,6 +2543,13 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	ld   a, ' '
 	call CHPUT
 	djnz .bsr_msp
+	call .bsr_isascii				; si al ciclar deja de ser ASCII, forzar SRAM OFF
+	jr   c, .bsr_mkeep
+	xor  a
+	ld   (SRAM_FLAG), a
+.bsr_mkeep:
+	call .bsr_sprint				; refrescar/limpiar la fila SRAM y el pie
+	call .bsr_footer
 	jp   .bsr_lk
 
 .br_selcon:
@@ -4821,6 +4862,8 @@ loadingStr:
 	.db "Cargando ROM en megaram...",0
 launch2Str:
 	.db "RETURN=LANZA M=MAPPER S=SRAM ESC",0
+launch2bStr:						; sin S=SRAM (no-ASCII); padded al largo de arriba
+	.db "RETURN=LANZA M=MAPPER ESC       ",0
 sramStr:
 	.db "SRAM:",0
 srchStr:
