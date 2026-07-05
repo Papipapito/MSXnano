@@ -57,7 +57,6 @@ main_menu_entry:
 	xor  a
 	ld   (DSK_PEND), a				; sin .dsk pendiente: el 2o pase NO debe reescribir
 	ld   (FH_MODE), a				; File-Hunter off (en frio la RAM es basura)
-	ld   (FH_TYPE), a				; filtro File-Hunter por defecto = ROM
 									; el registro NEXTOR (en frio #C0DD es basura y
 									; emulaba un disco inexistente -> caia a BASIC)
 	; pantalla de logo (slot 0-3): si el pack la trae (magic 'L'), mostrarla
@@ -5396,11 +5395,13 @@ fh_m_p2:	.db 13,10,"P2:",0
 FH_MAXENT	equ	115				; cap = capacidad de ENT_ARRAY (115 registros)
 
 fh_browse:
-	; ---- prompt de busqueda (fila 0) con selector de tipo (TAB cicla ROM/DSK/AMBOS) ----
+	; ---- prompt de busqueda (fila 0, como .br_search) ----
 	xor  a
 	ld   (FH_MODE), a				; durante el prompt aun no hay lista FH
-	ld   b, 0
-	call fh_redraw_prompt			; "File-Hunter [TIPO] Buscar: "
+	ld   hl, #0100
+	call POSIT
+	ld   hl, fh1_prompt
+	call ver_puts
 	ld   hl, FH_QUERY
 	ld   b, 0
 .f1_key:
@@ -5415,8 +5416,6 @@ fh_browse:
 	jp   z, main_menu_restart		; cancelar
 	cp   #08
 	jr   z, .f1_del
-	cp   #09
-	jr   z, .f1_tab					; TAB -> cambiar tipo de busqueda
 	cp   ' '
 	jr   c, .f1_key
 	cp   #7F
@@ -5430,16 +5429,6 @@ fh_browse:
 	inc  hl
 	inc  b
 	call CHPUT						; eco
-	jr   .f1_key
-.f1_tab:
-	ld   a, (FH_TYPE)				; ROM -> DSK -> AMBOS -> ROM
-	inc  a
-	cp   3
-	jr   c, .f1_tset
-	xor  a
-.f1_tset:
-	ld   (FH_TYPE), a
-	call fh_redraw_prompt			; HL = FH_QUERY + B, cursor tras el input
 	jr   .f1_key
 .f1_del:
 	ld   a, b
@@ -5459,63 +5448,50 @@ fh_browse:
 	cp   2
 	jr   c, .f1_key					; minimo 2 chars (evita listas gigantes)
 	ld   (hl), 0
+; fh_refetch: relanza la busqueda (rom + dsk) con FH_QUERY ya fijada. Entrada
+; tambien desde overwrite-N (fh2_abort_old) para volver a la pantalla de lista.
+fh_refetch:
 	ld   hl, fh1_m_net				; "  Conectando..."
 	call ver_puts
-
-	; ---- sesion de red (salvaguardas fase 0) ----
-	call fh_net_begin				; CF=1 -> HL=mensaje (todo restaurado)
-	jp   c, fh_neterr
-	call fh_dns_wake				; DNS con despertador de radio (~32s, puntos)
-	jr   nc, .f1_conn
-	ld   hl, fh1_e_dns
-	jp   fh_neterr_end
-.f1_conn:
-
-	; ---- consulta(s) segun el tipo elegido; UNA sola sesion de red ----
 	xor  a
-	ld   (FH_BASEIDX), a			; ENT_ARRAY vacio (base para el append de AMBOS)
-	ld   a, (FH_TYPE)
-	cp   2
-	jr   z, .f1_ambos
-	inc  a							; ROM(0)->tag 1 ; DSK(1)->tag 2
-	ld   (FH_CURTYPE), a
-	call fh_do_query				; CF=1 error (HL=msg, sesion aun abierta)
-	jp   c, fh_neterr_end
-	jr   .f1_disp
-.f1_ambos:
-	ld   a, 1						; 1a consulta: ROM
-	ld   (FH_CURTYPE), a
-	call fh_do_query
-	jp   c, fh_neterr_end
-	ld   a, 2						; 2a consulta: DSK (anexa a la lista ROM)
-	ld   (FH_CURTYPE), a
-	call fh_do_query
-	jp   c, fh_neterr_end
-.f1_disp:
-	call fh_net_end					; desinstalar SIEMPRE (una vez, tras las consultas)
-	ld   a, (FH_BASEIDX)			; total de entradas (rom + dsk)
+	ld   (FH_BASEIDX), a			; ENT_ARRAY vacio
+	ld   a, 1
+	ld   (FH_CURTYPE), a			; 1a consulta: ROM
+	call fh_one_query				; CF=1 error (HL=msg, SESION YA CERRADA)
+	jp   c, fh_neterr
+	ld   a, 2
+	ld   (FH_CURTYPE), a			; 2a consulta: DSK (anexa a la lista ROM)
+	call fh_one_query
+	jp   c, fh_neterr
+	ld   a, (FH_BASEIDX)			; total (rom + dsk)
 	or   a
-	jr   z, .f1_none
+	jr   z, .fr_none
 	ld   (ENT_COUNT), a
 	xor  a
 	ld   (BR_SEL), a
 	ld   (BR_TOP), a
 	ld   a, 1
 	ld   (FH_MODE), a
-	jp   browse						; navegador sobre los resultados FH
-.f1_none:
+	jp   browse						; navegador sobre los resultados FH (rom+dsk)
+.fr_none:
 	ld   hl, fh1_m_none
-	jp   fh_neterr					; mensaje + tecla + volver
+	jp   fh_neterr					; sin resultados: mensaje + tecla + volver
 
-; ---- fh_do_query: abre TCP, envia GET(FH_CURTYPE, FH_QUERY), recibe y parsea ----
-; El parser anexa en ENT_ARRAY desde FH_BASEIDX con el tag +0 = FH_CURTYPE y usa
-; FH_NREC (reiniciado aqui) como indice de descarga de esta consulta. Al terminar:
-; TCP_ABORT (cierra ESTA conexion; la sesion UNAPI sigue viva) y FH_BASEIDX +=
-; FH_NREC. Se llama 1 vez (ROM/DSK) o 2 (AMBOS) dentro de UNA sola sesion.
-; CF=1 error (HL=msg; NO hace net_end -> el llamador hace fh_neterr_end).
-fh_do_query:
-	; ---- TCP OPEN (bloque de 13 bytes) ----
-	ld   hl, FH_TCPP+4
+; ---- fh_one_query: UNA sesion de red completa para la consulta FH_CURTYPE ----
+; (1=rom, 2=dsk). net_begin + dns + TCP_OPEN + GET + SEND + RX (el parser anexa
+; en ENT_ARRAY desde FH_BASEIDX con tag +0=FH_CURTYPE) + TCP_ABORT + net_end, y
+; FH_BASEIDX += FH_NREC. Sesion AUTONOMA = el patron probado del par 10 corrido
+; DOS veces (rom, dsk) para juntar todo -> evita 2 TCP_OPEN en una sola sesion.
+; CF=1 error (HL=msg, sesion YA cerrada -> el llamador usa fh_neterr).
+fh_one_query:
+	call fh_net_begin				; CF=1 -> HL=msg (nada abierto que cerrar)
+	ret  c
+	call fh_dns_wake
+	jr   nc, .oq_open
+	ld   hl, fh1_e_dns
+	jp   .oq_err
+.oq_open:
+	ld   hl, FH_TCPP+4				; bloque TCP_OPEN (13 bytes)
 	ld   (hl), 80
 	inc  hl
 	ld   (hl), 0
@@ -5537,29 +5513,27 @@ fh_do_query:
 	ld   a, 13						; TCPIP_TCP_OPEN
 	call fh_unapi
 	or   a
-	jr   z, .dq_open
+	jr   z, .oq_conn
 	ld   hl, fh1_e_con
-	scf
-	ret
-.dq_open:
+	jp   .oq_err
+.oq_conn:
 	ld   a, b
 	ld   (FH_CONN), a
-	; ---- montar el GET: "...&type=<rom|dsk>&msx=&char=" + query + req2 ----
-	call fh_build_gethead			; SD_BUF = cabecera; DE = fin (tras "char=")
+	call fh_build_gethead			; SD_BUF = "...&type=<rom|dsk>&msx=&char="
 	ld   hl, FH_QUERY
-.dq_q:
+.oq_q:
 	ld   a, (hl)
 	inc  hl
 	or   a
-	jr   z, .dq_q2
+	jr   z, .oq_q2
 	cp   ' '
-	jr   nz, .dq_q1
+	jr   nz, .oq_q1
 	ld   a, '+'						; espacios -> '+' (URL)
-.dq_q1:
+.oq_q1:
 	ld   (de), a
 	inc  de
-	jr   .dq_q
-.dq_q2:
+	jr   .oq_q
+.oq_q2:
 	ld   hl, fh1_req2
 	call fh_strcpy
 	ex   de, hl						; HL = fin del request
@@ -5567,9 +5541,9 @@ fh_do_query:
 	or   a
 	sbc  hl, bc
 	ld   (FH_REQLEN), hl
-	ld   a, 100						; tope de reintentos de envio (~2s)
+	ld   a, 100						; tope de reintentos de envio
 	ld   (FH_TRIES), a
-.dq_send:
+.oq_send:
 	ld   a, (FH_CONN)
 	ld   b, a
 	ld   de, SD_BUF
@@ -5578,29 +5552,18 @@ fh_do_query:
 	ld   a, 17						; TCPIP_TCP_SEND
 	call fh_unapi
 	or   a
-	jr   z, .dq_rx0
+	jr   z, .oq_rx0
 	cp   13							; ERR_BUFFER -> reintentar (acotado)
-	jr   nz, .dq_serr				; otro error: cerrar la conexion y fallar
+	jp   nz, .oq_serr
 	ld   a, (FH_TRIES)
 	dec  a
 	ld   (FH_TRIES), a
-	jr   z, .dq_serr				; reintentos agotados: cerrar y fallar
+	jp   z, .oq_serr				; reintentos agotados
 	halt
-	jr   .dq_send
-.dq_serr:
-	ld   hl, fh1_e_con				; NO dejar el socket colgado (simetrico con .dq_fin)
-	push hl
-	ld   a, (FH_CONN)
-	ld   b, a
-	ld   a, 15						; TCPIP_TCP_ABORT
-	call fh_unapi
-	pop  hl
-	scf
-	ret
-	; ---- recepcion + parser FSM ----
-.dq_rx0:
+	jr   .oq_send
+.oq_rx0:
 	xor  a
-	ld   (FH_STATE), a
+	ld   (FH_STATE), a				; 0 = cabeceras HTTP
 	ld   (FH_NREC), a
 	ld   (FH_SIDX), a
 	ld   (FH_ACCN), a
@@ -5610,42 +5573,42 @@ fh_do_query:
 	ld   (FH_DOTC), a
 	ld   a, 120
 	ld   (FH_TRIES), a				; timeout de inactividad ~10 s
-.dq_rx:
+.oq_rx:
 	ld   a, (FH_CONN)
 	ld   b, a
 	ld   de, SD_BUF
 	ld   hl, 512
-	ld   a, 18						; TCPIP_TCP_RCV
+	ld   a, 18						; TCPIP_TCP_RCV -> BC = bytes
 	call fh_unapi
-	cp   11							; ERR_NO_CONN: cerrado y drenado
-	jr   z, .dq_fin
+	cp   11							; ERR_NO_CONN: servidor cerro y drenado
+	jr   z, .oq_fin
 	or   a
-	jr   nz, .dq_fin				; otros errores: terminar con lo recibido
+	jr   nz, .oq_fin				; otros errores: terminar con lo recibido
 	ld   a, b
 	or   c
-	jr   nz, .dq_data
+	jr   nz, .oq_data
 	ld   b, 5						; sin datos: espera corta + timeout
-.dq_rw:
+.oq_rw:
 	halt
-	djnz .dq_rw
+	djnz .oq_rw
 	ld   a, (FH_TRIES)
 	dec  a
 	ld   (FH_TRIES), a
-	jr   nz, .dq_rx
-	jr   .dq_fin
-.dq_data:
+	jr   nz, .oq_rx
+	jr   .oq_fin
+.oq_data:
 	ld   a, 120
 	ld   (FH_TRIES), a
 	ld   a, (FH_DOTC)				; un punto cada ~4KB
 	inc  a
 	ld   (FH_DOTC), a
 	and  #07
-	jr   nz, .dq_nd
+	jr   nz, .oq_nd
 	ld   a, '.'
 	call #00A2
-.dq_nd:
+.oq_nd:
 	ld   hl, SD_BUF
-.dq_dl:
+.oq_dl:
 	ld   a, (hl)
 	inc  hl
 	push hl
@@ -5654,18 +5617,19 @@ fh_do_query:
 	pop  bc
 	pop  hl
 	ld   a, (FH_STATE)
-	cp   9							; DONE
-	jr   z, .dq_fin
+	cp   9							; DONE: todas las strings copiadas
+	jr   z, .oq_fin
 	dec  bc
 	ld   a, b
 	or   c
-	jr   nz, .dq_dl
-	jr   .dq_rx
-.dq_fin:
-	ld   a, (FH_CONN)				; cerrar ESTA conexion (la sesion UNAPI sigue)
+	jr   nz, .oq_dl
+	jr   .oq_rx
+.oq_fin:
+	ld   a, (FH_CONN)				; cerrar la conexion
 	ld   b, a
 	ld   a, 15						; TCPIP_TCP_ABORT
 	call fh_unapi
+	call fh_net_end					; cerrar la sesion (desinstalar SIEMPRE)
 	ld   a, (FH_BASEIDX)			; FH_BASEIDX += FH_NREC (entradas anexadas)
 	ld   c, a
 	ld   a, (FH_NREC)
@@ -5673,45 +5637,18 @@ fh_do_query:
 	ld   (FH_BASEIDX), a
 	or   a							; CF=0 OK
 	ret
-
-; ---- fh_redraw_prompt: dibuja fila 0 "File-Hunter [TIPO] Buscar: " + los B chars ----
-; ya tecleados de FH_QUERY; cursor tras ellos, HL = FH_QUERY + B, B intacto.
-fh_redraw_prompt:
-	push bc							; POSIT/ver_puts podrian pisar B
-	ld   hl, #0100
-	call POSIT
-	ld   hl, fh1_prompt				; "File-Hunter ["
-	call ver_puts
-	call fh_put_typename			; "ROM  "/"DSK  "/"AMBOS"
-	ld   hl, fh1_prompt2			; "] Buscar: "
-	call ver_puts
-	pop  bc							; B = contador
-	ld   hl, FH_QUERY
-	ld   a, b
-	or   a
-	ret  z							; sin chars: HL = FH_QUERY
-	push bc							; conservar el contador para el llamador
-.rp_p:
-	ld   a, (hl)
-	call #00A2
-	inc  hl
-	djnz .rp_p
-	pop  bc							; B restaurado
-	ret								; HL = FH_QUERY + B
-
-; ---- fh_put_typename: imprime el nombre del tipo actual (FH_TYPE), ancho 5 ----
-fh_put_typename:
-	ld   a, (FH_TYPE)
-	add  a, a						; *2 (tabla de words)
-	ld   e, a
-	ld   d, 0
-	ld   hl, fh1_typtab
-	add  hl, de
-	ld   e, (hl)
-	inc  hl
-	ld   d, (hl)
-	ex   de, hl						; HL = ptr a la cadena del tipo
-	jp   ver_puts					; preserva BC
+.oq_serr:
+	ld   a, (FH_CONN)				; error de SEND: cerrar el socket abierto
+	ld   b, a
+	ld   a, 15
+	call fh_unapi
+	ld   hl, fh1_e_con
+.oq_err:
+	push hl							; error tras net_begin: net_end + CF=1
+	call fh_net_end
+	pop  hl
+	scf
+	ret
 
 ; error de red DESPUES de abrir sesion: cerrar/desinstalar y avisar (HL=msg)
 fh_neterr_end:
@@ -5794,7 +5731,7 @@ fh_rx_byte:
 	ld   (FH_STATE), a
 	xor  a
 	ld   (FH_ACCN), a
-	ld   a, (FH_BASEIDX)			; append: tras las entradas ya presentes (AMBOS)
+	ld   a, (FH_BASEIDX)			; append: tras las entradas ya presentes (rom+dsk)
 	call ent_addr					; HL = ENT_ARRAY + baseidx*ENT_SIZE
 	ld   (FH_RPTR), hl
 	ret
@@ -5813,7 +5750,7 @@ fh_rx_byte:
 	ret  nz
 	xor  a							; registro completo
 	ld   (FH_ACCN), a
-	ld   a, (FH_BASEIDX)			; total = base + nrec (append AMBOS)
+	ld   a, (FH_BASEIDX)			; total = base + nrec (append rom+dsk)
 	ld   c, a
 	ld   a, (FH_NREC)
 	add  a, c
@@ -6012,7 +5949,7 @@ fh_strcpy:
 
 ; fh_build_gethead: monta "GET /MSXnano.php?base=1BA0&type=<rom|dsk>&msx=&char="
 ; en SD_BUF segun FH_CURTYPE (1=rom, 2=dsk). Devuelve DE = fin (tras "char="),
-; listo para anexar la query. Comun a la lista (fh_do_query) y la descarga.
+; listo para anexar la query. Comun a la lista (fh_one_query) y la descarga.
 fh_build_gethead:
 	ld   hl, fh1_req1
 	ld   de, SD_BUF
@@ -6025,7 +5962,7 @@ fh_build_gethead:
 .gh_t:
 	call fh_strcpy					; "rom" / "dsk"
 	ld   hl, fh1_reqchr
-	jp   fh_strcpy					; "&msx=&char=" -> DE al final (termina en ret)
+	jp   fh_strcpy					; "&msx=&char=" -> DE al final
 
 ; ---- instalacion manual del hook EXTBIO del driver ESP ----
 ; En frio el INIT del ESP aborta sin instalar (H:1 puede ser HOKVLD residual
@@ -6279,12 +6216,7 @@ fh_net_end:
 	ld   hl, (FH_RETTMP)
 	jp   (hl)
 
-fh1_prompt:	.db "File-Hunter [",0
-fh1_prompt2:	.db "] Buscar: ",0
-fh1_typtab:	.dw fh1_ty_rom, fh1_ty_dsk, fh1_ty_amb
-fh1_ty_rom:	.db "ROM  ",0
-fh1_ty_dsk:	.db "DSK  ",0
-fh1_ty_amb:	.db "AMBOS",0
+fh1_prompt:	.db "File-Hunter (ROM+DSK) Buscar: ",0
 fh1_m_net:	.db "  Conectando...",0
 fh1_m_none:	.db "FH: sin resultados. Pulsa una tecla",0
 fh1_m_f2:	.db "FH: la descarga llega en la fase 2. Pulsa una tecla",0
@@ -8124,9 +8056,7 @@ fh2_abort_old:
 	ld   a, 15						; TCPIP_TCP_ABORT (descarta el payload pendiente)
 	call fh_unapi
 	call fh_net_end
-	ld   hl, (FH_OLDCLUS)
-	ld   (FH_LAUNCHC), hl
-	jp   fh2_launch
+	jp   fh_refetch					; N = no sobreescribir: volver a la lista (re-buscar)
 
 ; ---- pregunta "sobreescribir?" -> A = tecla ----
 fh2_ask_overwrite:
@@ -8360,9 +8290,8 @@ ENDIF
 	FH_RETTMP:  ds 2
 	FH_DOTC:    ds 1
 	FH_RETRIED: ds 1
-	FH_TYPE:    ds 1				; modo de busqueda: 0=ROM 1=DSK 2=AMBOS (TAB cicla)
 	FH_CURTYPE: ds 1				; tipo de la consulta actual: 1=rom 2=dsk (tag +0)
-	FH_BASEIDX: ds 1				; entradas ya presentes en ENT_ARRAY (append AMBOS)
+	FH_BASEIDX: ds 1				; entradas ya en ENT_ARRAY (append rom+dsk)
 
 	; File-Hunter fase 2 (descarga a FHUNT + lanzar)
 	FH_ITEM:    ds 1
