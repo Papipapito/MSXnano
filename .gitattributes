@@ -1,0 +1,4 @@
+# Los scripts de shell deben conservar finales de linea LF para que bash (WSL/Linux)
+# no falle por CR. Regla acotada a la herramienta de simulacion para no renormalizar
+# el resto del repo.
+tools/megaram_equiv/*.sh text eol=lf
