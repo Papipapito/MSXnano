@@ -8294,12 +8294,15 @@ ENDIF
 	FH_BASEIDX: ds 1				; entradas ya en ENT_ARRAY (append rom+dsk)
 
 	; File-Hunter fase 2 (descarga a FHUNT + lanzar)
-	; REUBICADA a #EC00 (RAM libre, tras FH_LNBUF #EBFB, bajo el sistema #F000):
-	; el bloque ds crecia tras el codigo (#BF85) y CRUZABA #C000, solapando los
-	; equ fijos SD_LBA/SD_STATUS/PART_LBA/ROOT_LBA/LFN_BUF (FH_SECN caia sobre
-	; SD_LBA) -> corrupcion del nombre/datos en descargas grandes (DSK). Aqui van
-	; aisladas. NOTA: no meter mas vars ds arriba sin re-verificar este limite.
-	org  #EC00
+	; REUBICADA a #E900 (RAM libre entre los vars #E8xx y FH_METAB #EA00): el
+	; bloque ds crecia tras el codigo (#BF85) y CRUZABA #C000, solapando los equ
+	; fijos SD_LBA/SD_STATUS/PART_LBA/ROOT_LBA/LFN_BUF (FH_SECN caia sobre SD_LBA)
+	; -> corrupcion del nombre/datos en descargas grandes (DSK). ⚠️ #EC00 NO vale:
+	; es la zona ALTA (~#EC00..#F362) que usa el driver ESP durante la red (por eso
+	; FH_METAB #EA00 y FH_LNBUF #EB2C SI funcionan: estan por DEBAJO). #E900 esta
+	; bajo FH_METAB (zona probada-segura) y sobre ENT_ARRAY (#E6F0) y los #E8xx.
+	; NOTA: no meter mas vars ds arriba sin re-verificar; tope duro < #EA00.
+	org  #E900
 	FH_ITEM:    ds 1
 	FH_METAP:   ds 2
 	FH_NAME83:  ds 11
