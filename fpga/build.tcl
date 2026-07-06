@@ -37,21 +37,15 @@ add_file jtopl/jtopl_timers.v
 add_file jtopl/jtopll_mmr.v
 add_file jtopl/jtopll_reg.v
 add_file jtopl/jtopll_reg_ch.v
-add_file msx_debug/timing_debug.v
-add_file pulse_min_max/pulse_max.v
-add_file pulse_min_max/pulse_min.v
 add_file src/flash_rw.v
 add_file src/gowin/clk_108p.v
 add_file src/gowin_clkdiv/gowin_clkdiv.v
-add_file src/impulse.v
 add_file src/megaram.v
 add_file src/sn76489.v
 add_file src/memory.v
-add_file src/msx2p_debug.v
 add_file src/ocm/kanji.v
 add_file src/ocm/rtc.v
 add_file src/psg_filter.v
-add_file src/uart_tx.v
 add_file src/ws2812.v
 add_file src/wondertang/crc16.v
 add_file src/wondertang/dpram.v
@@ -70,10 +64,7 @@ add_file tn_vdp_v3_v9958/src/hdmi/packet_picker.sv
 add_file tn_vdp_v3_v9958/src/hdmi/serializer.sv
 add_file tn_vdp_v3_v9958/src/hdmi/source_product_description_info_frame.sv
 add_file tn_vdp_v3_v9958/src/hdmi/tmds_channel.sv
-add_file tn_vdp_v3_v9958/src/memory_controller.v
-add_file tn_vdp_v3_v9958/src/sdram.v
 add_file tn_vdp_v3_v9958/src/v9958_top.v
-add_file tn_vdp_v3_v9958/src/vram.v
 add_file top.v
 
 # ----- STANDALONE MERGE: USB subsystem (BL616 FPGA Companion) -----
