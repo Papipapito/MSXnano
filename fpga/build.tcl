@@ -41,7 +41,6 @@ add_file src/flash_rw.v
 add_file src/gowin/clk_108p.v
 add_file src/gowin_clkdiv/gowin_clkdiv.v
 add_file src/megaram.v
-add_file src/sn76489.v
 add_file src/memory.v
 add_file src/ocm/kanji.v
 add_file src/ocm/rtc.v

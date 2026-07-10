@@ -3,8 +3,8 @@
 // Testbench de LOGICA para megaram.v (megaram_scc) del core MSXnano.
 // Verifica la decodificacion de los 4 mappers (Konami4 / SCC / ASCII8 / ASCII16),
 // el banco 0 fijo de Konami4, el gating de SRAM por sram_cfg (feature par 19),
-// las paginas de SRAM (segs 252-255), el modo consola (SG-1000) y el reg de
-// modo SCC+ (BFFE). Es logica pura de un reloj: no necesita SDRAM ni PLLs.
+// las paginas de SRAM (segs 252-255) y el reg de modo SCC+ (BFFE).
+// Es logica pura de un reloj: no necesita SDRAM ni PLLs.
 //
 // Correr:  bash run.sh   (dentro de WSL o cualquier bash con Icarus Verilog)
 // Salida:  "RESULT: PASS (N checks)"  o  "RESULT: FAIL (x/N failed)"
@@ -18,7 +18,6 @@ module megaram_tb;
     reg         rdn, wrn, sreq, swrt;
     reg  [1:0]  msel;
     reg         mlin;
-    reg  [1:0]  cmode;
     reg  [7:0]  scfg;
 
     wire        mreq, mwrt;
@@ -36,7 +35,6 @@ module megaram_tb;
         .scc_wrt           (swrt),
         .map_sel           (msel),
         .map_linear        (mlin),
-        .console_mode      (cmode),
         .sram_cfg          (scfg),
         .megaram_req       (mreq),
         .megaram_wrt       (mwrt),
@@ -89,7 +87,7 @@ module megaram_tb;
 
     initial begin
         rstn = 0; a = 0; d = 0; rdn = 1; wrn = 1; sreq = 0; swrt = 0;
-        msel = 2'b10; mlin = 0; cmode = 2'b00; scfg = 0;
+        msel = 2'b10; mlin = 0; scfg = 0;
         do_reset;
 
         $display("== 1) Reset: bancos por defecto 0,1,2,3 (modo SCC) ==");
@@ -142,13 +140,7 @@ module megaram_tb;
         wr(16'h6000, 8'h10);                              // valor exacto 0x10 -> SRAM
         chkseg(16'h4000, 8'hFC, "A16 SRAM (val 0x10) -> seg 252");
 
-        $display("== 7) Modo consola SG-1000 (console_mode=01) ==");
-        do_reset; cmode = 2'b01; settle;
-        chkseg(16'h0000, 8'h00, "SG ROM lineal @0000 -> seg0");
-        chkseg(16'hC000, 8'hF9, "SG RAM @C000 -> seg249 (0xF9)");
-        cmode = 2'b00; settle;
-
-        $display("== 8) Registro de modo SCC+ (BFFE) ==");
+        $display("== 7) Registro de modo SCC+ (BFFE) ==");
         do_reset; msel = 2'b10; settle;
         chkbit(smp, 1'b0, "SCC mode_plus reset = 0");
         wr(16'hBFFE, 8'h20);                              // mode_b bit5 = SCC+ layout

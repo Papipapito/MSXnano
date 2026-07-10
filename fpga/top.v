@@ -475,7 +475,7 @@ end
 
 // ===== STANDALONE MERGE: USB joystick (PSG 0xA2/reg14) — ported from MSXnano/fpga/top.v =====
 wire psg_req_r;
-assign psg_req_r = (console_mode == 2'b00 && bus_addr[7:0] == 8'hA2 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
+assign psg_req_r = (bus_addr[7:0] == 8'hA2 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
 
 // USB joystick data wires (driven by fpga_companion instance below)
 wire [7:0] joystick0;
@@ -486,7 +486,7 @@ reg [3:0] psg_addr_latch;
 always @(posedge clk_54m or negedge bus_reset_n) begin
     if (!bus_reset_n)
         psg_addr_latch <= 4'd0;
-    else if (console_mode == 2'b00 && bus_addr[7:0] == 8'hA0 && bus_iorq_n == 0 && bus_wr_n == 0 && bus_m1_n == 1)
+    else if (bus_addr[7:0] == 8'hA0 && bus_iorq_n == 0 && bus_wr_n == 0 && bus_m1_n == 1)
         psg_addr_latch <= cpu_dout[3:0];
 end
 
@@ -496,7 +496,7 @@ reg [1:0] psg_reg15_joy_sel;
 always @(posedge clk_54m or negedge bus_reset_n) begin
     if (!bus_reset_n)
         psg_reg15_joy_sel <= 2'b11;
-    else if (console_mode == 2'b00 && bus_addr[7:0] == 8'hA1 && bus_iorq_n == 0 && bus_wr_n == 0 && bus_m1_n == 1
+    else if (bus_addr[7:0] == 8'hA1 && bus_iorq_n == 0 && bus_wr_n == 0 && bus_m1_n == 1
              && psg_addr_latch == 4'd15)
         psg_reg15_joy_sel <= cpu_dout[7:6];
 end
@@ -536,8 +536,8 @@ wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? joy0_msx :
                           8'hFF;
 
 // ===== STANDALONE MERGE: USB keyboard (PPI port B 0xA9 read / port C 0xAA latch) =====
-wire ppi_portb_req_r = (console_mode == 2'b00 && bus_addr[7:0] == 8'hA9 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
-wire ppi_portc_req_w = (console_mode == 2'b00 && bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0);
+wire ppi_portb_req_r = (bus_addr[7:0] == 8'hA9 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
+wire ppi_portc_req_w = (bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0);
 
 wire [3:0] keyboard_addr;
 reg [7:0] keyboard_data;
@@ -560,7 +560,6 @@ assign keyboard_addr = ppi_port_c[3:0];
     always @ (posedge clk_54m) begin
         cpu_din <=
                 ( ver_req_r == 1 ) ? FPGA_VERSION :
-                ( console_joy_r == 1 ) ? console_joy_data :
                 ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
                 `ifdef ENABLE_SOUND
                      ( psg2_req_r == 1 ) ? psg2_dout :
@@ -686,7 +685,7 @@ assign keyboard_addr = ppi_port_c[3:0];
         else begin
             case (state_wait)
                 WAIT_IDLE: begin
-                    if ( ram_write == 1 || (ex_bus_iorq_n == 0 || ( config_enable_wait == 1 && ex_bus_mreq_n == 0 ) )&& (bus_rd_n == 0 || bus_wr_n == 0) ) begin
+                    if ( ram_write == 1 || (ex_bus_iorq_n == 0)&& (bus_rd_n == 0 || bus_wr_n == 0) ) begin
                         wait_io_ff <= 0;
                         state_wait <= WAIT_STATE1;
                     end
@@ -853,6 +852,7 @@ assign keyboard_addr = ppi_port_c[3:0];
     // NOTE: F12 is captured by the BL616 FPGA-Companion firmware (its OSD) and never
     // reaches the FPGA, so F11 (which does reach it, verified on HW) is used instead.
     reg turbo   = 1'b0;
+    reg boot_done = 1'b0;   // 1 tras la PRIMERA (fria) salida de reset; sobrevive warm resets
     reg f11_s0  = 1'b0;
     reg f11_s1  = 1'b0;
     reg f11_prev= 1'b0;
@@ -874,9 +874,27 @@ assign keyboard_addr = ppi_port_c[3:0];
         // cuando la ventana abre (se carga con last_bytes_cnt==2). Va el ULTIMO del
         // bloque: domina sobre F11/puerto durante el boot (no disparan ahi de todos
         // modos). Con S2 (rescate) arranca SIEMPRE a 3.58.
+        // v1.9b FIX pantalla-negra Save&Reset-con-turbo: el boot-turbo (5.37) SOLO se
+        // aplica en arranque en FRIO. Rearrancar a 5.37 en un warm reset (Save&Reset)
+        // daba pantalla negra persistente: el cold boot retiene el CPU ~3s via esp_boot_ok
+        // (asienta SDRAM/VDP antes de correr a 5.37), pero el warm reset lo suelta al
+        // instante -> el primer arranque a 5.37 sin asentar se cuelga. boot_done distingue
+        // frio (0) de warm (1): en warm -> turbo=0 -> arranca a 3.58 = un Save&Reset normal
+        // (que SI funciona). El boot-turbo se aplica al PROXIMO encendido. Cold boot:
+        // boot_done=0 -> se respeta config_sig[4] -> 5.37 intacto (camino validado).
         if (config_init)
-            turbo <= (s2 == 0 && config_sig[4] == 8'h54) ? 1'b1 : 1'b0;
+            turbo <= (~boot_done && s2 == 0 && config_sig[4] == 8'h54) ? 1'b1 : 1'b0;
+        // estado conocido de `turbo` en cualquier reset (mirror del cold boot). Ultimo = prioridad.
+        if (~bus_reset_n)
+            turbo <= 1'b0;
     end
+    // boot_done: se pone a 1 la primera vez que el CPU sale de reset (arranque en frio)
+    // y NO se borra nunca (sin clausula de reset -> sobrevive los warm resets; GSR lo
+    // inicia a 0 al encender). Es el discriminador frio/warm para el boot-turbo de arriba.
+    always @ (posedge clk_54m)
+        if (bus_reset_n & reset3_n & flash_idle & esp_boot_ok & ~config_init)
+            boot_done <= 1'b1;   // ~config_init: no marcar boot_done durante la siembra
+                                 // (robusto tambien si se compilara sin WiFi, esp_boot_ok=1)
 
     // ===== v1.9 Panasonic-WSX turbo: 5.37 MHz CPU cadence =====
     // /20 divider on 108 MHz -> 5.40 MHz base cadence + "period swallow" trim ->
@@ -933,10 +951,42 @@ assign keyboard_addr = ppi_port_c[3:0];
     end
     wire clk_enable_5m4_54  = clk_enable_5m4_raw  & ~pana_skip_now;
     wire clk_falling_5m4_54 = clk_falling_5m4_raw & ~pana_skip_pend;
-    // CPU cadence mux: turbo picks 5.37 MHz, else the untouched 3.6 MHz path.
-    // (wires forward-declared above the M1-wait FSM)
-    assign clk_enable_cpu_54  = turbo ? clk_enable_5m4_54  : clk_enable_3m6_54;
-    assign clk_falling_cpu_54 = turbo ? clk_falling_5m4_54 : clk_falling_3m6_54;
+    // ===== v1.9a: conmutado de cadencia turbo SIN glitch (fix cuelgue F11 / Save&Reset) =====
+    // El mux elige entre dos cadencias de FASE INDEPENDIENTE (3.6 del /30, 5.37 del
+    // /20). Conmutarlo sobre el `turbo` crudo a mitad de T-estado puede entregar al
+    // Z80 dos ENABLE (o dos FALLING) seguidos SIN pareja -> un opcode mal-latcheado
+    // -> cuelgue (F11 en el menu, "a veces"; o pantalla negra saliendo de un
+    // Save&Reset con turbo). En BASIC su bucle ocioso absorbia el pulso suelto.
+    // Fix: `turbo_eff` (el select REAL del mux) solo adopta `turbo` cuando AMBAS
+    // cadencias estan bajas (entre un FALLING y el proximo ENABLE, via cadence_safe)
+    // Y el CPU NO esta en ningun wait (wait_io & wait_m1). Asi el conmutado cae en
+    // un limite de T-estado limpio: no rompe la alternancia enable/falling NI parte
+    // en dos una ventana de wait_io (que se acota con los flancos 3.6 fijos mientras
+    // gatea la cadencia muxada -> si el cambio cayera dentro, invertiria la paridad).
+    // Mientras el CPU esta en RESET (los mismos 4 terminos de .RESET_n) adopta
+    // `turbo` directo: el CPU no cuenta, y asi al soltarlo turbo_eff ya vale el
+    // boot-turbo que sembro config_init durante el re-stream (identico al cold boot).
+    wire cadence_safe = (bus_clk_3m6 == 1'b0 && bus_clk_3m6_54 == 1'b0) &&
+                        (s5m4_a == 1'b0 && s5m4_b == 1'b0);
+    // v1.9b: durante un warm reset EN CURSO hay que CRUZAR la entrada del reset a 3.58,
+    // no a 5.37. En un Save&Reset con turbo activo (F11) el CPU sigue a 5.37 toda la
+    // ventana pre-reset (config_reset espera a que acabe la grabacion en flash, ~decenas
+    // de ms, con bus_reset_n aun alto) y cruzaria el borde de reset en turbo. warm_reset_pending
+    // se activa en cuanto la grabacion arranca (flash_write_busy) y se mantiene por
+    // config_reset_req hasta que baja bus_reset_n -> fuerza turbo_eff=0 en el MISMO borde
+    // seguro. A cold boot ambas son 0 -> cold-boot-turbo intacto. (El boot-turbo POST-reset
+    // ya no se aplica en warm: lo gestiona boot_done arriba.)
+    wire warm_reset_pending = flash_write_busy | config_reset_req;
+    reg  turbo_eff = 1'b0;
+    always @ (posedge clk_54m) begin
+        if (!(bus_reset_n & reset3_n & flash_idle & esp_boot_ok))
+            turbo_eff <= turbo;                                 // en reset: sigue a turbo (semilla / 0)
+        else if (cadence_safe & wait_io & wait_m1)
+            turbo_eff <= warm_reset_pending ? 1'b0 : turbo;     // corriendo: 3.58 si hay warm-reset pendiente
+    end
+    // CPU cadence mux: turbo_eff (conmutado sin glitch) elige 5.37; si no, la 3.6 intacta.
+    assign clk_enable_cpu_54  = turbo_eff ? clk_enable_5m4_54  : clk_enable_3m6_54;
+    assign clk_falling_cpu_54 = turbo_eff ? clk_falling_5m4_54 : clk_falling_3m6_54;
 
     // ----- M1-wait fallback (divisor) -----
     // If on real HW the benchmark still does not land near 100% with the WAIT_n
@@ -993,12 +1043,11 @@ assign keyboard_addr = ppi_port_c[3:0];
       `endif
     `endif
     `ifdef ENABLE_V9958
-        .INT_n     ((console_mode == 2'b10) ? bus_int_n : (bus_int_n & vdp_int)),
+        .INT_n     (bus_int_n & vdp_int),
     `else
         .INT_n     (bus_int_n),
     `endif
-        .NMI_n     ((console_mode == 2'b10) ? vdp_int :
-                    (console_mode == 2'b01) ? ~sg_pause_nmi : 1'b1),
+        .NMI_n     (1'b1),
         .BUSRQ_n   (1),
         .M1_n      (bus_m1_n),
         .MREQ_n    (bus_mreq_n),
@@ -1026,8 +1075,8 @@ assign keyboard_addr = ppi_port_c[3:0];
     //----------------------------------------------------------------
     //-- PPI(8255) / primary-slot
     //----------------------------------------------------------------
-    assign ppi_req_r = (console_mode == 2'b00 && bus_addr[7:0] == 8'ha8 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
-    assign ppi_req_w = (console_mode == 2'b00 && bus_addr[7:0] == 8'ha8 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
+    assign ppi_req_r = (bus_addr[7:0] == 8'ha8 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
+    assign ppi_req_w = (bus_addr[7:0] == 8'ha8 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
 
     always @ (posedge clk_27m or negedge bus_reset_n) begin
         if ( bus_reset_n == 0)
@@ -1056,10 +1105,10 @@ assign keyboard_addr = ppi_port_c[3:0];
     always @ (posedge clk_54m) begin
         xffh <= bus_addr[15:8] == 8'hff;
         xffl <= bus_addr[7:0] == 8'hff;
-        exp_slot0_req_w <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_wr_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[0] == 1 ) ? 1: 0;
-        exp_slot0_req_r <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[0] == 1 ) ? 1: 0;
-        exp_slotx_req_w <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_wr_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[SD_SLOT] == 1 ) ? 1: 0;
-        exp_slotx_req_r <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[SD_SLOT] == 1 ) ? 1: 0;
+        exp_slot0_req_w <= ( bus_mreq_n == 0 && bus_wr_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[0] == 1 ) ? 1: 0;
+        exp_slot0_req_r <= ( bus_mreq_n == 0 && bus_rd_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[0] == 1 ) ? 1: 0;
+        exp_slotx_req_w <= ( bus_mreq_n == 0 && bus_wr_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[SD_SLOT] == 1 ) ? 1: 0;
+        exp_slotx_req_r <= ( bus_mreq_n == 0 && bus_rd_n == 0 && xffh == 1 && xffl == 1 && pri_slot_num[SD_SLOT] == 1 ) ? 1: 0;
     end
     //assign xffff = ( bus_addr == 16'hffff ) ? 1 : 0;
     assign xffff = xffh & xffl;
@@ -1127,8 +1176,8 @@ assign keyboard_addr = ppi_port_c[3:0];
     reg slot0_req_r;
     reg slotx_req_r;
     always @ (posedge clk_54m) begin
-        slot0_req_r <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[0] == 1 ) ? 1 : 0;
-        slotx_req_r <= ( console_mode == 2'b00 && ( config_enable_mapper3 == 1 || config_enable_megaram3 == 1 || config_enable_sdcard == 1 ) && bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[SD_SLOT] == 1 ) ? 1 : 0;
+        slot0_req_r <= ( bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[0] == 1 ) ? 1 : 0;
+        slotx_req_r <= ( ( config_enable_mapper3 == 1 || config_enable_megaram3 == 1 || config_enable_sdcard == 1 ) && bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[SD_SLOT] == 1 ) ? 1 : 0;
     end
 
 `ifdef ENABLE_BIOS
@@ -1136,33 +1185,33 @@ assign keyboard_addr = ppi_port_c[3:0];
     reg bios_req;
     wire [7:0] bios_dout;
     always @ (posedge clk_54m) begin
-        bios_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[0] == 1 && exp_slot0_num[0] == 1) ? 1 : 0;
+        bios_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[0] == 1 && exp_slot0_num[0] == 1) ? 1 : 0;
     end
 
     //subrom
     reg subrom_req;
     wire [7:0] subrom_dout;
     always @ (posedge clk_54m) begin
-        subrom_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[SD_SLOT] == 1 && page_num[0] == 1 && exp_slotx_num[1] == 1 ) ? 1 : 0;
+        subrom_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && pri_slot_num[SD_SLOT] == 1 && page_num[0] == 1 && exp_slotx_num[1] == 1 ) ? 1 : 0;
     end
 
     //msx logo
     reg msx_logo_req;
     wire [7:0] msx_logo_dout;
     always @ (posedge clk_54m) begin
-        msx_logo_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[1] == 1 ) ? 1 : 0;
+        msx_logo_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[1] == 1 ) ? 1 : 0;
     end
 
     //subrom + logo
     reg subrom_logo_req;
     always @ (posedge clk_54m) begin
-        subrom_logo_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && (page_num[0] == 1 || page_num[1] == 1) && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[1] == 1 ) ? 1 : 0;
+        subrom_logo_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && (page_num[0] == 1 || page_num[1] == 1) && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[1] == 1 ) ? 1 : 0;
     end
 
     //kanji driver
     reg kanji_driver_req;
     always @ (posedge clk_54m) begin
-        kanji_driver_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && (page_num[1] == 1 || page_num[2] == 1) && pri_slot_num[0] == 1 && exp_slot0_num[1] == 1 ) ? 1 : 0;
+        kanji_driver_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && (page_num[1] == 1 || page_num[2] == 1) && pri_slot_num[0] == 1 && exp_slot0_num[1] == 1 ) ? 1 : 0;
     end
 
 
@@ -1184,14 +1233,14 @@ assign keyboard_addr = ppi_port_c[3:0];
     //wifi driver
     reg wifi_req;
     always @ (posedge clk_54m) begin
-        wifi_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[0] == 1 && exp_slot0_num[2] == 1 ) ? 1 : 0;
+        wifi_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[0] == 1 && exp_slot0_num[2] == 1 ) ? 1 : 0;
     end
 
     //logo ROM (FREE16KB del pack @0x7C000) en slot 0-3 pagina 1: pantalla de
     //marca del menu (rutina+imagen autocontenidas; el menu la llama con CALLF)
     reg logo_req;
     always @ (posedge clk_54m) begin
-        logo_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[0] == 1 && exp_slot0_num[3] == 1 ) ? 1 : 0;
+        logo_req <= ( bus_mreq_n == 0 && bus_rd_n == 0 && page_num[1] == 1 && pri_slot_num[0] == 1 && exp_slot0_num[3] == 1 ) ? 1 : 0;
     end
 
     //uart
@@ -1221,7 +1270,7 @@ assign keyboard_addr = ppi_port_c[3:0];
     wire rtc_req_r;
     wire rtc_req_w;
     wire [7:0] rtc_dout;
-    assign rtc_req_w = (console_mode == 2'b00 && bus_addr[7:1] == 7'b1011010 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1 : 0; // I/O:B4-B5h   / RTC
+    assign rtc_req_w = (bus_addr[7:1] == 7'b1011010 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1 : 0; // I/O:B4-B5h   / RTC
     assign rtc_req_r = (bus_addr[7:1] == 7'b1011010 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1 : 0; // I/O:B4-B5h   / RTC
 
     rtc rtc1(
@@ -1249,9 +1298,7 @@ assign keyboard_addr = ppi_port_c[3:0];
     wire VideoDLClk;
     //decode del VDP por modo: MSX 98-9Bh; SG-1000 BE/BFh; ColecoVision A0-BFh
     wire vdp_io_hit;
-    assign vdp_io_hit = ( console_mode == 2'b00 ) ? ( bus_addr[7:2] == 6'b100110 ) :
-                        ( console_mode == 2'b01 ) ? ( bus_addr[7:1] == 7'b1011111 ) :
-                                                    ( bus_addr[7:5] == 3'b101 );
+    assign vdp_io_hit = ( bus_addr[7:2] == 6'b100110 );
     assign vdp_csw_n = (vdp_io_hit == 1 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 0:1; // VDP write
     assign vdp_csr_n = (vdp_io_hit == 1 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 0:1; // VDP read
 
@@ -1266,7 +1313,7 @@ assign keyboard_addr = ppi_port_c[3:0];
     `else
         .reset_n (0),
     `endif
-        .mode    ((console_mode == 2'b00) ? bus_addr[1:0] : {1'b0, bus_addr[0]}),
+        .mode    (bus_addr[1:0]),
         .csw_n   (vdp_csw_n),
         .csr_n   (vdp_csr_n),
 
@@ -1329,13 +1376,13 @@ assign keyboard_addr = ppi_port_c[3:0];
                                                         { mapper_reg3, bus_addr[13:0] };
 
     always @ (posedge clk_54m) begin
-        mapper_req3 <= ( console_mode == 2'b00 && bus_rfsh_n == 1 && config_enable_mapper3 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[0] == 1 && xffff == 0) ? 1 : 0;
-        mapper_req12 <= ( console_mode == 2'b00 && config_enable_mapper12 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot == config_mapper_slot ) ? 1 : 0;
+        mapper_req3 <= ( bus_rfsh_n == 1 && config_enable_mapper3 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[0] == 1 && xffff == 0) ? 1 : 0;
+        mapper_req12 <= ( config_enable_mapper12 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot == config_mapper_slot ) ? 1 : 0;
     end
     assign mapper_req = mapper_req3 | mapper_req12;
     assign mapper_read = mapper_req & ~bus_rd_n;
     assign mapper_write = mapper_req & ~bus_wr_n;
-    assign mapper_reg_write = ( console_mode == 2'b00 && (bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0) && (bus_addr [7:2] == 6'b111111) )?1:0;
+    assign mapper_reg_write = ( (bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0) && (bus_addr [7:2] == 6'b111111) )?1:0;
 
     always @(posedge clk_27m or negedge bus_reset_n) begin
         if (bus_reset_n == 0) begin
@@ -1719,11 +1766,7 @@ memory_ctrl mem1 (
         scc2_req12 <= ( config_enable_megaram12 == 1 && bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot == config_megaram_slot ) ? 1 : 0;
         //scc2_req <= ( bus_mreq_n == 0 && (bus_rd_n == 0 || bus_wr_n == 0 ) && pri_slot_num[2] == 1 ) ? 1 : 0;
     end
-    reg console_mem_req;
-    always @ (posedge clk_54m) begin
-        console_mem_req <= ( console_mode != 2'b00 && bus_mreq_n == 0 && bus_rfsh_n == 1 && (bus_rd_n == 0 || bus_wr_n == 0) ) ? 1 : 0;
-    end
-    assign scc2_req = ( console_mode != 2'b00 ) ? console_mem_req : (scc2_req3 | scc2_req12);
+    assign scc2_req = scc2_req3 | scc2_req12;
     assign scc2_req_r = ( scc2_req == 1 && bus_rd_n == 0 ) ? 1 : 0;
     assign scc2_wrt = ( scc2_req == 1 && bus_wr_n == 0 ) ? 1 : 0;
 
@@ -1745,7 +1788,6 @@ memory_ctrl mem1 (
         .map_sel (map_sel),
         .map_linear (map_linear),
         .sram_cfg (config3_ff),
-        .console_mode (console_mode),
 
         .megaram_req (megaram_req),
         .megaram_wrt (megaram_wrt),
@@ -1823,95 +1865,17 @@ memory_ctrl mem1 (
     wire [15:0] scc_term;
     assign scc_term = (map_sel == 2'b10) ? { scc_wav, 1'b0 } : 16'd0;  // SCC solo en modo SCC (no Konami4/ASCII)
 
-    // ============== modo consola: PSG SN76489, mandos y pausa ==============
-    //SN76489: SG-1000 escribe en 7E/7Fh; ColecoVision en E0-FFh
-    wire sn_wr;
-    assign sn_wr = ( bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0 && (
-                     (console_mode == 2'b01 && bus_addr[7:1] == 7'b0111111) ||
-                     (console_mode == 2'b10 && bus_addr[7:5] == 3'b111) ) ) ? 1 : 0;
-    wire [13:0] sn_sound;
-    sn76489 sn1 (
-        .clk        (clk_27m),
-        .clk_en_3m6 (clk_enable_3m6_27),
-        .reset_n    (bus_reset_n),
-        .wr         (sn_wr),
-        .din        (cpu_dout),
-        .sound      (sn_sound)
-    );
-    wire [15:0] sn_term;
-    assign sn_term = (console_mode != 2'b00) ? { 1'b0, sn_sound, 1'b0 } : 16'd0;
-
-    //mandos: SG-1000 lee DC/DDh; Coleco lee E0-FFh (A1 elige mando) con latch
-    //de modo keypad (escritura 80-9F) / joystick (escritura C0-DF)
-    reg coleco_kp;
-    always @ (posedge clk_27m) begin
-        if (bus_reset_n == 0) coleco_kp <= 0;
-        else if (console_mode == 2'b10 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0) begin
-            if (bus_addr[7:5] == 3'b100) coleco_kp <= 1;    // 80-9Fh
-            if (bus_addr[7:5] == 3'b110) coleco_kp <= 0;    // C0-DFh
-        end
-    end
-    //keypad Coleco desde el teclado USB: digitos 1-9,0 + KP* ('*') y KP- ('#').
-    //Codigo de 4 bits activo-bajo leido en D0-D3 (tabla clasica; VERIFICAR HW)
-    reg [3:0] kp_code;
-    always @ (posedge clk_27m) begin
-        kp_code <= keyboard[30] ? 4'h2 :    // 1 -> ~0Dh? tabla: lectura directa
-                   keyboard[31] ? 4'h8 :    // 2
-                   keyboard[32] ? 4'h3 :    // 3
-                   keyboard[33] ? 4'hD :    // 4
-                   keyboard[34] ? 4'hC :    // 5
-                   keyboard[35] ? 4'h1 :    // 6
-                   keyboard[36] ? 4'hA :    // 7
-                   keyboard[37] ? 4'hE :    // 8
-                   keyboard[38] ? 4'h4 :    // 9
-                   keyboard[39] ? 4'h5 :    // 0
-                   keyboard[85] ? 4'h6 :    // KP* = '*'
-                   keyboard[86] ? 4'h9 :    // KP- = '#'
-                                  4'hF;     // nada pulsado
-    end
-    wire [7:0] sg_dc;
-    wire [7:0] sg_dd;
-    // bits crudos joystickN: [0]=Der [1]=Izq [2]=Abajo [3]=Arriba [4]=btn1 [5]=btn2
-    // SG-1000 DC (activo bajo): D0=Arr D1=Aba D2=Izq D3=Der D4=btn1 D5=btn2 D6=P2Arr D7=P2Aba
-    assign sg_dc = ~{ joystick1[2], joystick1[3], joystick0[5], joystick0[4],
-                      joystick0[0], joystick0[1], joystick0[2], joystick0[3] };
-    // SG-1000 DD: D0=P2Izq D1=P2Der D2=P2btn1 D3=P2btn2
-    assign sg_dd = { 4'b1111, ~joystick1[5], ~joystick1[4], ~joystick1[0], ~joystick1[1] };
-    wire [7:0] coleco_joy0;
-    wire [7:0] coleco_joy1;
-    //byte joystick Coleco (activo bajo): D0=arriba D1=derecha D2=abajo D3=izda D6=fuego
-    assign coleco_joy0 = (coleco_kp == 1) ? { 1'b1, ~joystick0[5], 2'b11, kp_code }
-                                          : { 1'b1, ~joystick0[4], 2'b11,
-                                              ~joystick0[1], ~joystick0[2], ~joystick0[0], ~joystick0[3] };
-    assign coleco_joy1 = (coleco_kp == 1) ? { 1'b1, ~joystick1[5], 2'b11, 4'hF }
-                                          : { 1'b1, ~joystick1[4], 2'b11,
-                                              ~joystick1[1], ~joystick1[2], ~joystick1[0], ~joystick1[3] };
-    wire console_joy_r;
-    assign console_joy_r = ( bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0 && (
-                             (console_mode == 2'b01 && bus_addr[7:1] == 7'b1101110) ||
-                             (console_mode == 2'b10 && bus_addr[7:5] == 3'b111) ) ) ? 1 : 0;
-    wire [7:0] console_joy_data;
-    assign console_joy_data = (console_mode == 2'b01)
-                                ? ( (bus_addr[0] == 0) ? sg_dc : sg_dd )
-                                : ( (bus_addr[1] == 0) ? coleco_joy0 : coleco_joy1 );
-    //pausa SG-1000 (boton de consola = NMI): tecla F10
-    reg sg_pause_d;
-    reg sg_pause_nmi;
-    always @ (posedge clk_27m) begin
-        sg_pause_d <= keyboard[67];
-        sg_pause_nmi <= (keyboard[67] == 1 && sg_pause_d == 0) ? 1 : 0;
-    end
-    // ========================================================================
+    // (modo consola SG-1000/ColecoVision eliminado en v1.9 -- solo MSX)
 
     always @ (posedge clk_27m) begin
         if (clk_enable_3m6_27 == 1 ) begin
             if (config_enable_stereo == 1) begin
-                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + scc_term + jt2413_wav + sn_term;
-                audio_sample_r <= { 2'b0 , psg2Sound3 , 6'b000000 } + { scc2x_wav, 1'b0 } + jt2413_wav + sn_term;
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + scc_term + jt2413_wav;
+                audio_sample_r <= { 2'b0 , psg2Sound3 , 6'b000000 } + { scc2x_wav, 1'b0 } + jt2413_wav;
             end
             else begin
-                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav + sn_term;
-                audio_sample_r <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav + sn_term;
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
+                audio_sample_r <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
             end
         end
     end
@@ -1975,7 +1939,7 @@ memory_ctrl mem1 (
 `endif
 
     localparam CONFIG1_DEFAULT = 8'hf3;  // bit3=0 -> Scanlines OFF by default (was 0xfb)
-    localparam CONFIG2_DEFAULT = 8'h07;  // bit3=0 -> Compatible Mode (extra wait) OFF by default (was 0x0f)
+    localparam CONFIG2_DEFAULT = 8'h07;  // bit3 LIBRE (Compatible Mode eliminado en v1.9)
 
 `ifdef ENABLE_CONFIG
     //config
@@ -1994,7 +1958,6 @@ memory_ctrl mem1 (
     wire config_enable_megaram12;
     wire config_enable_ghost_scc;
     reg config_enable_sdcard;
-    wire config_enable_wait;
     wire config_enable_stereo;
     wire config_enable_16_9;
     reg config_reset_ff;
@@ -2010,8 +1973,6 @@ memory_ctrl mem1 (
     wire config2_req;
     wire config3_req;
     reg [7:0] config3_ff = 0;       // puerto #43: sram_cfg de la megaram (volatil)
-    wire config4_req;
-    reg [7:0] config4_ff = 0;       // puerto #44: modo consola (volatil; reset -> MSX)
     wire config5_req;
     reg config_turbo_boot_ff = 0;   // puerto #45 bit0: arrancar en turbo (PERSISTIDO en
                                     // flash byte[4] del bloque config: 'T'=0x54 -> on;
@@ -2037,9 +1998,6 @@ memory_ctrl mem1 (
             end
             if (config3_req == 1 ) begin
                 config3_ff <= cpu_dout;
-            end
-            if (config4_req == 1 ) begin
-                config4_ff <= cpu_dout;
             end
             if (config2_req == 1 ) begin
                 config_update <= 1;
@@ -2103,27 +2061,13 @@ memory_ctrl mem1 (
     assign config_reset = (config_reset_req == 1 && flash_write_busy == 0) ? 1 : 0;
 
     assign config_ok = (config0_ff == 8'hb7) ? 1 : 0;
-    assign config0_req = (console_mode == 2'b00 && bus_addr[7:0] == 8'h40 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
+    assign config0_req = (bus_addr[7:0] == 8'h40 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config1_req = (config_ok == 1 && bus_addr[7:0] == 8'h41 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config2_req = (config_ok == 1 && bus_addr[7:0] == 8'h42 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
-    assign config3_req = (config_ok == 1 && console_mode == 2'b00 && bus_addr[7:0] == 8'h43 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
-    assign config4_req = (config_ok == 1 && console_mode == 2'b00 && bus_addr[7:0] == 8'h44 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
+    assign config3_req = (config_ok == 1 && bus_addr[7:0] == 8'h43 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign config5_req = (config_ok == 1 && bus_addr[7:0] == 8'h45 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
-    //modo consola (SG-1000 / ColecoVision): en consola se apagan los responders
-    //MSX (memoria e I/O conflictiva); salida = reset fisico (config4 -> 0)
-    //el cambio de mapa es atomico: la escritura a #44 solo ARMA el modo; se
-    //activa en el fetch M1 de 0000h (el "jp 0" del menu aterriza ya en consola)
-    reg [1:0] console_live = 0;
-    always @ (posedge clk_27m) begin
-        if (bus_reset_n == 0) console_live <= 0;
-        else if (bus_addr == 16'h0000 && bus_mreq_n == 0 && bus_rd_n == 0)
-            console_live <= config4_ff[1:0];
-    end
-    wire [1:0] console_mode;
-    assign console_mode = console_live;
     assign config_enable_scanlines = config1_ff[3];
     //assign config_keyboard = config2_ff[4:3];
-    assign config_enable_wait = config2_ff[3];
     assign config_enable_stereo = config2_ff[5];
     assign config_enable_16_9 = config2_ff[4];
     // ===== v1.9 Panasonic switched-I/O device 8 (T9769 turbo, estilo WSX) =====
@@ -2137,17 +2081,16 @@ memory_ctrl mem1 (
     // -> config_ok, excluyentes) y con el fallback swio_dout del rango $40-$4F.
     // La escritura del turbo se latchea en el bloque F11 (clk_54m, un solo driver).
     wire pana_sel  = (config0_ff == 8'hf7) ? 1 : 0;
-    wire pana41_wr = (pana_sel == 1 && console_mode == 2'b00 && bus_addr[7:0] == 8'h41 &&
+    wire pana41_wr = (pana_sel == 1 && bus_addr[7:0] == 8'h41 &&
                       bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0) ? 1 : 0;
     wire [7:0] pana_dout = ( bus_addr[3:0] == 4'h0 ) ? config0_ff :
                            ( bus_addr[3:0] == 4'h1 ) ? ( turbo ? 8'hfa : 8'hfb ) : 8'hff;
 
-    assign config_req = (console_mode == 2'b00 && bus_addr[7:4] == 4'h4 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
+    assign config_req = (bus_addr[7:4] == 4'h4 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
     assign config_dout = ( bus_addr[3:0] == 4'h0 ) ? config0_ff :
                          ( bus_addr[3:0] == 4'h1 ) ? config1_ff :
                          ( bus_addr[3:0] == 4'h2 ) ? config2_ff :
                          ( bus_addr[3:0] == 4'h3 ) ? config3_ff :
-                         ( bus_addr[3:0] == 4'h4 ) ? config4_ff :
                          ( bus_addr[3:0] == 4'h5 ) ? {7'b0, config_turbo_boot_ff} : 8'hff;
 
 
@@ -2183,7 +2126,6 @@ memory_ctrl mem1 (
     wire [1:0] config_megaram_slot;
     wire [1:0] config_sdcard_slot;
     wire config_reset;
-    wire config_enable_wait;
     assign config_enable_mapper3 = 1;
     assign config_enable_mapper12 = 0;
     assign config_enable_megaram = 1;
@@ -2196,7 +2138,6 @@ memory_ctrl mem1 (
     assign config_megaram_slot = 2'b11;
     assign config_sdcard_slot= 2'b11;
     assign config_reset = 0;
-    assign config_enable_wait = 0;
     wire config_enable_stereo;
     assign config_enable_stereo = 0;
     wire config_enable_16_9;
@@ -2422,8 +2363,8 @@ memory_ctrl mem1 (
     wire [2:0] megarom_page;
 
     always @ (posedge clk_54m) begin
-        megarom_req <=     ( console_mode == 2'b00 && config_enable_sdcard == 1 && bus_mreq_n == 0 && bus_rfsh_n == 1 && bus_rd_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && (page_num[1] == 1 || page_num[2] == 1) ) ? 1 : 0;
-        megarom_page_req <= ( console_mode == 2'b00 && bus_mreq_n == 0 && bus_rfsh_n == 1 && bus_wr_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && bus_addr == 16'h6000 ) ? 1 : 0;
+        megarom_req <=     ( config_enable_sdcard == 1 && bus_mreq_n == 0 && bus_rfsh_n == 1 && bus_rd_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && (page_num[1] == 1 || page_num[2] == 1) ) ? 1 : 0;
+        megarom_page_req <= ( bus_mreq_n == 0 && bus_rfsh_n == 1 && bus_wr_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && bus_addr == 16'h6000 ) ? 1 : 0;
     end
     assign megarom_page = megarom_page_ff;
     assign megarom_addr = { megarom_page, bus_addr[13:0] };
@@ -2554,7 +2495,7 @@ memory_ctrl mem1 (
     //wire scc_enable_w;
     //assign scc_enable_w = ff_scc_enable;
     always @ (posedge clk_27m) begin
-        sram_cs_w <= console_mode == 2'b00 && config_enable_sdcard == 1 && bus_reset_n && ff_sd_en && bus_iorq_n == 1 && bus_m1_n == 1 && bus_mreq_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && ( bus_addr >= SDC_SDATA && bus_addr < SDC_ENABLE) ? 1 : 0;
+        sram_cs_w <= config_enable_sdcard == 1 && bus_reset_n && ff_sd_en && bus_iorq_n == 1 && bus_m1_n == 1 && bus_mreq_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && ( bus_addr >= SDC_SDATA && bus_addr < SDC_ENABLE) ? 1 : 0;
     end
     assign sram_busreq_w = sram_cs_w && ~bus_rd_n;
     
@@ -2625,7 +2566,7 @@ memory_ctrl mem1 (
     
     reg sd_cs_w;
     always @ (posedge clk_27m) begin
-        sd_cs_w <= console_mode == 2'b00 && config_enable_sdcard == 1 && bus_reset_n && ff_sd_en && bus_iorq_n && bus_m1_n && bus_mreq_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && (bus_addr >= SDC_ENABLE && bus_addr <= SDC_END) ? 1 : 0;
+        sd_cs_w <= config_enable_sdcard == 1 && bus_reset_n && ff_sd_en && bus_iorq_n && bus_m1_n && bus_mreq_n == 0 && pri_slot_num[SD_SLOT] == 1 && exp_slotx_num[2] == 1 && (bus_addr >= SDC_ENABLE && bus_addr <= SDC_END) ? 1 : 0;
     end
     wire sd_busreq_w;
     assign sd_busreq_w = sd_cs_w && ~bus_rd_n;
@@ -2708,8 +2649,8 @@ memory_ctrl mem1 (
     wire swio_req_r;
     wire swio_req_w;
     wire [7:0] swio_dout;
-    assign swio_req_r = (console_mode == 2'b00 && config_enable_megaram == 1 && bus_addr[7:4] == 4'b0100 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
-    assign swio_req_w = (console_mode == 2'b00 && config_enable_megaram == 1 && bus_addr[7:4] == 4'b0100 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
+    assign swio_req_r = (config_enable_megaram == 1 && bus_addr[7:4] == 4'b0100 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0)? 1:0;
+    assign swio_req_w = (config_enable_megaram == 1 && bus_addr[7:4] == 4'b0100 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0)? 1:0;
     assign swio_req = swio_req_r | swio_req_w;
 
     switched_io_ports ocm_ports (

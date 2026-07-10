@@ -326,7 +326,6 @@ SRAM_FLAG	equ	#C0D9			; 1 byte: SRAM de cartucho para este lanzamiento (0/1)
 SD_READY	equ	#C0DB			; 1 byte: SD ya montada+escaneada (bajo el logo)
 MAP_SWIO	equ	#C0DC			; 1 byte: smart command del mapper (lo aplica el stub)
 DSK_PEND	equ	#C0DD			; 1 byte: registro .dsk pendiente de reescribir (2o pase)
-CONSOLE_K	equ	#C0DA			; 1 byte: consola a lanzar (1=SG-1000, 2=ColecoVision)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -1031,16 +1030,7 @@ scan_current:
 	call ix_is_rom
 	jr   z, .scr_isrom
 	call ix_is_dsk
-	jr   z, .scr_isdsk
-	call ix_is_sg
-	jr   z, .scr_issg
-	call ix_is_col
-	jp   nz, .scr_drop				; ni ROM/DSK/SG/COL -> fuera
-	ld   c, 4						; type 4 = ColecoVision
-	jr   .scr_store
-.scr_issg:
-	ld   c, 3						; type 3 = SG-1000
-	jr   .scr_store
+	jp   nz, .scr_drop				; ni ROM/DSK -> fuera
 .scr_isdsk:
 	ld   c, 2						; type 2 = dsk (Nextor disk image)
 	jr   .scr_store
@@ -1056,7 +1046,7 @@ scan_current:
 	jr   z, .scr_fltok				; ALL -> keep
 	or   a
 	jr   nz, .scr_fdsk
-	ld   a, c						; tab ROM: roms y consolas (1,3,4)
+	ld   a, c						; tab ROM: solo roms (1)
 	cp   2
 	jp   z, .scr_drop
 	jr   .scr_fltok
@@ -1641,7 +1631,6 @@ wsm_advance:
 ; load_rom: load the whole ROM (FILE_CLUS chain) into the megaram, 8K linear.
 load_rom:
 	xor  a							; carga normal: desde el segmento 0
-load_rom_at:						; A = segmento inicial (BIOS coleco: 250)
 	push af
 	ld   a, #D4						; SWIO: Slot2 = Int SCC-I (megaram -> slot 2, SCC mode)
 	out  (#40), a
@@ -1945,24 +1934,6 @@ restore_palette:
 def_palette:						; formato: (R<<4)|B, G
 	.db #00,0, #00,0, #11,6, #33,7, #17,1, #27,3, #51,1, #27,6
 	.db #71,1, #73,3, #61,6, #64,6, #11,4, #65,2, #55,5, #77,7
-
-; launch_console: la ROM ya esta en la megaram (SG: segs 0+; COL: BIOS en
-; 250/251 + cartucho en 0-3). Silencia el SCC del MSX (map_sel=00), ARMA el
-; modo consola en el puerto #44 y salta a 0000h: el FPGA conmuta el mapa
-; completo en el fetch de la direccion 0 (salida: reset fisico).
-launch_console:
-	di
-	ld   a, #D4
-	out  (#40), a
-	ld   a, #0D						; map_sel=00 (Konami4): SCC del MSX mudo
-	out  (#41), a
-	ld   a, #48
-	out  (#40), a
-	xor  a
-	out  (#43), a					; SRAM de cartucho fuera
-	ld   a, (CONSOLE_K)				; 1=SG-1000, 2=ColecoVision
-	out  (#44), a					; ARMA: conmuta en el fetch de 0000h
-	jp   0
 
 ; clean MSX2/V9958 VDP register values: (data, 0x80|reg) pairs for R8-R23,R25-27
 vdp_clean_tbl:
@@ -2328,7 +2299,7 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	jp   z, .br_selrom				; 1 = rom -> load to megaram + launch
 	dec  a
 	jp   z, .br_seldsk				; 2 = dsk -> Nextor disk emulation + boot
-	jp   .br_selcon					; 3 = SG-1000 / 4 = ColecoVision
+	jp   browse					; (tipo inesperado -> ignorar)
 .br_isdir:
 	; --- directory: push current cluster, descend ---
 	ld   a, (DIR_SP)
@@ -2551,98 +2522,6 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	call .bsr_sprint				; refrescar/limpiar la fila SRAM y el pie
 	call .bsr_footer
 	jp   .bsr_lk
-
-.br_selcon:
-	; --- SG-1000 / ColecoVision: cargar lineal y lanzar en modo consola ---
-	ld   a, (BR_SEL)
-	call ent_addr
-	ld   (BR_REC), hl
-	ld   a, (hl)
-	sub  2							; tipo 3 -> 1 (SG), 4 -> 2 (COL)
-	ld   (CONSOLE_K), a
-	inc  hl							; registro+1 = primer cluster (dword)
-	ld   de, FILE_CLUS
-	call w_copy
-	call cls_browser
-	ld   hl, #0101
-	call POSIT
-	ld   hl, romInfoStr				; "Fichero:"
-	call print_string
-	ld   hl, #0103
-	call POSIT
-	ld   hl, (BR_REC)
-	ld   de, NAME_OFF
-	add  hl, de
-	call print_string
-	ld   hl, #0105
-	call POSIT
-	ld   hl, conSgStr				; "Consola: SG-1000"
-	ld   a, (CONSOLE_K)
-	dec  a
-	jr   z, .bsc_nm
-	ld   hl, conColStr				; "Consola: ColecoVision"
-.bsc_nm:
-	call print_string
-	ld   a, (CONSOLE_K)
-	cp   2
-	jr   nz, .bsc_game
-	; ColecoVision: la BIOS (COLECO.ROM, en la carpeta actual) va a seg 250-251
-	ld   a, (ENT_COUNT)
-	ld   e, a						; restantes
-	ld   d, 0						; indice
-.bsc_find:
-	ld   a, e
-	or   a
-	jr   z, .bsc_nobios
-	push de
-	ld   a, d
-	call ent_addr
-	push hl
-	ld   de, NAME_OFF
-	add  hl, de
-	ld   (TAGPTR), hl
-	ld   hl, conBiosStr				; "COLECO.ROM"
-	call name_contains
-	pop  hl
-	pop  de
-	jr   c, .bsc_bios
-	inc  d
-	dec  e
-	jr   .bsc_find
-.bsc_nobios:
-	ld   hl, #0107
-	call POSIT
-	ld   hl, conNoBiosStr			; falta la BIOS
-	call print_string
-	call browse_getkey
-	jp   browse					; (redraw: hook FH global)
-.bsc_bios:
-	inc  hl							; +1 = cluster de COLECO.ROM
-	ld   de, FILE_CLUS
-	call w_copy
-	ld   a, 250
-	call load_rom_at				; BIOS -> segmentos 250-251
-	ld   hl, (BR_REC)				; restaurar el cluster del juego
-	inc  hl
-	ld   de, FILE_CLUS
-	call w_copy
-.bsc_game:
-	ld   hl, #0107
-	call POSIT
-	ld   hl, loadingStr				; "Cargando ROM en megaram..."
-	call print_string
-	call load_rom					; juego -> segmento 0 en adelante
-	ld   hl, #0109
-	call POSIT
-	ld   hl, conGoStr				; "RETURN=LANZAR  ESC=volver"
-	call print_string
-.bsc_lk:
-	call browse_getkey
-	cp   #0D
-	jp   z, launch_console
-	cp   #1B
-	jp   z, browse				; (hook FH global)
-	jr   .bsc_lk
 
 .br_seldsk:
 	; --- selected .dsk: set up Nextor disk-emulation mode and boot it ---
@@ -3565,30 +3444,6 @@ ix_is_dsk:
 	cp   'K'
 	ret
 
-; ix_is_sg: Z si la extension 8.3 es "SG " (SG-1000)
-ix_is_sg:
-	ld   a, (ix+8)
-	cp   'S'
-	ret  nz
-	ld   a, (ix+9)
-	cp   'G'
-	ret  nz
-	ld   a, (ix+10)
-	cp   ' '
-	ret
-
-; ix_is_col: Z si la extension 8.3 es "COL" (ColecoVision)
-ix_is_col:
-	ld   a, (ix+8)
-	cp   'C'
-	ret  nz
-	ld   a, (ix+9)
-	cp   'O'
-	ret  nz
-	ld   a, (ix+10)
-	cp   'L'
-	ret
-
 ; dsk_check_contig: verify the file whose first cluster is FILE_CLUS occupies
 ; CONSECUTIVE clusters (Nextor disk emulation maps a linear sector range, so the
 ; image must be unfragmented). Returns CF=0 if contiguous, CF=1 if fragmented.
@@ -4484,11 +4339,6 @@ ENDIF ;ENABLE_SDCARD
 
 	in   a, (#42)
 	ld   b, a
-	and  #08						; Bit 3: slow device
-	rrca
-	rrca
-	rrca
-	ld   (var_slowdv), a
 	ld   a, b
 	and  #20						; Bit 5: stereo sound
 	rlca
@@ -4524,11 +4374,6 @@ ONOFF_Y = ONOFF_Y + 2
 
 	ld   hl,#2b00 + ONOFF_Y			; Print Enable Scanlines
 	ld   a,(var_scanln)
-	call print_on_off
-ONOFF_Y = ONOFF_Y + 2
-
-	ld   hl,#2b00 + ONOFF_Y			; Print Slow Device
-	ld   a,(var_slowdv)
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 
@@ -4600,11 +4445,6 @@ wait_for_a_key:
 	jp   (hl)
 
 ; ############## Actions
-
-selected_slowdevice:
-	ld   hl, var_slowdv
-	call .selected_on_off
-	ret
 
 selected_stereo:
 	ld   hl, var_stereo
@@ -4700,12 +4540,6 @@ IFDEF ENABLE_SDCARD
 	ld   b, a
 ENDIF
 
-	ld   a, (var_slowdv)			; #42 Bit 3: slow device
-	rlca
-	rlca
-	rlca
-	or   b
-	ld   b, a
 	ld   a, (var_stereo)			; #42 Bit 5: stereo sound
 	rrca
 	rrca
@@ -4868,16 +4702,6 @@ sramStr:
 	.db "SRAM:",0
 srchStr:
 	.db "Buscar: ",0
-conSgStr:
-	.db "Consola: SG-1000",0
-conColStr:
-	.db "Consola: ColecoVision",0
-conBiosStr:
-	.db "COLECO.ROM",0
-conNoBiosStr:
-	.db "Falta COLECO.ROM en esta carpeta",0
-conGoStr:
-	.db "RETURN=LANZAR  ESC=volver",0
 dskInfoStr:
 	.db "Disco:",0
 dskMountStr:
@@ -4909,8 +4733,6 @@ slot1GhostStr:
 	.db "Second SCC",0			; config1 bit2 (former ghost SCC): SCC+ nr.2 in the free slot
 enableScanlinesStr:
 	.db "Enable Scanlines",0
-slowDeviceStr:
-	.db "Compatible Mode",0
 stereoStr:
 	.db "Stereo Sound",0
 aspectStr:
@@ -4956,25 +4778,16 @@ POS_Y = POS_Y + 2
 struct_EnableScanlines:
 	.db 21, POS_Y+1
 	.dw enableScanlinesStr
-	.dw struct_Slot1GhostSCC, struct_SlowDevice, struct_EnableScanlines
+	.dw struct_Slot1GhostSCC, struct_Stereo, struct_EnableScanlines
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_scanlines
 POS_Y = POS_Y + 2
 
-struct_SlowDevice:
-	.db 21, POS_Y+1
-	.dw slowDeviceStr
-	.dw struct_EnableScanlines, struct_Stereo, struct_SlowDevice
-	.dw #0800 + POS_Y*10 + 2
-	.db 4
-	.dw selected_slowdevice
-POS_Y = POS_Y + 2
-
 struct_Stereo:
 	.db 21, POS_Y+1
 	.dw stereoStr
-	.dw struct_SlowDevice, struct_Aspect, struct_Stereo
+	.dw struct_EnableScanlines, struct_Aspect, struct_Stereo
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_stereo
@@ -8300,7 +8113,6 @@ ENDIF
 	var_ghtscc: ds 1
 	var_scanln: ds 1
 	var_mapslt: ds 1
-	var_slowdv: ds 1
 	var_stereo: ds 1
 	var_aspct: ds 1
 	var_btturb: ds 1
