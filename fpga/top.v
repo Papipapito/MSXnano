@@ -2069,7 +2069,7 @@ memory_ctrl mem1 (
     assign config_enable_scanlines = config1_ff[3];
     //assign config_keyboard = config2_ff[4:3];
     assign config_enable_stereo = config2_ff[5];
-    assign config_enable_16_9 = config2_ff[4];
+    assign config_enable_16_9 = 1'b0;  // 16:9 por AVI eliminado (no lo honra el tele); fijo 4:3. bit4 libre
     // ===== v1.9 Panasonic switched-I/O device 8 (T9769 turbo, estilo WSX) =====
     // Protocolo (ref. openMSX MSXMatsushita.cc): OUT &H40,8 selecciona el dispositivo;
     // leer $40 devuelve ~8 = 247 (deteccion). $41 write: SOLO bit0, activo-bajo
