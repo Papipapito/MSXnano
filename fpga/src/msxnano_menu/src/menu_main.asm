@@ -3,6 +3,7 @@
 .BIOSVARS
 
 ENABLE_SDCARD=1
+MSXIMUS=0				; 1 = build MSXimus/Console 60K: sprites 8/linea en bit3 y 16:9 en bit4
 ENABLE_MEGARAM=1
 
 ; (aliases de structs Enable* eliminados: mapper/megaram/SD van siempre ON)
@@ -4345,6 +4346,21 @@ ENDIF ;ENABLE_SDCARD
 	rlca
 	rlca							; bit5 -> bit0
 	ld   (var_stereo), a
+IF MSXIMUS
+	ld   a, b
+	and  #08						; Bit 3: sprites 8/linea (MSXimus: el bit4 es 16:9)
+	rrca
+	rrca
+	rrca							; bit3 -> bit0
+	ld   (var_sprlim), a
+	ld   a, b
+	and  #10						; Bit 4: pantalla 16:9
+	rrca
+	rrca
+	rrca
+	rrca							; bit4 -> bit0
+	ld   (var_aspct), a
+ELSE
 	ld   a, b
 	and  #10						; Bit 4: sprites 8/linea (anti-parpadeo screen2)
 	rrca
@@ -4352,6 +4368,7 @@ ENDIF ;ENABLE_SDCARD
 	rrca
 	rrca							; bit4 -> bit0
 	ld   (var_sprlim), a
+ENDIF
 
 	in   a, (#45)					; #45 Bit 0: boot turbo (flash byte[4]='T')
 	and  #01
@@ -4386,6 +4403,13 @@ ONOFF_Y = ONOFF_Y + 2
 	ld   a,(var_sprlim)
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
+
+IF MSXIMUS
+	ld   hl,#2b00 + ONOFF_Y			; Print Pantalla 16:9
+	ld   a,(var_aspct)
+	call print_on_off
+ONOFF_Y = ONOFF_Y + 2
+ENDIF
 
 	ld   hl,#2b00 + ONOFF_Y			; Print Boot Turbo
 	ld   a,(var_btturb)
@@ -4453,6 +4477,12 @@ selected_stereo:
 selected_spritelimit:
 	ld   hl, var_sprlim
 	jp   .selected_on_off
+
+IF MSXIMUS
+selected_aspect:
+	ld   hl, var_aspct
+	jp   .selected_on_off
+ENDIF
 
 selected_bootturbo:
 	ld   hl, var_btturb
@@ -4546,12 +4576,27 @@ ENDIF
 	rrca							; bit0 -> bit5
 	or   b
 	ld   b, a
+IF MSXIMUS
+	ld   a, (var_sprlim)			; #42 Bit 3: sprites 8/linea (MSXimus)
+	rlca
+	rlca
+	rlca							; bit0 -> bit3
+	or   b
+	ld   b, a
+	ld   a, (var_aspct)				; #42 Bit 4: pantalla 16:9
+	rlca
+	rlca
+	rlca
+	rlca							; bit0 -> bit4
+	or   b
+ELSE
 	ld   a, (var_sprlim)			; #42 Bit 4: sprites 8/linea
 	rlca
 	rlca
 	rlca
 	rlca							; bit0 -> bit4
 	or   b
+ENDIF
 	or   #40						; Bit 6: save config in flash
 	ld   b, a
 
@@ -4737,6 +4782,10 @@ stereoStr:
 	.db "Stereo Sound",0
 spriteStr:
 	.db "Sprites 8/linea",0
+IF MSXIMUS
+aspectStr:
+	.db "Pantalla 16:9",0
+ENDIF
 bootTurboStr:
 	.db "Boot Turbo",0			; arrancar siempre a 5.37 MHz (flash byte[4]='T')
 saveExitStr:
@@ -4796,16 +4845,35 @@ POS_Y = POS_Y + 2
 struct_SpriteLimit:
 	.db 21, POS_Y+1
 	.dw spriteStr
+IF MSXIMUS
+	.dw struct_Stereo, struct_Aspect, struct_SpriteLimit
+ELSE
 	.dw struct_Stereo, struct_BootTurbo, struct_SpriteLimit
+ENDIF
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_spritelimit
 POS_Y = POS_Y + 2
 
+IF MSXIMUS
+struct_Aspect:
+	.db 21, POS_Y+1
+	.dw aspectStr
+	.dw struct_SpriteLimit, struct_BootTurbo, struct_Aspect
+	.dw #0800 + POS_Y*10 + 2
+	.db 4
+	.dw selected_aspect
+POS_Y = POS_Y + 2
+ENDIF
+
 struct_BootTurbo:
 	.db 21, POS_Y+1
 	.dw bootTurboStr
+	IF MSXIMUS
+	.dw struct_Aspect, struct_SaveExit, struct_BootTurbo
+ELSE
 	.dw struct_SpriteLimit, struct_SaveExit, struct_BootTurbo
+ENDIF
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_bootturbo
@@ -8116,6 +8184,9 @@ ENDIF
 	var_stereo: ds 1
 	var_sprlim: ds 1
 	var_btturb: ds 1
+IF MSXIMUS
+	var_aspct: ds 1
+ENDIF
 
 	; File-Hunter fase 0 (test UNAPI)
 	FH_SAVE_SP:    ds 2
