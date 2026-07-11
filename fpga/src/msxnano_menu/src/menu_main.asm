@@ -4414,6 +4414,10 @@ ENDIF
 	ld   hl,#2b00 + ONOFF_Y			; Print Boot Turbo
 	ld   a,(var_btturb)
 	call print_on_off
+	ld   hl,#2f00 + ONOFF_Y			; nota en la misma fila (col 47): el Boot Turbo solo
+	call POSIT						; entra al ARRANCAR EN FRIO; Save&Reset con turbo no
+	ld   hl, turboNoteStr			; reinicia (se queda en negro) -> reiniciar fisicamente
+	call print_string
 ONOFF_Y = ONOFF_Y + 2
 
 	; Wait for a key
@@ -4788,6 +4792,8 @@ aspectStr:
 ENDIF
 bootTurboStr:
 	.db "Boot Turbo",0			; arrancar siempre a 5.37 MHz (flash byte[4]='T')
+turboNoteStr:
+	.db "(reiniciar fisicamente)",0	; el Boot Turbo solo entra en arranque en frio
 saveExitStr:
 	.db "Save & Exit",0
 saveResetStr:

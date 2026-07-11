@@ -49,3 +49,5 @@ fpga/src/rom/pack_*.bin
 fpga/src/rom/msxnano_v*.fs
 fpga/src/rom/*_diag*.bin
 files/
+fpga/src/rom/goauld_rom_int_*.bin
+fpga/gowin_build*.log
