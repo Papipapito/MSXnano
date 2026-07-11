@@ -852,7 +852,6 @@ assign keyboard_addr = ppi_port_c[3:0];
     // NOTE: F12 is captured by the BL616 FPGA-Companion firmware (its OSD) and never
     // reaches the FPGA, so F11 (which does reach it, verified on HW) is used instead.
     reg turbo   = 1'b0;
-    reg boot_done = 1'b0;   // 1 tras la PRIMERA (fria) salida de reset; sobrevive warm resets
     reg f11_s0  = 1'b0;
     reg f11_s1  = 1'b0;
     reg f11_prev= 1'b0;
@@ -874,27 +873,16 @@ assign keyboard_addr = ppi_port_c[3:0];
         // cuando la ventana abre (se carga con last_bytes_cnt==2). Va el ULTIMO del
         // bloque: domina sobre F11/puerto durante el boot (no disparan ahi de todos
         // modos). Con S2 (rescate) arranca SIEMPRE a 3.58.
-        // v1.9b FIX pantalla-negra Save&Reset-con-turbo: el boot-turbo (5.37) SOLO se
-        // aplica en arranque en FRIO. Rearrancar a 5.37 en un warm reset (Save&Reset)
-        // daba pantalla negra persistente: el cold boot retiene el CPU ~3s via esp_boot_ok
-        // (asienta SDRAM/VDP antes de correr a 5.37), pero el warm reset lo suelta al
-        // instante -> el primer arranque a 5.37 sin asentar se cuelga. boot_done distingue
-        // frio (0) de warm (1): en warm -> turbo=0 -> arranca a 3.58 = un Save&Reset normal
-        // (que SI funciona). El boot-turbo se aplica al PROXIMO encendido. Cold boot:
-        // boot_done=0 -> se respeta config_sig[4] -> 5.37 intacto (camino validado).
+        // Boot Turbo se aplica en CUALQUIER reset (frio Y warm/Save&Reset). La
+        // pantalla-negra del warm-boot-turbo era la INANICION DE REFRESH de la SDRAM
+        // (misma raiz que el cuelgue de Screen 2/3 en turbo), ya arreglada en memory.v
+        // (rfsh_skip_cnt) -> ya no hace falta el workaround "boot-turbo solo en frio".
         if (config_init)
-            turbo <= (~boot_done && s2 == 0 && config_sig[4] == 8'h54) ? 1'b1 : 1'b0;
-        // estado conocido de `turbo` en cualquier reset (mirror del cold boot). Ultimo = prioridad.
+            turbo <= (s2 == 0 && config_sig[4] == 8'h54) ? 1'b1 : 1'b0;
+        // estado conocido de `turbo` en el pulso de reset (config_init lo re-siembra despues).
         if (~bus_reset_n)
             turbo <= 1'b0;
     end
-    // boot_done: se pone a 1 la primera vez que el CPU sale de reset (arranque en frio)
-    // y NO se borra nunca (sin clausula de reset -> sobrevive los warm resets; GSR lo
-    // inicia a 0 al encender). Es el discriminador frio/warm para el boot-turbo de arriba.
-    always @ (posedge clk_54m)
-        if (bus_reset_n & reset3_n & flash_idle & esp_boot_ok & ~config_init)
-            boot_done <= 1'b1;   // ~config_init: no marcar boot_done durante la siembra
-                                 // (robusto tambien si se compilara sin WiFi, esp_boot_ok=1)
 
     // ===== v1.9 Panasonic-WSX turbo: 5.37 MHz CPU cadence =====
     // /20 divider on 108 MHz -> 5.40 MHz base cadence + "period swallow" trim ->
@@ -968,21 +956,12 @@ assign keyboard_addr = ppi_port_c[3:0];
     // boot-turbo que sembro config_init durante el re-stream (identico al cold boot).
     wire cadence_safe = (bus_clk_3m6 == 1'b0 && bus_clk_3m6_54 == 1'b0) &&
                         (s5m4_a == 1'b0 && s5m4_b == 1'b0);
-    // v1.9b: durante un warm reset EN CURSO hay que CRUZAR la entrada del reset a 3.58,
-    // no a 5.37. En un Save&Reset con turbo activo (F11) el CPU sigue a 5.37 toda la
-    // ventana pre-reset (config_reset espera a que acabe la grabacion en flash, ~decenas
-    // de ms, con bus_reset_n aun alto) y cruzaria el borde de reset en turbo. warm_reset_pending
-    // se activa en cuanto la grabacion arranca (flash_write_busy) y se mantiene por
-    // config_reset_req hasta que baja bus_reset_n -> fuerza turbo_eff=0 en el MISMO borde
-    // seguro. A cold boot ambas son 0 -> cold-boot-turbo intacto. (El boot-turbo POST-reset
-    // ya no se aplica en warm: lo gestiona boot_done arriba.)
-    wire warm_reset_pending = flash_write_busy | config_reset_req;
     reg  turbo_eff = 1'b0;
     always @ (posedge clk_54m) begin
         if (!(bus_reset_n & reset3_n & flash_idle & esp_boot_ok))
-            turbo_eff <= turbo;                                 // en reset: sigue a turbo (semilla / 0)
+            turbo_eff <= turbo;                                 // en reset: sigue a turbo (0 forzado / semilla boot-turbo)
         else if (cadence_safe & wait_io & wait_m1)
-            turbo_eff <= warm_reset_pending ? 1'b0 : turbo;     // corriendo: 3.58 si hay warm-reset pendiente
+            turbo_eff <= turbo;                                 // corriendo: conmuta en borde seguro (F11 glitch-free)
     end
     // CPU cadence mux: turbo_eff (conmutado sin glitch) elige 5.37; si no, la 3.6 intacta.
     assign clk_enable_cpu_54  = turbo_eff ? clk_enable_5m4_54  : clk_enable_3m6_54;
