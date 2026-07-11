@@ -110,6 +110,13 @@ module memory_ctrl (
     end
 
     reg [2:0] ff_sdr_seq;
+    // Guardia ANTI-INANICION del refresh (bug SCREEN 3/multicolor; y Screen 2 en
+    // TURBO): cuenta oportunidades de refresh saltadas por vram_write; a las 32
+    // (~4us de escritura VDP continua, imposible con escrituras reales) FUERZA el
+    // refresh aunque vram_write siga activo. Sin esto, el nivel sostenido de
+    // vram_write mata de hambre al refresh y la SDRAM se descarga -> cuelgue a los
+    // pocos segundos. Portado de MSXimus (commit 8b2d33c, verificado en sim T8).
+    reg [5:0] rfsh_skip_cnt = 6'd0;
     reg [4:0]  RstSeq = 0;
     // SDRAM control signals
     reg  [2:0] SdrSta;
@@ -201,19 +208,25 @@ module memory_ctrl (
 //            else if( RstSeq[4:3] != 2'b11 ) begin
 //                SdrSta <= 3'b101;                                                //-- Write (Initialize memory content)
 //            end
-            else if( bus_rfsh_n == 0 && video_dlclk == 1 && vram_write == 0 ) begin
+            else if( bus_rfsh_n == 0 && video_dlclk == 1 && (vram_write == 0 || rfsh_skip_cnt[5] == 1) ) begin
                 //-- refresh roba el slot VDP SOLO si el VDP va a LEER (display/
                 //-- sprite, recuperable al siguiente frame). Si va a ESCRIBIR
                 //-- (comando del blitter HMMV/HMMM o acceso CPU por puerto), NO:
                 //-- el VDP da ACK incondicional y la escritura se perderia ->
                 //-- agujeros permanentes en VRAM (glitch de MG2 al cambiar de
                 //-- pantalla). Hay >100k ciclos RFSH del Z80 por frame; saltarse
-                //-- los pocos que coinciden con vram_write no afecta el refresh.
+                //-- los pocos que coinciden con vram_write no afecta el refresh...
+                //-- SALVO si vram_write se SOSTIENE (Screen 3 multicolor / Screen 2
+                //-- en turbo): ahi la guardia rfsh_skip_cnt fuerza el refresh a los
+                //-- 32 saltos, evitando la descarga de la SDRAM (cuelgue).
                 SdrSta <= 3'b010;                                                //-- refresh
+                rfsh_skip_cnt <= 6'd0;                                           //-- refrescado -> reset guardia
             end
             else begin
                 //--  Normal memory access mode
                 SdrSta[2] <= 1;                                               //-- read/write cpu/vdp
+                if ( bus_rfsh_n == 0 && video_dlclk == 1 && rfsh_skip_cnt[5] == 0 )
+                    rfsh_skip_cnt <= rfsh_skip_cnt + 6'd1;   //-- oportunidad de refresh saltada por vram_write
             end
         end
         else if( ff_sdr_seq == 3'b001 && SdrSta[2] == 1 && RstSeq[4:3] == 2'b11 )begin
