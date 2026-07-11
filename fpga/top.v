@@ -1332,7 +1332,7 @@ assign keyboard_addr = ppi_port_c[3:0];
         .adc_mosi (),
         .adc_miso (0),
 
-        .maxspr_n    (1),
+        .maxspr_n    (~config_enable_8sprites),
     `ifdef ENABLE_SCAN_LINES
         .scanlin_n   (~config_enable_scanlines),
     `else
@@ -2069,7 +2069,9 @@ memory_ctrl mem1 (
     assign config_enable_scanlines = config1_ff[3];
     //assign config_keyboard = config2_ff[4:3];
     assign config_enable_stereo = config2_ff[5];
-    assign config_enable_16_9 = 1'b0;  // 16:9 por AVI eliminado (no lo honra el tele); fijo 4:3. bit4 libre
+    assign config_enable_16_9 = 1'b0;  // 16:9 por AVI eliminado; fijo 4:3
+    wire config_enable_8sprites;
+    assign config_enable_8sprites = config2_ff[4];  // bit4: 8 sprites/linea (anti-parpadeo screen2 MSX1)
     // ===== v1.9 Panasonic switched-I/O device 8 (T9769 turbo, estilo WSX) =====
     // Protocolo (ref. openMSX MSXMatsushita.cc): OUT &H40,8 selecciona el dispositivo;
     // leer $40 devuelve ~8 = 247 (deteccion). $41 write: SOLO bit0, activo-bajo
@@ -2142,6 +2144,8 @@ memory_ctrl mem1 (
     assign config_enable_stereo = 0;
     wire config_enable_16_9;
     assign config_enable_16_9 = 0;
+    wire config_enable_8sprites;
+    assign config_enable_8sprites = 0;
 
 `endif
 

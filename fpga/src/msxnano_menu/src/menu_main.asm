@@ -4345,6 +4345,13 @@ ENDIF ;ENABLE_SDCARD
 	rlca
 	rlca							; bit5 -> bit0
 	ld   (var_stereo), a
+	ld   a, b
+	and  #10						; Bit 4: sprites 8/linea (anti-parpadeo screen2)
+	rrca
+	rrca
+	rrca
+	rrca							; bit4 -> bit0
+	ld   (var_sprlim), a
 
 	in   a, (#45)					; #45 Bit 0: boot turbo (flash byte[4]='T')
 	and  #01
@@ -4372,6 +4379,11 @@ ONOFF_Y = ONOFF_Y + 2
 
 	ld   hl,#2b00 + ONOFF_Y			; Print Stereo Sound
 	ld   a,(var_stereo)
+	call print_on_off
+ONOFF_Y = ONOFF_Y + 2
+
+	ld   hl,#2b00 + ONOFF_Y			; Print Sprites 8/linea
+	ld   a,(var_sprlim)
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 
@@ -4436,6 +4448,10 @@ wait_for_a_key:
 
 selected_stereo:
 	ld   hl, var_stereo
+	jp   .selected_on_off
+
+selected_spritelimit:
+	ld   hl, var_sprlim
 	jp   .selected_on_off
 
 selected_bootturbo:
@@ -4530,6 +4546,12 @@ ENDIF
 	rrca							; bit0 -> bit5
 	or   b
 	ld   b, a
+	ld   a, (var_sprlim)			; #42 Bit 4: sprites 8/linea
+	rlca
+	rlca
+	rlca
+	rlca							; bit0 -> bit4
+	or   b
 	or   #40						; Bit 6: save config in flash
 	ld   b, a
 
@@ -4713,6 +4735,8 @@ enableScanlinesStr:
 	.db "Enable Scanlines",0
 stereoStr:
 	.db "Stereo Sound",0
+spriteStr:
+	.db "Sprites 8/linea",0
 bootTurboStr:
 	.db "Boot Turbo",0			; arrancar siempre a 5.37 MHz (flash byte[4]='T')
 saveExitStr:
@@ -4763,16 +4787,25 @@ POS_Y = POS_Y + 2
 struct_Stereo:
 	.db 21, POS_Y+1
 	.dw stereoStr
-	.dw struct_EnableScanlines, struct_BootTurbo, struct_Stereo
+	.dw struct_EnableScanlines, struct_SpriteLimit, struct_Stereo
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_stereo
 POS_Y = POS_Y + 2
 
+struct_SpriteLimit:
+	.db 21, POS_Y+1
+	.dw spriteStr
+	.dw struct_Stereo, struct_BootTurbo, struct_SpriteLimit
+	.dw #0800 + POS_Y*10 + 2
+	.db 4
+	.dw selected_spritelimit
+POS_Y = POS_Y + 2
+
 struct_BootTurbo:
 	.db 21, POS_Y+1
 	.dw bootTurboStr
-	.dw struct_Stereo, struct_SaveExit, struct_BootTurbo
+	.dw struct_SpriteLimit, struct_SaveExit, struct_BootTurbo
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_bootturbo
@@ -8081,6 +8114,7 @@ ENDIF
 	var_scanln: ds 1
 	var_mapslt: ds 1
 	var_stereo: ds 1
+	var_sprlim: ds 1
 	var_btturb: ds 1
 
 	; File-Hunter fase 0 (test UNAPI)
