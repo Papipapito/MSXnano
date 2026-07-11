@@ -956,12 +956,22 @@ assign keyboard_addr = ppi_port_c[3:0];
     // boot-turbo que sembro config_init durante el re-stream (identico al cold boot).
     wire cadence_safe = (bus_clk_3m6 == 1'b0 && bus_clk_3m6_54 == 1'b0) &&
                         (s5m4_a == 1'b0 && s5m4_b == 1'b0);
+    // Save&Reset con turbo activo: hay que CRUZAR el reset a 3.58 (a 5.37 se queda
+    // negro) Y NO arrancar directo a 5.37 en warm (el warm reset no tiene el hold de
+    // ~3s del esp_boot_ok que el cold boot usa para asentar; por eso el power-cycle SI
+    // arranca en turbo y el Save&Reset se colgaba). warm_reset_pending (flash_write_busy
+    // | config_reset_req) fuerza turbo_eff=0 desde que arranca la grabacion en flash
+    // hasta que expira el monostable del reset (~0.4s tras soltar el CPU) -> arranca a
+    // 3.58, asienta, y como config_init ya dejo `turbo`=boot-turbo, al soltarse conmuta
+    // a 5.37 SOLO (como un F11, glitch-free en borde cadence_safe -> nunca cuelga).
+    // A cold boot ambas son 0 -> cold-boot-turbo intacto.
+    wire warm_reset_pending = flash_write_busy | config_reset_req;
     reg  turbo_eff = 1'b0;
     always @ (posedge clk_54m) begin
         if (!(bus_reset_n & reset3_n & flash_idle & esp_boot_ok))
             turbo_eff <= turbo;                                 // en reset: sigue a turbo (0 forzado / semilla boot-turbo)
         else if (cadence_safe & wait_io & wait_m1)
-            turbo_eff <= turbo;                                 // corriendo: conmuta en borde seguro (F11 glitch-free)
+            turbo_eff <= warm_reset_pending ? 1'b0 : turbo;     // 3.58 mientras el Save&Reset esta en curso; luego conmuta a turbo
     end
     // CPU cadence mux: turbo_eff (conmutado sin glitch) elige 5.37; si no, la 3.6 intacta.
     assign clk_enable_cpu_54  = turbo_eff ? clk_enable_5m4_54  : clk_enable_3m6_54;
