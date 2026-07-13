@@ -49,3 +49,7 @@ fpga/src/rom/pack_*.bin
 fpga/src/rom/msxnano_v*.fs
 fpga/src/rom/*_diag*.bin
 files/
+
+# imagenes de cinta de juegos reales (copyright)
+fpga/*.hex
+!fpga/testcv.hex

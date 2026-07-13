@@ -594,7 +594,7 @@ always @(posedge clk_54m) begin
 end
 wire [15:0] cas_addr;
 wire [7:0]  cas_data;
-tape_rom #(.ADDRW(16), .DEPTH(512), .HEXFILE("testcv.hex")) tape_rom_i (
+tape_rom #(.ADDRW(16)) tape_rom_i (
     .clk (clk_54m),
     .addr(cas_addr),
     .data(cas_data)
@@ -1925,17 +1925,21 @@ memory_ctrl mem1 (
     wire [15:0] scc_term;
     assign scc_term = (map_sel == 2'b10) ? { scc_wav, 1'b0 } : 16'd0;  // SCC solo en modo SCC (no Konami4/ASCII)
 
+    // Monitor de cinta virtual: el soniquete de carga audible, como en un MSX
+    // real con el volumen del cassette abierto. Solo suena con motor + play.
+    wire [15:0] cas_mon = (cas_motor && cas_playing && cas_casin) ? 16'h0600 : 16'h0000;
+
     // (modo consola SG-1000/ColecoVision eliminado en v1.9 -- solo MSX)
 
     always @ (posedge clk_27m) begin
         if (clk_enable_3m6_27 == 1 ) begin
             if (config_enable_stereo == 1) begin
-                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + scc_term + jt2413_wav;
-                audio_sample_r <= { 2'b0 , psg2Sound3 , 6'b000000 } + { scc2x_wav, 1'b0 } + jt2413_wav;
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + scc_term + jt2413_wav + cas_mon;
+                audio_sample_r <= { 2'b0 , psg2Sound3 , 6'b000000 } + { scc2x_wav, 1'b0 } + jt2413_wav + cas_mon;
             end
             else begin
-                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
-                audio_sample_r <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav + cas_mon;
+                audio_sample_r <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav + cas_mon;
             end
         end
     end
@@ -2780,7 +2784,9 @@ memory_ctrl mem1 (
     end
 
     assign led[5] = turbo ? 1'b0 : led_heartbeat;  // active-low: 0=solid lit (turbo ON), else heartbeat blink (real-MSX)
-    assign led[4] = ~sd_busy_w;
+    // LED4 tambien parpadea (~1.8Hz) mientras la cinta virtual esta cargando,
+    // para ver actividad durante los minutos de carga sin feedback en pantalla.
+    assign led[4] = ~(sd_busy_w | (cas_motor & cas_playing & led_heartbeat));
     assign led[3] = ~joystick0[5];
     assign led[2] = ~joystick0[4];
     assign led[1] = ~(|joystick0[3:0]);
