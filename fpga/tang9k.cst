@@ -94,3 +94,7 @@ IO_LOC "uart_rx" 28;
 IO_PORT "uart_rx" PULL_MODE=UP IO_TYPE=LVCMOS33;
 IO_LOC "uart_tx" 27;
 IO_PORT "uart_tx"  IO_TYPE=LVCMOS33;
+
+//turbo status -> ESP32-C6 (pin libre zona 26-32): indicador de turbo en la pantalla del ESP
+IO_LOC "turbo_status" 29;
+IO_PORT "turbo_status" IO_TYPE=LVCMOS33 DRIVE=4;

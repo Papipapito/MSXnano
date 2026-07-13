@@ -36,6 +36,7 @@ module top
     // discrete status LEDs (active low)
     output wire [5:0] led,
     output wire ws2812_led,   // external WS2812B status strip (case)
+    output wire turbo_status, // 1 = MSX en turbo (5.37MHz); a un pin libre -> indicador en la pantalla del ESP32-C6
 
     //hdmi out
     output wire [2:0] data_p,
@@ -852,6 +853,7 @@ assign keyboard_addr = ppi_port_c[3:0];
     // NOTE: F12 is captured by the BL616 FPGA-Companion firmware (its OSD) and never
     // reaches the FPGA, so F11 (which does reach it, verified on HW) is used instead.
     reg turbo   = 1'b0;
+    assign turbo_status = turbo;   // expone el estado turbo a un pin del FPGA (para el ESP32-C6 LCD)
     reg f11_s0  = 1'b0;
     reg f11_s1  = 1'b0;
     reg f11_prev= 1'b0;
