@@ -531,9 +531,16 @@ wire af_fb1 = joystick1[5] | (joystick1[7] & af_phase);   // joy1 TrigB
 // MSX PSG Port A (active-low):      bit0=Up,    bit1=Down,  bit2=Left, bit3=Right, bit4=TrigA, bit5=TrigB
 wire [7:0] joy0_msx = {2'b11, ~af_fb0, ~af_fa0, ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
 wire [7:0] joy1_msx = {2'b11, ~af_fb1, ~af_fa1, ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
-wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? joy0_msx :
-                          (!psg_reg15_joy_sel[1]) ? joy1_msx :
-                          8'hFF;
+wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? joy0_msx :
+                              (!psg_reg15_joy_sel[1]) ? joy1_msx :
+                              8'hFF;
+// ===== CINTA VIRTUAL: bit7 del PortA del PSG (CASIN) = dato de cas_player =====
+// Comparte el bit7 con el joystick (bits[6:0] intactos). En reposo va a 1 como
+// un MSX real sin senal de cinta; reproduciendo, lleva el KCS demodulado.
+wire        cas_playing;
+wire        cas_casin;
+wire        cas_bit = cas_playing ? cas_casin : 1'b1;
+wire [7:0]  psg_joy_data = {cas_bit, psg_joy_data_raw[6:0]};
 
 // ===== STANDALONE MERGE: USB keyboard (PPI port B 0xA9 read / port C 0xAA latch) =====
 wire ppi_portb_req_r = (bus_addr[7:0] == 8'hA9 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
@@ -551,6 +558,59 @@ always @(posedge clk_54m or negedge bus_reset_n) begin
         ppi_port_c <= cpu_dout;
 end
 assign keyboard_addr = ppi_port_c[3:0];
+
+// ============================================================================
+// CINTA VIRTUAL (KCS) — reproductor de cinta MSX desde imagen embebida (BSRAM).
+// Alimenta CASIN (PSG PortA bit7) para que la BIOS real cargue RUN"CAS:" etc.
+// Reloj clk_54m + ce=clk_enable_3m6_54 (1 T-state). Motor = PPI PC4 (activo-bajo,
+// 0=ON). Se arma un pulso tras salir de reset; el motor hace de gate.
+// ============================================================================
+// Motor de cassette: la BIOS lo controla SOLO via OUT (0xAB) (bit set/reset de
+// PC4): 0x08 = ON (PC4=0), 0x09 = OFF (PC4=1). PC4 es activo-bajo -> cas_motor
+// (activo-alto) = ~PC4. Se rastrea aparte porque el core solo capturaba 0xAA,
+// NO 0xAB -> el gate del motor estaba muerto (este era el bug).
+reg  cas_motor_on = 1'b0;
+always @(posedge clk_54m or negedge bus_reset_n) begin
+    if (!bus_reset_n) cas_motor_on <= 1'b0;
+    else if (bus_addr[7:0]==8'hAB && bus_iorq_n==1'b0 && bus_m1_n==1'b1
+             && bus_wr_n==1'b0 && cpu_dout[7]==1'b0 && cpu_dout[3:1]==3'b100)
+        cas_motor_on <= ~cpu_dout[0];             // PC4=0 -> motor ON
+end
+wire cas_motor = cas_motor_on;
+// Arma la cinta tras el reset y la rearma al terminar (bucle) para el siguiente
+// RUN"CAS:". El motor hace de gate real de la reproduccion.
+reg  cas_armed = 1'b0;
+reg  cas_load  = 1'b0;
+reg  cas_play_d = 1'b0;
+always @(posedge clk_54m) begin
+    if (!bus_reset_n) begin cas_armed <= 1'b0; cas_load <= 1'b0; cas_play_d <= 1'b0; end
+    else if (clk_enable_3m6_54) begin
+        cas_play_d <= cas_playing;
+        if (!cas_armed)                          cas_load <= 1'b1;
+        else if (cas_play_d && !cas_playing)     cas_load <= 1'b1;
+        else                                     cas_load <= 1'b0;
+        cas_armed <= 1'b1;
+    end
+end
+wire [15:0] cas_addr;
+wire [7:0]  cas_data;
+tape_rom #(.ADDRW(16), .DEPTH(512), .HEXFILE("testcv.hex")) tape_rom_i (
+    .clk (clk_54m),
+    .addr(cas_addr),
+    .data(cas_data)
+);
+cas_player #(.ADDRW(16), .PULSE_ONE(731), .PULSE_ZERO(1463),
+             .PILOT_LONG(10000), .PILOT_SHORT(5000)) cas_player_i (
+    .clk     (clk_54m),
+    .ce      (clk_enable_3m6_54),
+    .rst     (~bus_reset_n),
+    .motor   (cas_motor),
+    .load    (cas_load),
+    .mem_addr(cas_addr),
+    .mem_data(cas_data),
+    .casin   (cas_casin),
+    .playing (cas_playing)
+);
 
     // v1.9: FPGA/bitstream version readable on I/O port 0x2F. The boot menu reads it and
     // warns if you flashed mismatched .fs/.bin (e.g. a v1.8 bitstream + a v1.7 BIOS pack).
