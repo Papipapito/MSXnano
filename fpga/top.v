@@ -67,6 +67,9 @@ module top
     //usb uart
     output wire usb_uart_tx,
 
+    // goauld RP2040 USB keyboard/joystick companion, UART RX (pin 31) — complements the BL616
+    input  wire kbd_uart_rx_pin,
+
     // Magic ports for SDRAM to be inferred
     output wire O_sdram_clk,
     output wire O_sdram_cke,
@@ -482,6 +485,12 @@ assign psg_req_r = (bus_addr[7:0] == 8'hA2 && bus_iorq_n == 0 && bus_m1_n == 1 &
 wire [7:0] joystick0;
 wire [7:0] joystick1;
 
+// goauld RP2040 companion outputs (declared here, before first use at the joystick
+// remap ~L535 and the keyboard read ~L568, to avoid an implicit 1-bit net).
+wire [7:0] vkey_row;   // active-low MSX matrix row from kbd_uart_rx (selected by keyboard_addr)
+wire [7:0] gjoy0;      // active-high USB joy port 0 from kbd_uart_rx
+wire [7:0] gjoy1;      // active-high USB joy port 1 from kbd_uart_rx
+
 // Track which PSG register was last latched via I/O A0h
 reg [3:0] psg_addr_latch;
 always @(posedge clk_54m or negedge bus_reset_n) begin
@@ -532,8 +541,13 @@ wire af_fb1 = joystick1[5] | (joystick1[7] & af_phase);   // joy1 TrigB
 // MSX PSG Port A (active-low):      bit0=Up,    bit1=Down,  bit2=Left, bit3=Right, bit4=TrigA, bit5=TrigB
 wire [7:0] joy0_msx = {2'b11, ~af_fb0, ~af_fa0, ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
 wire [7:0] joy1_msx = {2'b11, ~af_fb1, ~af_fa1, ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
-wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? joy0_msx :
-                          (!psg_reg15_joy_sel[1]) ? joy1_msx :
+// goauld RP2040 joystick — SAME active-high->MSX active-low remap as joyN_msx.
+// (No autofire on this path: the RP2040 joy byte has no bits6/7. BL616 autofire preserved.)
+// Idle/absent Pico -> gjoyN=0x00 -> remap 0xFF -> AND transparent to the BL616 pad.
+wire [7:0] joy0_goauld_msx = {2'b11, ~gjoy0[5], ~gjoy0[4], ~gjoy0[0], ~gjoy0[1], ~gjoy0[2], ~gjoy0[3]};
+wire [7:0] joy1_goauld_msx = {2'b11, ~gjoy1[5], ~gjoy1[4], ~gjoy1[0], ~gjoy1[1], ~gjoy1[2], ~gjoy1[3]};
+wire [7:0] psg_joy_data = (!psg_reg15_joy_sel[0]) ? (joy0_msx & joy0_goauld_msx) :
+                          (!psg_reg15_joy_sel[1]) ? (joy1_msx & joy1_goauld_msx) :
                           8'hFF;
 
 // ===== STANDALONE MERGE: USB keyboard (PPI port B 0xA9 read / port C 0xAA latch) =====
@@ -565,7 +579,7 @@ assign keyboard_addr = ppi_port_c[3:0];
                 `ifdef ENABLE_SOUND
                      ( psg2_req_r == 1 ) ? psg2_dout :
                 `endif
-                ( ppi_portb_req_r == 1 ) ? keyboard_data :
+                ( ppi_portb_req_r == 1 ) ? (keyboard_data & vkey_row) :
                 `ifdef ENABLE_V9958
                      ( vdp_csr_n == 0) ? vdp_dout :
                 `endif
@@ -2784,6 +2798,26 @@ memory_ctrl mem1 (
         .A (keyboard_addr),
         .DO (keyboard_data),
         .FN (function_keys)
+    );
+
+    // ===== goauld RP2040 USB keyboard/joystick companion over UART (pin 31) =====
+    // Complements the BL616. Same protocol/params as the goauld build so the RP2040
+    // firmware is UNMODIFIED (a Pico moves between goauld and Nano and just works).
+    // clk_54m = clk_108m/2 = 54 MHz -> CLKS_PER_BIT = 54_000_000/115_200 = 468.
+    // Reuses keyboard_addr (= ppi_port_c[3:0]) as the column: NO new vkey_col latch.
+    // Single clk_54m domain (keyboard_addr/ppi_port_c and the cpu_din mux are clk_54m)
+    // -> vkey_col->vkey_row_out is combinational, no CDC. cmd_* left open (Gowin trims).
+    kbd_uart_rx #(.CLK_FREQ(54_000_000), .BAUD(115200)) ukbd (
+        .clk                 (clk_54m),
+        .reset_n             (bus_reset_n),
+        .rx                  (kbd_uart_rx_pin),
+        .vkey_col            (keyboard_addr),
+        .vkey_row_out        (vkey_row),
+        .joy_state0          (gjoy0),
+        .joy_state1          (gjoy1),
+        .cmd_scanline_toggle (),
+        .cmd_reset_pulse     (),
+        .cmd_osd_toggle      ()
     );
 
 endmodule

@@ -66,6 +66,9 @@ add_file tn_vdp_v3_v9958/src/hdmi/tmds_channel.sv
 add_file tn_vdp_v3_v9958/src/v9958_top.v
 add_file top.v
 
+# ----- pico-companion: goauld RP2040 USB keyboard/joystick over UART (pin 31) -----
+add_file src/kbd_uart_rx.v
+
 # ----- STANDALONE MERGE: USB subsystem (BL616 FPGA Companion) -----
 # NOTE: add mcu_spi_new.v ONLY (mcu_spi.v has a colliding "module mcu_spi"). ws2812.v unused.
 add_file src/usb/fpga_companion.v
