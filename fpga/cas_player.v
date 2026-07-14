@@ -33,6 +33,8 @@ module cas_player #(
     input  wire             motor,      // gate de reproduccion (ya en activo-alto)
     input  wire             load,       // arma/rebobina por FLANCO de subida
     output reg  [ADDRW-1:0] mem_addr,
+    output reg              mem_req,    // pide un byte (nivel); esperar mem_ready
+    input  wire             mem_ready,  // el backend tiene mem_data valido
     input  wire [7:0]       mem_data,
     output reg              casin,      // -> PSG port A bit 7
     output wire             playing
@@ -60,13 +62,20 @@ module cas_player #(
     always @(posedge clk) begin
         if (rst) begin
             st <= S_IDLE; casin <= 1'b1; mem_addr <= 0; load_prev <= 1'b0;
+            mem_req <= 1'b0;
         end else if (ce) begin
             load_prev <= load;
             if (load_edge) begin
                 st <= S_RD; rst_ret <= S_NB0; mem_addr <= 4; casin <= 1'b1;
             end else case (st)
             S_IDLE:  casin <= 1'b1;
-            S_RD:    st <= rst_ret;
+            // S_RD: pide el byte (mem_req) y espera mem_ready (latencia variable
+            // del backend: BSRAM ~inmediato, flash SPI ~us). mem_data queda valido
+            // al pasar a rst_ret (el backend lo mantiene).
+            S_RD:    begin
+                         mem_req <= 1'b1;
+                         if (mem_ready) begin mem_req <= 1'b0; st <= rst_ret; end
+                     end
             S_NB0: begin nblk[7:0] <= mem_data;
                          mem_addr <= 5; rst_ret <= S_NB1; st <= S_RD; end
             S_NB1: begin nblk[15:8] <= mem_data;
