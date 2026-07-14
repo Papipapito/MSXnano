@@ -592,11 +592,33 @@ always @(posedge clk_54m) begin
         cas_armed <= 1'b1;
     end
 end
+// --- DIAG cinta virtual: lectura directa del tape_rom desde el Z80 ---
+// OUT &H2C,lo / OUT &H2D,hi fijan la direccion; INP(&H2C) devuelve el byte y
+// auto-incrementa; INP(&H2D) da el byte alto de la posicion viva de la cinta.
+// Tras usar el diag (diag_active) la ROM queda servida al Z80 hasta el reset.
+reg  [15:0] diag_addr;
+reg         diag_active;
+reg         diag_rd_2c_d;
+wire diag_wr_2c = (bus_iorq_n==1'b0 && bus_m1_n==1'b1 && bus_wr_n==1'b0 && bus_addr[7:0]==8'h2C);
+wire diag_wr_2d = (bus_iorq_n==1'b0 && bus_m1_n==1'b1 && bus_wr_n==1'b0 && bus_addr[7:0]==8'h2D);
+wire diag_rd_2c = (bus_iorq_n==1'b0 && bus_m1_n==1'b1 && bus_rd_n==1'b0 && bus_addr[7:0]==8'h2C);
+wire diag_rd_2d = (bus_iorq_n==1'b0 && bus_m1_n==1'b1 && bus_rd_n==1'b0 && bus_addr[7:0]==8'h2D);
+always @(posedge clk_54m) begin
+    if (!bus_reset_n) begin
+        diag_addr <= 16'd0; diag_active <= 1'b0; diag_rd_2c_d <= 1'b0;
+    end else begin
+        diag_rd_2c_d <= diag_rd_2c;
+        if (diag_wr_2c) begin diag_addr[7:0]  <= cpu_dout; diag_active <= 1'b1; end
+        else if (diag_wr_2d) begin diag_addr[15:8] <= cpu_dout; diag_active <= 1'b1; end
+        else if (diag_rd_2c_d && !diag_rd_2c) diag_addr <= diag_addr + 16'd1; // fin del IN -> ++
+    end
+end
 wire [15:0] cas_addr;
 wire [7:0]  cas_data;
+wire [15:0] tape_addr = diag_active ? diag_addr : cas_addr;
 tape_rom #(.ADDRW(16)) tape_rom_i (
     .clk (clk_54m),
-    .addr(cas_addr),
+    .addr(tape_addr),
     .data(cas_data)
 );
 cas_player #(.ADDRW(16), .PULSE_ONE(731), .PULSE_ZERO(1463),
@@ -620,6 +642,8 @@ cas_player #(.ADDRW(16), .PULSE_ONE(731), .PULSE_ZERO(1463),
     always @ (posedge clk_54m) begin
         cpu_din <=
                 ( ver_req_r == 1 ) ? FPGA_VERSION :
+                ( diag_rd_2c == 1 ) ? cas_data :
+                ( diag_rd_2d == 1 ) ? cas_addr[15:8] :
                 ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
                 `ifdef ENABLE_SOUND
                      ( psg2_req_r == 1 ) ? psg2_dout :
