@@ -97,7 +97,10 @@ IO_PORT "uart_tx"  IO_TYPE=LVCMOS33;
 
 //turbo status -> ESP32-C6 (pin libre zona 26-32): indicador de turbo en la pantalla del ESP
 IO_LOC "turbo_status" 29;
-IO_PORT "turbo_status" IO_TYPE=LVCMOS33 DRIVE=4;
+//PULL_MODE=DOWN: durante la config del FPGA el pin queda firme en LOW (con el pulldown
+//del GPIO3 del ESP) -> sin falso destello "TURBO" al encender en frio. En operacion es
+//push-pull, el pull interno es irrelevante.
+IO_PORT "turbo_status" PULL_MODE=DOWN IO_TYPE=LVCMOS33 DRIVE=4;
 
 //RP2040 (Pico Zero) companion teclado/joystick USB — firmware MSXgoauldSD v1.3.
 //Cablear: Pico GP15 (PIO-UART TX, 115200 8N1) -> FPGA pin 31 ; GND comun ; Pico VBUS<-5V.
