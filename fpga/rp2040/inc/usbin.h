@@ -15,6 +15,12 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
+// Firmware version, BCD 0xVV (0x12 = v1.2). Version guard: MUST match the
+// FPGA's FPGA_VERSION (top.v) and the BIOS pack's version byte (LAST byte of
+// the 512KB pack). Announced to the FPGA as 0xC0 <FW_VERSION> with every
+// 250 ms resync; the FPGA exposes/verifies all three on I/O 0x2E/0x2F.
+#define FW_VERSION 0x13
+
 #define MAX_REPORT 4
 #define MAX_REPORT_ITEMS 32
 

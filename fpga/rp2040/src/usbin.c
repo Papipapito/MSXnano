@@ -27,8 +27,9 @@
  */
 #include "usbin.h"
 #include "pico/time.h"   // time_us_64() for the status-LED keypress flash
-#include "hardware/uart.h"
+#include "hardware/pio.h"
 #include "hardware/gpio.h"
+#include "uart_tx.pio.h"  // PIO UART TX (FPGA link on GP15, a non-HW-UART pin)
 #include <string.h>
 #include "xinput_host.h"  // vendored Ryzee119 XInput host driver (MIT) -> same joystick path
 
@@ -40,7 +41,7 @@
 // the MSX BIOS does autorepeat, so we never block and never auto-release.
 //
 // Wire protocol (FROZEN -- must match the FPGA RX side exactly):
-//   UART0 @ 115200 8N1, GPIO0 = TX -> FPGA pin 75 (RX).
+//   PIO UART @ 115200 8N1, GP15 = TX -> FPGA pin 75 (RX).
 //   cell byte         = 0x80 | (bit<<4) | row     row 0..10, bit 0..7
 //   0x90 <cell>       = MAKE
 //   0xA0 <cell>       = BREAK
@@ -48,9 +49,15 @@
 //   full resync       = 0xFE, vmatrix[0..10] (active-low), 0xFF
 // ---------------------------------------------------------------------------
 
-#define KB_UART        uart0
+// FPGA link = PIO UART TX on GP15. The RP2040 HW UART0/1 TX only reach
+// GP0/12/16/28 or GP4/8/20/24; the carrier redesign needs GP15, so we drive it
+// from PIO (pio1 SM0 -- pio0 SM0/SM1 are the on-board + case WS2812 strips).
+#define KB_UART_PIN    15
+#define KB_PIO         pio1
+#define KB_SM          0u
 #define OP_MAKE        0x90
 #define OP_BREAK       0xA0
+#define OP_VERSION     0xC0   // 0xC0 <FW_VERSION> = version-guard announce (additive; old FPGAs ignore it)
 #define RESYNC_START   0xFE
 #define RESYNC_END     0xFF
 
@@ -117,10 +124,10 @@ static inline void tx_push(uint8_t b) {
     tx_head = next;
 }
 
-// Drain the TX ring into the UART FIFO without blocking. Called from main loop.
+// Drain the TX ring into the PIO UART's TX FIFO without blocking. From main loop.
 void kb_tx_pump(void) {
-    while(tx_tail != tx_head && uart_is_writable(KB_UART)) {
-        uart_get_hw(KB_UART)->dr = txbuf[tx_tail++];
+    while(tx_tail != tx_head && !pio_sm_is_tx_fifo_full(KB_PIO, KB_SM)) {
+        pio_sm_put(KB_PIO, KB_SM, (uint32_t)txbuf[tx_tail++]);
     }
 }
 
@@ -144,6 +151,10 @@ static void emit_command(uint8_t cmd) {
 
 // Push a full-matrix resync frame onto the TX ring.
 void kb_send_resync(void) {
+    // Version-guard announce rides on every resync so the FPGA always knows the
+    // firmware version (self-healing, like the matrix itself).
+    tx_push(OP_VERSION);
+    tx_push(FW_VERSION);
     tx_push(RESYNC_START);
     for(uint8_t r = 0; r < 11; r++) tx_push(vmatrix[r]);
     tx_push(RESYNC_END);
@@ -214,10 +225,9 @@ void joy_autofire_tick(uint64_t now_us) {
 // This is the ONLY owner of uart0 -- stdio must not be routed here (see main.c).
 void kb_uart_init(void) {
     memset(vmatrix, 0xFF, sizeof(vmatrix)); // all keys released at boot
-    uart_init(KB_UART, 115200);
-    uart_set_format(KB_UART, 8, 1, UART_PARITY_NONE); // 8N1 (explicit)
-    uart_set_fifo_enabled(KB_UART, true);
-    gpio_set_function(0, GPIO_FUNC_UART); // GPIO0 = uart0 TX -> FPGA pin 75 (RX)
+    // PIO UART TX on GP15 -> FPGA pin 75 (RX), 115200 8N1. pio1 SM0.
+    uint off = pio_add_program(KB_PIO, &uart_tx_program);
+    uart_tx_program_init(KB_PIO, KB_SM, off, KB_UART_PIN, 115200);
 }
 
 typedef struct {
@@ -235,6 +245,44 @@ struct {
   u8 report_count;
   hid_report_info_t report_info[MAX_REPORT];
 } hid_info[CFG_TUH_HID];
+
+// hid_info[] is a shared pool keyed by (dev_addr, instance). TinyUSB numbers
+// `instance` PER DEVICE (0-based), so a USB keyboard and a USB joystick are two
+// SEPARATE devices that BOTH enumerate as instance 0. The original code indexed
+// hid_info[instance] directly, so the second device clobbered the first's parsed
+// report descriptor in hid_info[0] -- exactly why keyboard+joystick together
+// broke (each then read the other's descriptor and did nothing). We map every
+// (dev_addr, instance) to its own slot instead. dev_addr 0 = free slot (real USB
+// devices are addr >= 1). NOTE: XInput pads never hit this table (separate
+// driver), which is why an Xbox pad + keyboard used to coexist fine.
+static struct { u8 dev_addr; u8 instance; } hid_slot_key[CFG_TUH_HID];
+
+// Find the hid_info[] slot for (dev_addr, instance). With alloc=true, claims a
+// free slot if none exists yet. Returns 0..CFG_TUH_HID-1, or 0xFF if full/absent.
+static u8 hid_slot_get(u8 dev_addr, u8 instance, bool alloc) {
+  for(u8 i = 0; i < CFG_TUH_HID; i++)
+    if(hid_slot_key[i].dev_addr == dev_addr && hid_slot_key[i].instance == instance &&
+       hid_slot_key[i].dev_addr != 0)
+      return i;
+  if(!alloc) return 0xFF;
+  for(u8 i = 0; i < CFG_TUH_HID; i++)
+    if(hid_slot_key[i].dev_addr == 0) {
+      hid_slot_key[i].dev_addr = dev_addr;
+      hid_slot_key[i].instance = instance;
+      return i;
+    }
+  return 0xFF;
+}
+
+// Release the slot held by (dev_addr, instance) on unmount so it can be reused.
+static void hid_slot_free(u8 dev_addr, u8 instance) {
+  for(u8 i = 0; i < CFG_TUH_HID; i++)
+    if(hid_slot_key[i].dev_addr == dev_addr && hid_slot_key[i].instance == instance) {
+      hid_slot_key[i].dev_addr = 0;
+      hid_slot_key[i].instance = 0;
+      return;
+    }
+}
 
 ms_items_t ms_items;
 
@@ -616,16 +664,18 @@ void kb_report_receive(uint8_t modifiers, uint8_t const* report, u16 len) {
 //  * If the pad exposes neither X/Y nor a hat we still process buttons; a pad
 //    with no usable controls simply yields byte 0 (idle).
 void gamepad_report_receive(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u16 len) {
-  hid_report_info_t* rpt_info_arr = hid_info[instance].report_info;
+  u8 slot = hid_slot_get(dev_addr, instance, false);
+  if(slot == 0xFF) return;
+  hid_report_info_t* rpt_info_arr = hid_info[slot].report_info;
   hid_report_info_t* rpt_info = NULL;
 
   // Resolve the collection for this report exactly like the keyboard path:
   // single report w/ id 0 -> first collection; otherwise match the report-id.
-  if(hid_info[instance].report_count == 1 && rpt_info_arr[0].report_id == 0) {
+  if(hid_info[slot].report_count == 1 && rpt_info_arr[0].report_id == 0) {
     rpt_info = &rpt_info_arr[0];
   } else {
     uint8_t const rpt_id = report[0];
-    for(uint8_t i = 0; i < hid_info[instance].report_count; i++) {
+    for(uint8_t i = 0; i < hid_info[slot].report_count; i++) {
       if(rpt_id == rpt_info_arr[i].report_id) { rpt_info = &rpt_info_arr[i]; break; }
     }
     report++;
@@ -721,14 +771,21 @@ usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count) {
 
 void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_interface_t* xinput_itf) {
     (void)xinput_itf;
-    // Xbox 360 wired/wireless: pick an LED quadrant (harmless on other types).
-    tuh_xinput_set_led(dev_addr, instance, 0, true);
-    tuh_xinput_set_led(dev_addr, instance, 1, true);
-    tuh_xinput_set_rumble(dev_addr, instance, 0, 0, true);
+    // NOTE (RP2040 native host + hub): do NOT send LED/rumble here. Those are
+    // BLOCKING interrupt-OUT transfers; behind a hub they arm a second hub-split
+    // interrupt endpoint that the RP2040's single SIE cannot poll concurrently
+    // with the keyboard's interrupt-IN -> the pad's first report never arrives
+    // (not detected) AND the wedged OUT poisons the shared SIE, killing the
+    // keyboard too. Keeping the pad interrupt-IN-only (like a keyboard) matches
+    // the one topology the native host handles behind a hub. Rumble/LED are
+    // cosmetic and unused by the MSX joystick path, so we simply drop them.
+    //   tuh_xinput_set_led(dev_addr, instance, 0, true);   // removed (OUT xfer)
+    //   tuh_xinput_set_led(dev_addr, instance, 1, true);   // removed (OUT xfer)
+    //   tuh_xinput_set_rumble(dev_addr, instance, 0, 0, true); // removed (OUT xfer)
     g_joy_mounted = 1;                              // status LED -> yellow
     joy_set_state(0, 0);                            // clean baseline (no dir/fire)
     joy_base[0] = 0; af_arm[0] = 0;                 // clear autofire intent on connect
-    tuh_xinput_receive_report(dev_addr, instance);  // start polling
+    tuh_xinput_receive_report(dev_addr, instance);  // start polling (interrupt-IN only)
 }
 
 void tuh_xinput_umount_cb(uint8_t dev_addr, uint8_t instance) {
@@ -784,7 +841,11 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 	char* hidprotostr = "none";
 	if(hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD) hidprotostr = "keyboard";
 	if(hid_if_proto == HID_ITF_PROTOCOL_MOUSE) hidprotostr = "mouse";
-	hid_info[instance].report_count = hid_parse_report_descriptor(hid_info[instance].report_info, MAX_REPORT, desc_report, desc_len);
+	// Claim this (dev_addr, instance)'s own hid_info[] slot so a second device
+	// (e.g. joystick alongside the keyboard) can't clobber the first's descriptor.
+	u8 slot = hid_slot_get(dev_addr, instance, true);
+	if(slot == 0xFF) return;   // hid_info pool full (>16 interfaces): ignore extra
+	hid_info[slot].report_count = hid_parse_report_descriptor(hid_info[slot].report_info, MAX_REPORT, desc_report, desc_len);
 	if(!tuh_hid_receive_report(dev_addr, instance)) {
 	} else {
 		if(hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD) {
@@ -805,10 +866,10 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 			// Generic HID: detect a gamepad/joystick by its parsed top-level
 			// collection (Generic Desktop / Game Pad 0x05 or Joystick 0x04).
 			// Such devices enumerate with interface protocol NONE, so we key off
-			// the report descriptor already parsed into hid_info[instance].
+			// the report descriptor already parsed into hid_info[slot].
 			bool is_pad = false;
-			for(uint8_t r = 0; r < hid_info[instance].report_count; r++) {
-				if(is_gamepad_usage(&hid_info[instance].report_info[r])) { is_pad = true; break; }
+			for(uint8_t r = 0; r < hid_info[slot].report_count; r++) {
+				if(is_gamepad_usage(&hid_info[slot].report_info[r])) { is_pad = true; break; }
 			}
 			if(is_pad) {
 				for(uint8_t i = 0; i < 8; i++) {
@@ -828,6 +889,8 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 	isMounted = 0; board_led_write(0);
+	hid_slot_free(dev_addr, instance);   // release this device's hid_info[] slot
+
 	for(uint8_t i = 0; i < 8; i++) {
 		if(keyboards[i].dev_addr == dev_addr && keyboards[i].instance == instance) {
 			keyboards[i].dev_addr = 0;
@@ -868,14 +931,16 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 		return;
 	}
 
-	hid_report_info_t* rpt_info_arr = hid_info[instance].report_info;
+	u8 slot = hid_slot_get(dev_addr, instance, false);
+	if(slot == 0xFF) return;
+	hid_report_info_t* rpt_info_arr = hid_info[slot].report_info;
 	hid_report_info_t* rpt_info = NULL;
 
-	if(hid_info[instance].report_count == 1 && rpt_info_arr[0].report_id == 0) {
+	if(hid_info[slot].report_count == 1 && rpt_info_arr[0].report_id == 0) {
 		rpt_info = &rpt_info_arr[0];
 	} else {
 		uint8_t const rpt_id = report[0];
-		for(uint8_t i = 0; i < hid_info[instance].report_count; i++) {
+		for(uint8_t i = 0; i < hid_info[slot].report_count; i++) {
 		if(rpt_id == rpt_info_arr[i].report_id) {
 			rpt_info = &rpt_info_arr[i];
 			break;

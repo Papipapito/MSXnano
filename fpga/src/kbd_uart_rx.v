@@ -25,13 +25,21 @@
 //     - 0x90 <cell> = MAKE  (press   -> clear that matrix bit to 0)
 //     - 0xA0 <cell> = BREAK (release -> set   that matrix bit to 1)
 //     - Command bytes (bit7 == 0):
-//         0x01 = scanline toggle, 0x02 = reset, 0x03 = OSD toggle.
-//       v1 decodes them to 1-clk cmd_* pulse OUTPUTS but they are left
-//       UNCONNECTED at the top level (Gowin trims the logic away).
+//         0x01 = scanline toggle, 0x02 = reset, 0x03 = OSD toggle,
+//         0x04 = turbo toggle (F11).
+//       0x01/0x02/0x03 decode to 1-clk cmd_* pulses left UNCONNECTED at the top
+//       level (Gowin trims them). 0x04 -> cmd_turbo_toggle IS wired in top.v to
+//       flip config2_ff[4] (turbo), alongside the boot menu (G) and Panasonic $41.
 //     - Full-matrix resync: 0xFE, then 11 row bytes m0..m10 (each = an active-low
 //       row state), then 0xFF. On 0xFE we enter a counted load (row 0..10),
 //       writing each byte to vkey_matrix[row]; the load finishes on 0xFF or after
 //       11 bytes have been consumed, whichever comes first.
+//     - Firmware version announce: 0xC0 <version> (2 bytes). The RP2040 re-sends
+//       it with every 250 ms resync. Stored in fw_version for the top-level
+//       version guard (I/O 0x2E/0x2F); cleared to 0x00 by reset and by the ~1 s
+//       link-loss watchdog ("no firmware announced"). ADDITIVE: an old FPGA
+//       ignores 0xC0 in D_IDLE and the version byte after it decodes as an
+//       unknown command, also ignored.
 //     - USB joystick state: 0xB0 <port> <joybyte> (3 bytes). port: 0 = MSX
 //       joystick port 1 (joy_state0), 1 = port 2 (joy_state1). joybyte is
 //       ACTIVE-HIGH: bit0=Right, bit1=Left, bit2=Down, bit3=Up, bit4=A(TrigA),
@@ -60,10 +68,17 @@ module kbd_uart_rx #(
     output reg  [7:0]  joy_state0,
     output reg  [7:0]  joy_state1,
 
-    // v1: pulse outputs, left open at instantiation (Gowin trims them).
+    // RP2040 firmware version as announced via 0xC0 <ver>; 0x00 = never seen /
+    // link down. Read by the top-level version guard (I/O 0x2E index 0).
+    output reg  [7:0]  fw_version,
+
+    // Pulse outputs. scanline/reset/osd are left open at instantiation (Gowin
+    // trims them). cmd_turbo_toggle (0x04, from F11) IS wired in top.v -> toggles
+    // config2_ff[4] (turbo), alongside the boot menu (G) and Panasonic $41.
     output reg         cmd_scanline_toggle,
     output reg         cmd_reset_pulse,
-    output reg         cmd_osd_toggle
+    output reg         cmd_osd_toggle,
+    output reg         cmd_turbo_toggle
 );
 
     //------------------------------------------------------------------------
@@ -199,13 +214,15 @@ module kbd_uart_rx #(
             vkey_matrix[i] = 8'hFF;
         joy_state0 = 8'h00;
         joy_state1 = 8'h00;
+        fw_version = 8'h00;
     end
 
     localparam [2:0] D_IDLE     = 3'd0,   // waiting for a command/opcode byte
                      D_CELL     = 3'd1,   // expecting the cell byte after 0x90/0xA0
                      D_LOAD     = 3'd2,   // counted full-matrix load after 0xFE
                      D_JOY_PORT = 3'd3,   // expecting the port byte after 0xB0
-                     D_JOY_BYTE = 3'd4;   // expecting the joystick byte after the port
+                     D_JOY_BYTE = 3'd4,   // expecting the joystick byte after the port
+                     D_VERSION  = 3'd5;   // expecting the version byte after 0xC0
 
     reg [2:0] dstate      = D_IDLE;
     reg       pending_make= 1'b0;     // 1 = MAKE (press), 0 = BREAK (release)
@@ -251,9 +268,11 @@ module kbd_uart_rx #(
             joy_port            <= 1'b0;
             joy_state0          <= 8'h00;  // active-high: nothing pressed
             joy_state1          <= 8'h00;
+            fw_version          <= 8'h00;  // no firmware announced
             cmd_scanline_toggle <= 1'b0;
             cmd_reset_pulse     <= 1'b0;
             cmd_osd_toggle      <= 1'b0;
+            cmd_turbo_toggle    <= 1'b0;
             for (i = 0; i < 16; i = i + 1)
                 vkey_matrix[i] <= 8'hFF;   // all keys released on reset
         end else begin
@@ -261,6 +280,7 @@ module kbd_uart_rx #(
             cmd_scanline_toggle <= 1'b0;
             cmd_reset_pulse     <= 1'b0;
             cmd_osd_toggle      <= 1'b0;
+            cmd_turbo_toggle    <= 1'b0;
 
             if (rx_valid) begin
                 case (dstate)
@@ -272,10 +292,12 @@ module kbd_uart_rx #(
                             8'h90: begin pending_make <= 1'b1; dstate <= D_CELL; end // MAKE
                             8'hA0: begin pending_make <= 1'b0; dstate <= D_CELL; end // BREAK
                             8'hB0: begin                       dstate <= D_JOY_PORT; end // USB joystick
+                            8'hC0: begin                       dstate <= D_VERSION; end // fw version announce
                             8'hFE: begin load_idx <= 4'd0;     dstate <= D_LOAD; end // resync start
                             8'h01: cmd_scanline_toggle <= 1'b1;                       // command
                             8'h02: cmd_reset_pulse     <= 1'b1;                       // command
                             8'h03: cmd_osd_toggle      <= 1'b1;                       // command
+                            8'h04: cmd_turbo_toggle    <= 1'b1;                       // F11 turbo toggle
                             default: ; // ignore anything else (incl. stray 0xFF/cell bytes)
                         endcase
                     end
@@ -315,6 +337,14 @@ module kbd_uart_rx #(
                     end
 
                     //--------------------------------------------------------
+                    // D_VERSION: this byte is the RP2040 firmware version.
+                    //--------------------------------------------------------
+                    D_VERSION: begin
+                        fw_version <= rx_byte;
+                        dstate     <= D_IDLE;
+                    end
+
+                    //--------------------------------------------------------
                     // D_LOAD: counted full-matrix resync. Store EVERY byte into the
                     // next row (0..10); after row 10 return to D_IDLE. Do NOT treat
                     // a data 0xFF as a terminator: 0xFF is the normal "row all-
@@ -343,6 +373,7 @@ module kbd_uart_rx #(
                     vkey_matrix[i] <= 8'hFF;
                 joy_state0   <= 8'h00;   // release USB joystick too (active-high)
                 joy_state1   <= 8'h00;
+                fw_version   <= 8'h00;   // link down -> "no firmware announced"
                 dstate       <= D_IDLE;
                 pending_make <= 1'b0;
                 load_idx     <= 4'd0;

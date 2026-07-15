@@ -2815,9 +2815,15 @@ memory_ctrl mem1 (
         .vkey_row_out        (vkey_row),
         .joy_state0          (gjoy0),
         .joy_state1          (gjoy1),
+        // version-guard (0xC0<ver>): el Nano ya usa I/O 0x2F para la version del
+        // bitstream -> dejamos fw_version SIN conectar (Gowin lo poda).
+        .fw_version          (),
         .cmd_scanline_toggle (),
         .cmd_reset_pulse     (),
-        .cmd_osd_toggle      ()
+        .cmd_osd_toggle      (),
+        // F11 del teclado Pico -> pulso turbo. Sin cablear en v1: el turbo del
+        // Nano va por el BL616 (keyboard[68]) y el menu. (Gowin poda el puerto.)
+        .cmd_turbo_toggle    ()
     );
 
 endmodule

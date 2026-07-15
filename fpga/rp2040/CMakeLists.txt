@@ -19,6 +19,8 @@ add_executable(goauld_friend
 
 # Generate the WS2812 (status LED) PIO header for the RP2040-Zero on-board NeoPixel.
 pico_generate_pio_header(goauld_friend ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+# Generate the PIO UART TX header (FPGA link on GP15, a non-hardware-UART pin).
+pico_generate_pio_header(goauld_friend ${CMAKE_CURRENT_LIST_DIR}/uart_tx.pio)
 
 target_include_directories(goauld_friend PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/inc

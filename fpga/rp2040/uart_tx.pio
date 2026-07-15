@@ -1,0 +1,36 @@
+;
+; PIO UART TX (8N1) -- lets the FPGA keyboard/joystick link sit on ANY GPIO.
+; The RP2040 hardware UART0/1 TX can only be on GP0/12/16/28 (UART0) or
+; GP4/8/20/24 (UART1); the case-carrier redesign needs it on GP15, so we drive
+; it from PIO instead. Standard Raspberry Pi pico-examples uart_tx program.
+;
+.program uart_tx
+.side_set 1 opt
+
+    pull       side 1 [7]  ; Assert stop bit, or stall with line in idle state
+    set x, 7   side 0 [7]  ; Preload bit counter, assert start bit for 8 clocks
+bitloop:                   ; This loop will run 8 times (8n1 UART)
+    out pins, 1            ; Shift 1 bit from OSR to the first OUT pin
+    jmp x-- bitloop   [6]  ; Each loop iteration is 8 cycles.
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void uart_tx_program_init(PIO pio, uint sm, uint offset, uint pin_tx, uint baud) {
+    // Drive the pin high (UART idle) before muxing PIO onto it, so no start-bit glitch.
+    pio_sm_set_pins_with_mask(pio, sm, 1u << pin_tx, 1u << pin_tx);
+    pio_sm_set_pindirs_with_mask(pio, sm, 1u << pin_tx, 1u << pin_tx);
+    pio_gpio_init(pio, pin_tx);
+
+    pio_sm_config c = uart_tx_program_get_default_config(offset);
+    sm_config_set_out_shift(&c, true, false, 32);   // shift right (LSB first), no autopull
+    sm_config_set_out_pins(&c, pin_tx, 1);
+    sm_config_set_sideset_pins(&c, pin_tx);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);  // 8-deep TX FIFO
+    float div = (float)clock_get_hz(clk_sys) / (8 * baud);  // 8 exec cycles per bit
+    sm_config_set_clkdiv(&c, div);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

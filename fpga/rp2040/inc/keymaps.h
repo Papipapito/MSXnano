@@ -136,13 +136,14 @@ static const uint8_t keycode_to_goauld[256] = {
     [0x3F] = 0x80 | (4 << 4) | 7, // F6 -> row7 bit4 (0xC7) MSX STOP
     [0x40] = 0x80 | (2 << 4) | 6, // F7 -> row6 bit2 (0xA6) MSX GRAPH
 
-    // ---- F8..F12 -> COMMAND opcodes (bit7==0), sent raw. FPGA ignores them
-    //       in v1 but the wire stays well-defined (OSD was dropped). ----
-    [0x41] = 0x01, // F8  -> command 0x01 (scanline)
-    [0x42] = 0x03, // F9  -> command 0x03 (OSD)
-    [0x43] = 0x03, // F10 -> command 0x03 (OSD)
-    [0x44] = 0x01, // F11 -> command 0x01 (scanline)
-    [0x45] = 0x02, // F12 -> command 0x02 (reset)
+    // ---- F8..F12 -> COMMAND opcodes (bit7==0), sent raw on the press edge. ----
+    //   0x01 scanline / 0x03 OSD are decoded but unconnected in the FPGA (no-op).
+    //   0x04 = TURBO toggle (F11) IS wired: flips config2_ff[4] live (v1.3).
+    [0x41] = 0x01, // F8  -> command 0x01 (scanline, no-op)
+    [0x42] = 0x03, // F9  -> command 0x03 (OSD, no-op)
+    [0x43] = 0x03, // F10 -> command 0x03 (OSD, no-op)
+    [0x44] = 0x04, // F11 -> command 0x04 (TURBO toggle, live)
+    [0x45] = 0x02, // F12 -> command 0x02 (reset, no-op)
 };
 
 #endif

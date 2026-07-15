@@ -99,7 +99,8 @@ IO_PORT "uart_tx"  IO_TYPE=LVCMOS33;
 IO_LOC "turbo_status" 29;
 IO_PORT "turbo_status" IO_TYPE=LVCMOS33 DRIVE=4;
 
-//goauld RP2040 USB keyboard/joystick companion — UART RX (pin libre zona 26-32; 30 reservado).
-//PULL_MODE=UP mantiene la linea en reposo alto (UART idle-high) si no hay Pico conectado.
+//RP2040 (Pico Zero) companion teclado/joystick USB — firmware MSXgoauldSD v1.3.
+//Cablear: Pico GP15 (PIO-UART TX, 115200 8N1) -> FPGA pin 31 ; GND comun ; Pico VBUS<-5V.
+//(pin FPGA libre zona 26-32; 30 reservado). PULL_MODE=UP = reposo alto sin Pico.
 IO_LOC "kbd_uart_rx_pin" 31;
 IO_PORT "kbd_uart_rx_pin" PULL_MODE=UP IO_TYPE=LVCMOS33;
