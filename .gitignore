@@ -51,3 +51,7 @@ fpga/src/rom/*_diag*.bin
 files/
 fpga/src/rom/goauld_rom_int_*.bin
 fpga/gowin_build*.log
+
+# imagenes de cinta de juegos reales (copyright)
+fpga/*.hex
+!fpga/testcv.hex
