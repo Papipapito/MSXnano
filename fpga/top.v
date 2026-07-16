@@ -66,6 +66,10 @@ module top
     //usb uart
     output wire usb_uart_tx,
 
+    // cinta por STREAM: UART desde el ESP32-C6 (UART1) + flow control por nivel
+    input  wire tape_rx,       // pin 26: bytes del stream CVS1 (115200 8N1)
+    output wire tape_rtr,      // pin 32: 1 = "sigue mandando" (histeresis del FIFO)
+
     // Magic ports for SDRAM to be inferred
     output wire O_sdram_clk,
     output wire O_sdram_cke,
@@ -592,42 +596,70 @@ always @(posedge clk_54m) begin
         cas_armed <= 1'b1;
     end
 end
-// Backend de imagen de cinta: FLASH SPI. Los juegos grandes (48-70KB) no caben
-// en BSRAM; se leen de la flash (libre tras el arranque, 16MB, lectura
-// aleatoria) en TAPE_BASE=0x300000. tape_flash sirve las peticiones de
-// cas_player via el controlador flash_rw, muxeado con el streamer del pack por
-// flash_idle (ver la instancia flash1). Presupuesto ~9ms/byte, lectura ~1.5us.
-wire [19:0] cas_addr;
-wire        cas_req, cas_ready;
-wire [7:0]  cas_data;
-wire [23:0] tape_fl_addr;
-wire        tape_fl_rd, tape_fl_terminate;
-tape_flash #(.TAPE_BASE(24'h300000), .ADDRW(20)) tape_flash_i (
-    .clk         (clk_54m),
-    .rst         (~bus_reset_n),
-    .req         (cas_req),
-    .addr        (cas_addr),
-    .data        (cas_data),
-    .ready       (cas_ready),
-    .fl_addr     (tape_fl_addr),
-    .fl_rd       (tape_fl_rd),
-    .fl_terminate(tape_fl_terminate),
-    .fl_dout     (flash_dout),
-    .fl_busy     (flash_busy)
+// Backend de imagen de cinta: STREAM desde el ESP32-C6 (UART1 -> pin 26).
+// El C6 baja el .tsx de la web, lo convierte a CVS1 y lo manda a 115200;
+// tape_uart lo mete en un FIFO de 2KB (~18s de cinta) con flow control por
+// nivel (tape_rtr -> pin 32, histeresis) y cas_stream lo reproduce en KCS.
+// La via FLASH (tape_flash, bloqueada en el build 9) queda en el historico;
+// cas_player (BSRAM) sigue en el arbol como referencia validada en HW.
+wire        cas_pop_req, cas_pop_valid, cas_flush;
+wire [7:0]  cas_pop_data;
+wire [3:0]  cas_dbg_st;        // estado de cas_stream
+wire [10:0] tape_fill;         // llenado del FIFO (diag)
+// DIAG de bring-up (reciclado de la captura del build 9): guarda los primeros
+// 16 bytes POPeados por cas_stream. Volcado desde BASIC:
+//   OUT&H2C,0 : FOR I=0 TO 15:PRINT HEX$(INP(&H2C));:NEXT   (espera "CVS1"...)
+//   INP(&H2D) = {rtr, playing, 2'b00, estado FSM} ; INP(&H2E) = fill/8
+reg  [7:0] cap_buf [0:15];
+reg  [4:0] cap_widx, cap_ridx;
+reg        cas_pv_d, d_rd_2c_d;
+wire d_wr_2c = (bus_iorq_n==0 && bus_m1_n==1 && bus_wr_n==0 && bus_addr[7:0]==8'h2C);
+wire d_rd_2c = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2C);
+wire d_rd_2d = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2D);
+wire d_rd_2e = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2E);
+always @(posedge clk_54m) begin
+    if (!bus_reset_n) begin
+        cap_widx<=5'd0; cap_ridx<=5'd0; cas_pv_d<=1'b0; d_rd_2c_d<=1'b0;
+    end else begin
+        cas_pv_d <= cas_pop_valid;
+        // captura: flanco de subida de pop_valid = byte entregado a cas_stream
+        if (cas_pop_valid && !cas_pv_d && cap_widx < 5'd16) begin
+            cap_buf[cap_widx] <= cas_pop_data;
+            cap_widx <= cap_widx + 5'd1;
+        end
+        // lectura Z80: OUT 0x2C resetea el indice; INP 0x2C auto-incrementa
+        d_rd_2c_d <= d_rd_2c;
+        if (d_wr_2c) cap_ridx <= 5'd0;
+        else if (d_rd_2c_d && !d_rd_2c && cap_ridx < 5'd15) cap_ridx <= cap_ridx + 5'd1;
+    end
+end
+wire [7:0] cap_dout    = cap_buf[cap_ridx];
+wire [7:0] diag_status = {tape_rtr, cas_playing, 2'b00, cas_dbg_st};
+tape_uart #(.CLK_FREQ(54_000_000), .BAUD(115_200)) tape_uart_i (
+    .clk      (clk_54m),
+    .rst      (~bus_reset_n),
+    .rx       (tape_rx),
+    .flush    (cas_flush),
+    .pop_req  (cas_pop_req),
+    .pop_valid(cas_pop_valid),
+    .pop_data (cas_pop_data),
+    .rtr      (tape_rtr),
+    .fill_dbg (tape_fill)
 );
-cas_player #(.ADDRW(20), .PULSE_ONE(731), .PULSE_ZERO(1463),
-             .PILOT_LONG(10000), .PILOT_SHORT(5000)) cas_player_i (
+cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
+             .PILOT_LONG(10000), .PILOT_SHORT(5000)) cas_stream_i (
     .clk      (clk_54m),
     .ce       (clk_enable_3m6_54),
     .rst      (~bus_reset_n),
     .motor    (cas_motor),
     .load     (cas_load),
-    .mem_addr (cas_addr),
-    .mem_req  (cas_req),
-    .mem_ready(cas_ready),
-    .mem_data (cas_data),
+    .pop_req  (cas_pop_req),
+    .pop_valid(cas_pop_valid),
+    .pop_data (cas_pop_data),
+    .flush    (cas_flush),
     .casin    (cas_casin),
-    .playing  (cas_playing)
+    .playing  (cas_playing),
+    .dbg_st   (cas_dbg_st)
 );
 
     // v1.9: FPGA/bitstream version readable on I/O port 0x2F. The boot menu reads it and
@@ -638,6 +670,9 @@ cas_player #(.ADDRW(20), .PULSE_ONE(731), .PULSE_ZERO(1463),
     always @ (posedge clk_54m) begin
         cpu_din <=
                 ( ver_req_r == 1 ) ? FPGA_VERSION :
+                ( d_rd_2c == 1 ) ? cap_dout :
+                ( d_rd_2d == 1 ) ? diag_status :
+                ( d_rd_2e == 1 ) ? tape_fill[10:3] :
                 ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
                 `ifdef ENABLE_SOUND
                      ( psg2_req_r == 1 ) ? psg2_dout :
@@ -2279,20 +2314,21 @@ memory_ctrl mem1 (
         .CS(mspi_cs),
         .MISO(mspi_miso),
         .MOSI(mspi_mosi),
-        // Tras el arranque (flash_idle) la flash la gobierna tape_flash (lectura
-        // de la imagen de cinta); durante el boot, el streamer del pack.
-        .addr(flash_idle ? tape_fl_addr : ff_flash_addr),
-        .rd(flash_idle ? tape_fl_rd : ff_flash_rd),
+        // La flash vuelve a ser SOLO del streamer del pack (la cinta ya no la
+        // usa: el stream viene del C6 por UART; la via tape_flash quedo en git).
+        .addr(ff_flash_addr),
+        .rd(ff_flash_rd),
         .dout(flash_dout),
         .data_ready(flash_data_ready),
         .busy(flash_busy),
-        .terminate(flash_idle ? tape_fl_terminate : ff_flash_terminate),
+        .terminate(ff_flash_terminate),
         .write_enable(config_flash_write_ff),
         .write_din(flash_write_din),
         .write_busy(flash_write_busy),
         .write_counter(flash_write_counter),
         .write_terminate(flash_write_terminate),
-        .write_addr(24'h280000) //24'h278000)
+        .write_addr(24'h280000), //24'h278000)
+        .dbg_state()               // (diag del build 9; sin consumidor ya)
     );
 
     reg [7:0] ff_flash_state = 8'd0;

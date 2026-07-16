@@ -94,3 +94,11 @@ IO_LOC "uart_rx" 28;
 IO_PORT "uart_rx" PULL_MODE=UP IO_TYPE=LVCMOS33;
 IO_LOC "uart_tx" 27;
 IO_PORT "uart_tx"  IO_TYPE=LVCMOS33;
+
+//cinta por STREAM desde el ESP32-C6 (UART1): datos en pin 26 (idle-alto,
+//PULL UP para que sin C6 no haya bytes fantasma) y RTR (flow control por
+//nivel, activo-alto) en pin 32 -> GPIO del C6.
+IO_LOC "tape_rx" 26;
+IO_PORT "tape_rx" PULL_MODE=UP IO_TYPE=LVCMOS33;
+IO_LOC "tape_rtr" 32;
+IO_PORT "tape_rtr" IO_TYPE=LVCMOS33 DRIVE=4;
