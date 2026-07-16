@@ -369,6 +369,9 @@ BOOT_FLAG	equ	#E830			; 1 byte: 0x99 = boot pending (skip menu on BIOS 2nd INIT 
 CLK_STR		equ	#E831			; 9 bytes: "HH:MM:SS" + 0 (header clock)
 CLK_LAST	equ	#E83A			; 1 byte: last seconds-units digit (clock change detect)
 JOY_RPT		equ	#E83B			; 1 byte: joystick auto-repeat frame counter
+BAR_FRAC	equ	#E83C			; 2 bytes: acumulador Bresenham de la barra de carga
+BAR_TOT		equ	#E83E			; 2 bytes: total de segmentos 8K de la ROM (escala barra)
+BAR_CNT		equ	#E85A			; 1 byte: celdas pintadas de la barra (tope fisico 64)
 JOY_RPT_DELAY equ 14			; frames before a held stick starts repeating
 JOY_RPT_RATE  equ 2				; frames between repeats (lower = faster)
 MEG_SLOT	equ	#02				; primary slot 2 (the OCM relocates the megaram here
@@ -1443,7 +1446,7 @@ scan_rom:
 	ld   hl, spin_chars
 	add  hl, de
 	ld   c, (hl)					; caracter del frame
-	ld   hl, #1C08					; col 28, fila 8 (junto a "Cargando...")
+	ld   hl, #2C11					; col 44, fila 17 (junto a "Analizando ROM...")
 	call POSIT
 	ld   a, c
 	call CHPUT
@@ -1637,7 +1640,29 @@ load_rom:
 	out  (#40), a
 	ld   a, #0F
 	out  (#41), a
-	ld   hl, #010D					; progress bar row (its own line; max 64 blocks)
+	; --- barra ESCALADA (Bresenham): BAR_TOT = ceil(KB/8) = segmentos 8K de la
+	;     ROM; por cada segmento FRAC += 64 y cada TOT acumulados pinta 1 celda
+	;     -> la barra acaba SIEMPRE llena (64 celdas), sea 16K o 2MB ---
+	call rom_kb						; HL = tamano de la ROM en KB
+	ld   de, 7
+	add  hl, de						; ceil(KB/8)
+	srl  h
+	rr   l
+	srl  h
+	rr   l
+	srl  h
+	rr   l
+	ld   a, h
+	or   l
+	jr   nz, .lro_t1
+	inc  hl							; minimo 1 (ROM vacia: evita bucle infinito)
+.lro_t1:
+	ld   (BAR_TOT), hl
+	ld   hl, 0
+	ld   (BAR_FRAC), hl
+	xor  a
+	ld   (BAR_CNT), a
+	ld   hl, #090F					; celdas de la barra (fila 15, cols 9..72)
 	call POSIT
 	pop  af
 	ld   (LOAD_SEG), a
@@ -1660,11 +1685,30 @@ load_rom:
 	ld   a, h
 	or   l
 	jr   nz, .lro_nobar
-	ld   a, (LOAD_SEG)				; cap the bar at 64 blocks so it never wraps the
-	cp   65							; line (a 2 MB ROM is 256 segments otherwise)
-	jr   nc, .lro_nobar
-	ld   a, #DB						; solid block -> progress bar tick
+	; Bresenham: FRAC += 64; por cada TOT completos pinta una celda solida
+	ld   hl, (BAR_FRAC)
+	ld   de, 64
+	add  hl, de
+.lro_bloop:
+	ld   de, (BAR_TOT)
+	or   a
+	sbc  hl, de
+	jr   c, .lro_brest				; FRAC < TOT -> restaurar resto y seguir
+	ld   a, (BAR_CNT)
+	cp   64							; tope fisico: no pisar el ']' del marco
+	jr   c, .lro_btick
+	add  hl, de						; barra ya llena: restaurar y salir
+	jr   .lro_bsave
+.lro_btick:
+	inc  a
+	ld   (BAR_CNT), a
+	ld   a, #DB						; celda solida de la barra
 	call CHPUT
+	jr   .lro_bloop
+.lro_brest:
+	add  hl, de						; deshacer la resta que se paso
+.lro_bsave:
+	ld   (BAR_FRAC), hl
 .lro_nobar:
 	call inc_sd_lba
 	ld   a, (SSEC_LEFT)
@@ -1683,6 +1727,19 @@ load_rom:
 	call w_copy
 	jr   .lro_clus
 .lro_done:
+	; completar la barra hasta 64 (si el size del dir no cuadra con la cadena
+	; de clusters, o la ROM es mas corta): al acabar SIEMPRE se ve llena
+	ld   a, (BAR_CNT)
+.lro_fill:
+	cp   64
+	jr   nc, .lro_fin
+	push af
+	ld   a, #DB
+	call CHPUT
+	pop  af
+	inc  a
+	jr   .lro_fill
+.lro_fin:
 	ret
 
 ; override_mapper_by_name: if the selected file's name contains a GoodMSX mapper
@@ -2338,24 +2395,49 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	inc  hl							; record+1 = cluster (dword)
 	ld   de, FILE_CLUS
 	call w_copy
-	; feedback inmediato: detect_mapper lee sectores de la SD y tarda 2-3s en ROMs
-	; grandes; pintar YA nombre + "Cargando..." para que el Enter no parezca cuelgue
+	; ---- pantalla de lanzamiento: LAYOUT FIJO 80x24 (rediseno v1.9c) ----
+	; fila 2: titulo | 3+21: linea fina | 6/8: fichero | 11: Tamano/Mapper/SRAM
+	; en columnas fijas | 15: barra [64 celdas] | 17: estado | 22: teclas.
+	; Cada campo dinamico se LIMPIA a ancho fijo antes de reimprimir -> nada
+	; se mezcla ni deja residuos (tamano de 1-4 digitos, mappers de 6-15 chars).
+	; Se pinta YA (detect_mapper tarda 2-3s en ROMs grandes; el spinner gira en
+	; la fila de estado para que el Enter no parezca un cuelgue).
 	call cls_browser
-	ld   hl, #0101
+	xor  a							; BROWSING=0: apagar el marquee del browser (si no,
+	ld   (BROWSING), a				; con nombres >59 chars browse_getkey repinta el
+									; nombre en scroll ENCIMA de esta pantalla; browse
+									; lo re-asserta al volver con ESC, como la ayuda)
+	ld   hl, #2402					; titulo centrado (fila 2)
 	call POSIT
-	ld   hl, romInfoStr				; "Fichero:" (fila 1)
+	ld   hl, titleRomStr
 	call print_string
-	ld   hl, #0103
+	ld   a, 3						; linea fina (fila 3)
+	call draw_hline
+	ld   a, 21						; linea fina (fila 21)
+	call draw_hline
+	ld   hl, #0306
 	call POSIT
-	ld   hl, (BR_REC)				; nombre (fila 3), truncado a 76 col
-	ld   de, NAME_OFF
-	add  hl, de
-	ld   b, 76
-	call print_string_max
-	ld   hl, #0108					; "Cargando ROM en megaram..." (fila 8) YA visible
-	call POSIT
-	ld   hl, loadingStr
+	ld   hl, romInfoStr				; "Fichero:" (fila 6)
 	call print_string
+	call .bsr_name					; nombre (fila 8): max 72, con "..." si es mas largo
+	; marco de la barra (fila 15): '[' col8 + 64 celdas de linea fina + ']' col73.
+	; Las celdas (char #10) van por FILVRM directo a la name table: CHPUT IGNORA
+	; los codigos de control 0x00-0x1F (mismo motivo por el que draw_hline usa
+	; FILVRM). Name table en 0x0000, 80 cols: fila fisica 14 * 80 + col fisica 8.
+	ld   hl, #0468					; 14*80+8 = 1128
+	ld   bc, 64
+	ld   a, #10
+	call FILVRM
+	ld   hl, #080F					; '[' (col 8)
+	call POSIT
+	ld   a, '['
+	call CHPUT
+	ld   hl, #490F					; ']' (col 73)
+	call POSIT
+	ld   a, ']'
+	call CHPUT
+	ld   hl, analyzStr				; estado (fila 17): "Analizando ROM..." + spinner
+	call .bsr_status
 	call detect_mapper				; mapper por CONTENIDO (estilo Picoverse/openMSX);
 									; el nombre solo decide si el scan no ve nada.
 									; Evita falsos positivos del nombre (p.ej. "Konami"
@@ -2385,41 +2467,30 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	jr   nz, .bsr_have
 	call detect_mapper
 .bsr_have:
-	; (la pantalla ya se limpio y pinto arriba, antes del escaneo: solo reescribimos
-	;  los datos; sin cls_browser aqui para que NO parpadee)
-	ld   hl, #1C08					; borrar el spinner del analisis (col 28, fila 8)
+	; fila de datos (fila 11): Tamano / Mapper / SRAM en COLUMNAS FIJAS (la
+	; pantalla ya esta pintada; el repintado del campo de estado tapa el spinner)
+	ld   hl, #050B
 	call POSIT
-	ld   a, ' '
-	call CHPUT
-	ld   hl, #0101
-	call POSIT
-	ld   hl, romInfoStr				; "Fichero:"  (fila 1)
+	ld   hl, romClusStr				; "Tamano:" (col 5)
 	call print_string
-	ld   hl, #0103
-	call POSIT
-	ld   hl, (BR_REC)				; nombre (fila 3), TRUNCADO a 76 col para que
-	ld   de, NAME_OFF				; un nombre largo no haga wrap y descoloque todo
-	add  hl, de
-	ld   b, 76
-	call print_string_max
-	ld   hl, #0105
-	call POSIT
-	ld   hl, romClusStr				; "Tamano: "  (fila 5)
-	call print_string
+	ld   hl, #0D0B					; valor (col 13, campo fijo 6: "2048K")
+	ld   b, 6
+	call clear_at
 	call print_rom_kb
 	ld   a, 'K'
 	call CHPUT
-	ld   hl, romSpcStr				; "  Mapper: "
-	call print_string
-	call print_mapper_name
-	call .bsr_sprint				; "SRAM: On/Off" (fila 6)
-	ld   hl, #0108					; "Cargando ROM en megaram..."  (fila 8)
+	ld   hl, #1B0B
 	call POSIT
-	ld   hl, loadingStr
+	ld   hl, romSpcStr				; "Mapper:" (col 27)
 	call print_string
-	call load_rom					; carga ahora (barra de progreso, fila 13)
-	call .bsr_footer				; al acabar la carga, el mensaje de teclas (con o
-									; sin S=SRAM segun mapper) tapa "Cargando..."
+	call .bsr_mprint				; valor (col 35, campo fijo 15)
+	call .bsr_sprint				; "SRAM: On/Off" (col 57, solo ASCII8/16)
+	ld   hl, loadingStr				; estado: "Cargando ROM en megaram..."
+	call .bsr_status
+	call load_rom					; carga (barra de progreso escalada, fila 15)
+	ld   hl, doneStr				; estado: "ROM cargada."
+	call .bsr_status
+	call .bsr_footer				; teclas (fila 22): ya se puede lanzar
 .bsr_lk:
 	call browse_getkey
 	cp   #0D
@@ -2427,13 +2498,13 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	cp   #1B
 	jp   z, browse				; (hook FH global)
 	cp   'M'
-	jr   z, .bsr_map
+	jp   z, .bsr_map
 	cp   'm'
-	jr   z, .bsr_map
+	jp   z, .bsr_map
 	cp   'S'
-	jr   z, .bsr_srtg
+	jp   z, .bsr_srtg
 	cp   's'
-	jr   z, .bsr_srtg
+	jp   z, .bsr_srtg
 	jr   .bsr_lk
 .bsr_srtg:
 	call .bsr_isascii				; la tecla S solo actua en ASCII8/16 (en Konami/
@@ -2445,23 +2516,63 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	jr   .bsr_lk
 .bsr_sprint:
 	call .bsr_isascii				; SRAM solo en ASCII8/16: en otros mappers NO se
-	jr   nc, .bsr_sprcl				; muestra la opcion (fila 6 en blanco)
-	ld   hl, #0106
+	jr   nc, .bsr_sprcl				; muestra el grupo (columna limpia)
+	ld   hl, #390B
 	call POSIT
-	ld   hl, sramStr				; "SRAM:"
+	ld   hl, sramStr				; "SRAM:" (col 57, fila 11)
 	call print_string
-	ld   hl, #0806
+	ld   hl, #3F0B					; valor On/Off (col 63)
 	ld   a, (SRAM_FLAG)
 	jp   print_on_off				; imprime On/Off y retorna al llamador
 .bsr_sprcl:
-	ld   hl, #0106					; no-ASCII: borrar la fila (por si se venia de ASCII
-	call POSIT						; via tecla M)
-	ld   b, 14
-.bsr_sprcl2:
-	ld   a, ' '
+	ld   hl, #390B					; no-ASCII: borrar el grupo "SRAM: Off" entero
+	ld   b, 9						; (por si se venia de ASCII via tecla M)
+	jp   clear_at
+.bsr_name:							; nombre (fila 8, col 5): max 72; si es mas largo,
+	ld   hl, (BR_REC)				; corta a 69 + "..." para que NUNCA haga wrap
+	ld   de, NAME_OFF
+	add  hl, de
+	ex   de, hl						; DE = nombre
+	ld   h, d						; strlen acotado (73 = "mas de 72")
+	ld   l, e
+	ld   b, 73
+	ld   c, 0
+.bsr_nl:
+	ld   a, (hl)
+	or   a
+	jr   z, .bsr_nd
+	inc  hl
+	inc  c
+	djnz .bsr_nl
+.bsr_nd:
+	ld   hl, #0508
+	call POSIT
+	ex   de, hl						; HL = nombre
+	ld   a, c
+	cp   73
+	jr   c, .bsr_nfit
+	ld   b, 69						; no cabe: 69 chars + "..."
+	call print_string_max
+	ld   b, 3
+.bsr_ndots:
+	ld   a, '.'
 	call CHPUT
-	djnz .bsr_sprcl2
+	djnz .bsr_ndots
 	ret
+.bsr_nfit:
+	jp   print_string
+.bsr_status:						; HL = texto -> campo de estado (fila 17, col 26,
+	push hl							; ancho fijo 30: cada mensaje tapa el anterior
+	ld   hl, #1A11					; y el spinner del analisis)
+	ld   b, 30
+	call clear_at
+	pop  hl
+	jp   print_string
+.bsr_mprint:						; valor del mapper en campo fijo de 15 (fila 11)
+	ld   hl, #230B
+	ld   b, 15
+	call clear_at
+	jp   print_mapper_name
 .bsr_isascii:						; CF=1 si MAPPER_ID es ASCII8/16 (unica con SRAM)
 	ld   a, (MAPPER_ID)
 	cp   MAP_A8_ID
@@ -2473,14 +2584,20 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 .bsr_isa1:
 	scf
 	ret
-.bsr_footer:						; pie (fila 8) con "S=SRAM" solo en ASCII8/16
-	ld   hl, #0108
-	call POSIT
+.bsr_footer:						; pie de teclas (fila 22), centrado; variante con
+	ld   hl, #0116					; S=SRAM solo en ASCII8/16. Se limpia la fila
+	ld   b, 79						; entera antes -> sin residuos entre variantes
+	call clear_at
 	call .bsr_isascii
-	ld   hl, launch2Str				; ASCII: incluye S=SRAM
-	jr   c, .bsr_ftpr
-	ld   hl, launch2bStr			; resto: sin S=SRAM (mismo largo, tapa el anterior)
-.bsr_ftpr:
+	jr   c, .bsr_ftA
+	ld   hl, #1316					; variante corta centrada (43 chars, col 19)
+	call POSIT
+	ld   hl, launch2bStr
+	jp   print_string
+.bsr_ftA:
+	ld   hl, #0E16					; variante con SRAM centrada (54 chars, col 14)
+	call POSIT
+	ld   hl, launch2Str
 	jp   print_string
 .bsr_map:
 	ld   a, (MAPPER_ID)				; ciclar plain->Konami->SCC->ASCII8->ASCII16
@@ -2500,27 +2617,14 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 .bsr_ms:
 	ld   a, b
 	ld   (MAPPER_ID), a
-	ld   hl, #0105					; reimprimir la linea Tamano + Mapper
-	call POSIT
-	ld   hl, romClusStr
-	call print_string
-	call print_rom_kb
-	ld   a, 'K'
-	call CHPUT
-	ld   hl, romSpcStr
-	call print_string
-	call print_mapper_name
-	ld   b, 4						; limpiar cola de un nombre anterior mas largo
-.bsr_msp:
-	ld   a, ' '
-	call CHPUT
-	djnz .bsr_msp
+	call .bsr_mprint				; solo el campo del mapper (limpia 15 y pinta:
+									; columnas fijas -> el tamano NO se toca)
 	call .bsr_isascii				; si al ciclar deja de ser ASCII, forzar SRAM OFF
 	jr   c, .bsr_mkeep
 	xor  a
 	ld   (SRAM_FLAG), a
 .bsr_mkeep:
-	call .bsr_sprint				; refrescar/limpiar la fila SRAM y el pie
+	call .bsr_sprint				; refrescar/limpiar el grupo SRAM y el pie
 	call .bsr_footer
 	jp   .bsr_lk
 
@@ -2706,8 +2810,9 @@ browse_back:						; global (pareja del anterior)
 	call refresh_list				; soft repaint of the parent directory (no flicker)
 	jp   browse					; (redraw+loop: hook FH global)
 
-; print_rom_kb: print the selected ROM's size in KB (decimal) from BR_REC.
-print_rom_kb:
+; rom_kb: HL = tamano de la ROM seleccionada en KB (desde BR_REC). Lo usan
+; print_rom_kb (mostrar) y load_rom (escalar la barra de progreso).
+rom_kb:
 	ld   hl, (BR_REC)
 	ld   de, SIZE_OFF+1
 	add  hl, de
@@ -2731,6 +2836,11 @@ print_rom_kb:
 	ld   e, c
 	ld   d, 0
 	add  hl, de						; hl = KB
+	ret
+
+; print_rom_kb: print the selected ROM's size in KB (decimal) from BR_REC.
+print_rom_kb:
+	call rom_kb
 	jp   print_dec16
 
 ; print_mapper_name: print the detected mapper's name (MAPPER_ID).
@@ -4639,6 +4749,19 @@ print_string_max:
 	djnz print_string_max
 	ret
 
+; clear_at: limpia un campo de B espacios en HL (POSIT #ColFila) y deja el
+; cursor REPOSICIONADO al inicio del campo -> el llamador imprime encima.
+; Es la base del layout fijo de la pantalla de lanzar ROM (sin residuos).
+clear_at:
+	push hl
+	call POSIT
+.ca_sp:
+	ld   a, ' '
+	call CHPUT
+	djnz .ca_sp
+	pop  hl
+	jp   POSIT
+
 ; Set the cursor to L,H position and prints 'Off'/'On ' if A is 0 or not.
 ; Input    : H  - Y coordinate of cursor
 ;            L  - X coordinate of cursor
@@ -4725,10 +4848,16 @@ helpEndStr:
 	.db "Pulsa una tecla para volver...",0
 romInfoStr:
 	.db "Fichero:",0
+titleRomStr:
+	.db "Lanzar ROM",0
+analyzStr:
+	.db "Analizando ROM...",0
+doneStr:
+	.db "ROM cargada.",0
 romClusStr:
-	.db "Tamano: ",0
+	.db "Tamano:",0
 romSpcStr:
-	.db "  Mapper: ",0
+	.db "Mapper:",0
 mapPlainStr:
 	.db "Plain (lineal)",0
 mapKonStr:
@@ -4743,10 +4872,10 @@ mapUnkStr:
 	.db "? (desconocido)",0
 loadingStr:
 	.db "Cargando ROM en megaram...",0
-launch2Str:
-	.db "RETURN=LANZA M=MAPPER S=SRAM ESC",0
-launch2bStr:						; sin S=SRAM (no-ASCII); padded al largo de arriba
-	.db "RETURN=LANZA M=MAPPER ESC       ",0
+launch2Str:							; pie (fila 22); .bsr_footer limpia la fila antes,
+	.db "RETURN = Lanzar   M = Mapper   S = SRAM   ESC = Volver",0
+launch2bStr:						; variante sin SRAM (no-ASCII)
+	.db "RETURN = Lanzar   M = Mapper   ESC = Volver",0
 sramStr:
 	.db "SRAM:",0
 srchStr:
