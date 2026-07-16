@@ -327,6 +327,7 @@ SRAM_FLAG	equ	#C0D9			; 1 byte: SRAM de cartucho para este lanzamiento (0/1)
 SD_READY	equ	#C0DB			; 1 byte: SD ya montada+escaneada (bajo el logo)
 MAP_SWIO	equ	#C0DC			; 1 byte: smart command del mapper (lo aplica el stub)
 DSK_PEND	equ	#C0DD			; 1 byte: registro .dsk pendiente de reescribir (2o pase)
+TW_LOAD		equ	#C0DE			; 1 byte: loadcmd de la cinta web (0=RUN 1=BLOAD 2=?)
 NEEDLE		equ	#C0D5			; 2 bytes: substring search needle pointer (tag scan)
 TAGPTR		equ	#C0D7			; 2 bytes: haystack (filename) pointer (tag scan)
 PE_PTR		equ	#C0D9			; 2 bytes: MBR partition-entry pointer (dump diag)
@@ -460,10 +461,10 @@ sd_not_present:
 	jp   z, main_action_wifi
 	cp   #77						; 'w'
 	jp   z, main_action_wifi
-	cp   #55						; 'U' -> test UNAPI (File-Hunter fase 0)
-	jp   z, main_action_unapi_test
-	cp   #75						; 'u'
-	jp   z, main_action_unapi_test
+	cp   #54						; 'T' -> Cinta web (TSX streaming)
+	jp   z, main_action_tsxweb
+	cp   #74						; 't'
+	jp   z, main_action_tsxweb
 	cp   #46						; 'F' -> File-Hunter (buscar y listar online)
 	jp   z, fh_browse
 	cp   #66						; 'f'
@@ -2117,10 +2118,10 @@ browse:
 	jp   z, main_action_wifi
 	cp   #77						; 'w'
 	jp   z, main_action_wifi
-	cp   #55						; 'U' -> test UNAPI (File-Hunter fase 0)
-	jp   z, main_action_unapi_test
-	cp   #75						; 'u'
-	jp   z, main_action_unapi_test
+	cp   #54						; 'T' -> Cinta web (TSX streaming)
+	jp   z, main_action_tsxweb
+	cp   #74						; 't'
+	jp   z, main_action_tsxweb
 	cp   #46						; 'F' -> File-Hunter (buscar y listar online)
 	jp   z, fh_browse
 	cp   #66						; 'f'
@@ -4909,6 +4910,26 @@ sramStr:
 	.db "SRAM:",0
 srchStr:
 	.db "Buscar: ",0
+tw_title:
+	.db "MSXnano - Cinta web (tsx.eslamejor.com)",13,10,0
+tw_search:
+	.db "Buscando y descargando (hasta 40s)...",0
+tw_notfound:
+	.db "No encontrada. Pulsa una tecla.",0
+tw_error:
+	.db "Error del ESP/WiFi. Pulsa una tecla.",0
+tw_timeout:
+	.db "Sin respuesta del ESP. Pulsa una tecla.",0
+tw_ready1:
+	.db "CINTA EN MARCHA. Al arrancar BASIC teclea:",0
+tw_cmd_run:
+	.db "RUN",34,"CAS:",34,0
+tw_cmd_bload:
+	.db "BLOAD",34,"CAS:",34,",R",0
+tw_cmd_unk:
+	.db "RUN",34,"CAS:",34," (o BLOAD",34,"CAS:",34,",R)",0
+tw_ready2:
+	.db "RETURN = arrancar BASIC   ESC = cancelar",0
 ; strings de la pantalla de lanzar DSK (mismo layout que la de ROM; los textos
 ; de estado/error caben en el campo fijo de 30; el "pulsa una tecla" va al pie)
 dskTitleStr:
@@ -5090,313 +5111,209 @@ FH_HTIMI	equ	#FD9F			; hook H.TIMI (el driver lo engancha al asignar)
 FH_HIMEM	equ	#FC4A			; tope de RAM libre (el driver le resta 30)
 FH_SLTWRK_P	equ	#FD1E			; SLTWRK del slot 0-2: puntero al area del driver
 
-main_action_unapi_test:
+; ============================================================================
+; CINTA WEB (tecla T): busca un TSX en tsx.eslamejor.com via el ESP32-C6 y lo
+; reproduce en la CINTA VIRTUAL por stream (cas_stream, pines 26/32). Habla con
+; el firmware TapeWeb por la UART del wifi_lite en I/O 0x06/0x07 DIRECTO (sin
+; driver UNAPI): OUT(7)=TX ; IN(7) bit0 = hay dato ; IN(6) = RX ; OUT(6),20 =
+; vaciar FIFO RX. Comando 'J' TSX_FIND {texto}: el C6 busca en el catalogo,
+; descarga el .tsx, lo convierte y lo STREAMEA al FPGA.
+;   respuesta OK:    'J', 0, sizeH, sizeL, loadcmd, nombreZ (ASCII)
+;   respuesta error: 'J', err   (3 = no encontrada)
+; Al RETURN se arranca BASIC y el usuario teclea el comando mostrado (la cinta
+; ya esta sonando; la BIOS la lee por el bit7 del PSG como una cinta real).
+; ============================================================================
+main_action_tsxweb:
 	call init_screen				; SCREEN 0 (como Ajustes)
-	ld   hl, fh_title
+	ld   hl, tw_title
 	call ver_puts
-
-	; salvaguardas ANTES de la 1a llamada (que dispara la asignacion del driver)
-	di
-	ld   (FH_SAVE_SP), sp
-	ld   sp, #F300					; stack privado POR DEBAJO del area (#F363)
-	ld   hl, (FH_HIMEM)
-	ld   (FH_SAVE_HIMEM), hl
-	ld   hl, FH_HTIMI				; backup propio de H.TIMI (5 bytes)
-	ld   de, FH_SAVE_HTIMI
-	ld   bc, 5
-	ldir
-	ei
-
-	; 1) diagnostico del discovery: imprime HOKVLD, num de implementaciones
-	; y los bytes del hook ANTES de decidir; si el discovery da 0, instala el
-	; hook del driver A MANO (fh_hook_install) y reintenta una vez
-	xor  a
-	ld   (FH_RETRIED), a
-.fh_disc:
-	ld   hl, fh_m_hok
-	call ver_puts
-	ld   a, (FH_HOKVLD)
-	and  1
-	call fh_dec8					; H:0 = hook EXTBIO ausente
-	ld   hl, fh_id
-	ld   de, FH_ARG
-	ld   bc, 7
-	ldir
-	xor  a							; A=0: contar implementaciones
-	ld   b, a
-	ld   de, #2222
-	call FH_EXTBIO					; -> B = numero de implementaciones
-	ld   hl, fh_m_nimp
-	call ver_puts
-	ld   a, b
+	ld   hl, #0305					; prompt de busqueda
+	call POSIT
+	ld   hl, srchStr				; "Buscar: " (reusada del browser)
+	call print_string
+	ld   hl, SRCH_BUF
+	ld   b, 0						; longitud actual
+.tw_key:
+	push hl
 	push bc
-	call fh_dec8					; N:0 = driver instalado "sin ESP"
+	call prompt_getkey				; solo teclado, sin marquee
 	pop  bc
-	ld   hl, fh_m_hook				; K: bytes crudos del hook #FFCA-#FFCE
-	call ver_puts
-	ld   hl, #FFCA
-	ld   c, 5
-.fh_kdmp:
+	pop  hl
+	cp   #0D
+	jr   z, .tw_go
+	cp   #1B
+	jp   z, main_menu_restart		; ESC = volver al menu
+	cp   #08
+	jr   z, .tw_del
+	cp   ' '
+	jr   c, .tw_key					; controles fuera
+	cp   #7F
+	jr   nc, .tw_key
+	ld   c, a
+	ld   a, b
+	cp   40							; hasta 40 caracteres
+	jr   nc, .tw_key
+	ld   a, c
+	ld   (hl), a
+	inc  hl
+	inc  b
+	call CHPUT						; eco
+	jr   .tw_key
+.tw_del:
+	ld   a, b
+	or   a
+	jr   z, .tw_key
+	dec  hl
+	dec  b
+	ld   a, #08
+	call CHPUT
+	ld   a, ' '
+	call CHPUT
+	ld   a, #08
+	call CHPUT
+	jr   .tw_key
+.tw_go:
+	ld   a, b
+	or   a
+	jp   z, main_menu_restart		; consulta vacia = volver
+	push bc							; B = longitud del texto
+	ld   hl, #0308
+	call POSIT
+	ld   hl, tw_search				; "Buscando y descargando..."
+	call print_string
+	ld   a, 20						; vaciar el FIFO RX de la UART del ESP
+	out  (6), a
+	ld   a, 'J'						; TSX_FIND
+	out  (7), a
+	xor  a
+	out  (7), a						; size alto = 0
+	pop  bc
+	ld   a, b
+	out  (7), a						; size bajo = longitud
+	ld   hl, SRCH_BUF
+.tw_tx:
 	ld   a, (hl)
 	inc  hl
-	push bc
-	push hl
-	call fh_hex8
-	pop  hl
-	pop  bc
-	dec  c
-	jr   nz, .fh_kdmp
-	ld   a, (FH_HOKVLD)
-	bit  0, a
-	jr   z, .fh_inst				; sin hook valido -> instalar a mano
-	ld   a, b
+	out  (7), a
+	djnz .tw_tx
+	call tw_rx_long					; cmd de eco ('J'); CF=1 timeout (~40s)
+	jp   c, .tw_terr
+	call tw_rx						; err
+	jp   c, .tw_terr
 	or   a
-	jr   nz, .fh_disc_ok
-.fh_inst:
-	ld   a, (FH_RETRIED)			; discovery fallido: instalar el hook a
-	or   a							; mano UNA vez y reintentar
-	ld   hl, fh_m_noimpl
-	jp   nz, .fh_fail
-	ld   a, 1
-	ld   (FH_RETRIED), a
-	ld   hl, fh_m_inst
-	call ver_puts
-	call fh_hook_install
-	jp   .fh_disc
-.fh_disc_ok:
-
-	; 3) datos de la implementacion 1 (AQUI el driver asigna HIMEM+H.TIMI)
-	ld   a, 1
-	ld   de, #2222
-	call FH_EXTBIO					; -> A=slot, HL=entry (usar SIEMPRE estos)
-	ld   (FH_UNAPI_SLT), a
-	ld   (FH_UNAPI_ADR), hl
-
-	ld   hl, fh_m_impl
-	call ver_puts
-	ld   a, (FH_UNAPI_SLT)
-	call fh_hex8
-	ld   hl, fh_m_entry
-	call ver_puts
-	ld   a, (FH_UNAPI_ADR+1)
-	call fh_hex8
-	ld   a, (FH_UNAPI_ADR)
-	call fh_hex8
-
-	; 4) sesion de red: mapear el ROM del driver en pagina 1 + GET_INFO
-	di
-	ld   a, (FH_UNAPI_SLT)
-	ld   hl, #4000
-	call ENASLT
-	ei
-	ld   hl, fh_m_drv
-	call ver_puts
-	xor  a							; fn 0: UNAPI_GET_INFO
-	call fh_unapi					; -> HL=nombre (en pag.1), BC=version impl
-	push bc
-	call ver_puts					; nombre ASCIIZ del driver (ROM mapeado)
-	ld   a, ' '
-	call #00A2
-	pop  bc
-	ld   a, b						; version B.C en decimal
-	push bc
-	call fh_dec8
-	ld   a, '.'
-	call #00A2
-	pop  bc
-	ld   a, c
-	call fh_dec8
-
-	; 5+6) DIAGNOSTICO de red (temporal): imprime codigos crudos de cada paso
-	; para cazar por que el driver falla en frio hasta pasar por el setup W.
-	; Formato: U7:<status UART> / S:e<err>b<estado> (NET_STATE) /
-	; D:<err DNS_Q> / P: a<err>b<B> x8 (DNS_S cada ~2s) / R:<drenados> tras
-	; warm-reset / P2: otra tanda de DNS_S / IP si resuelve.
-	ld   hl, fh_m_u7
-	call ver_puts
-	in   a, (#07)					; status UART al entrar (bit0=dato pendiente!)
-	call fh_hex8
-
-	ld   hl, fh_m_net				; "Red: " -> S:e<A>b<B>
-	call ver_puts
-	ld   a, 3						; TCPIP_NET_STATE
-	call fh_unapi
-	push bc
-	push af
-	ld   a, 'e'
-	call #00A2
-	pop  af
-	call fh_dec8					; err devuelto (15=timeout driver!)
-	ld   a, 'b'
-	call #00A2
-	pop  bc
-	ld   a, b
-	call fh_dec8					; estado (solo valido si err=0)
-
-	ld   hl, fh_m_dq				; " D:" primer DNS_Q en frio
-	call ver_puts
-	ld   hl, fh_host
-	ld   b, 0
-	ld   a, 6						; TCPIP_DNS_Q
-	call fh_unapi
-	call fh_dec8					; err del DNS_Q
-
-	ld   hl, fh_m_p1				; " P:" sondeos DNS_S
-	call ver_puts
-	ld   a, 8
-	ld   (FH_TRIES), a
-.fh_dg1:
-	ld   b, 120						; ~2s
-.fh_dg1w:
-	halt
-	djnz .fh_dg1w
-	ld   b, 1
-	ld   a, 7						; TCPIP_DNS_S
-	call fh_unapi
-	push bc
-	push af
-	ld   a, 'a'
-	call #00A2
-	pop  af
-	call fh_dec8
-	ld   a, 'b'
-	call #00A2
-	pop  bc
-	ld   a, b
-	call fh_dec8
-	ld   a, ' '
-	call #00A2
-	ld   a, (FH_TRIES)
+	jr   nz, .tw_err
+	call tw_rx						; size alto (la resp cabe en <256: ignorar)
+	jp   c, .tw_terr
+	call tw_rx						; size bajo
+	jp   c, .tw_terr
+	ld   b, a						; = 1 (loadcmd) + nombre + NUL
+	call tw_rx
+	jp   c, .tw_terr
+	ld   (TW_LOAD), a				; 0=RUN"CAS: 1=BLOAD"CAS:",R 2=otro
+	dec  b
+	ld   hl, #030A					; nombre encontrado (fila 10)
+	call POSIT
+.tw_nm:
+	call tw_rx
+	jp   c, .tw_terr
+	or   a
+	jr   z, .tw_ready				; NUL = fin del nombre
+	call CHPUT
+	djnz .tw_nm
+.tw_ready:
+	ld   hl, #030D
+	call POSIT
+	ld   hl, tw_ready1				; "CINTA EN MARCHA..."
+	call print_string
+	ld   hl, #050F					; el comando a teclear en BASIC
+	call POSIT
+	ld   a, (TW_LOAD)
+	ld   hl, tw_cmd_run
+	or   a
+	jr   z, .tw_pc
+	ld   hl, tw_cmd_bload
 	dec  a
-	ld   (FH_TRIES), a
-	jr   nz, .fh_dg1
-
-	ld   hl, fh_m_rst				; warm-reset del ESP + drenaje contado
-	call ver_puts
-	ld   a, 20
-	out  (#06), a					; CLEAR_UART
+	jr   z, .tw_pc
+	ld   hl, tw_cmd_unk
+.tw_pc:
+	call print_string
+	ld   hl, #0312
+	call POSIT
+	ld   hl, tw_ready2				; "RETURN = arrancar BASIC   ESC = cancelar"
+	call print_string
+.tw_wait:
+	call prompt_getkey
+	cp   #0D
+	jp   z, boot_system				; a BASIC: la cinta sigue streameando
+	cp   #1B
+	jr   nz, .tw_wait
+	ld   a, 'K'						; ESC: STOP al C6 (PLAY con size 0)
+	out  (7), a
 	xor  a
-	out  (#06), a					; SET_SPEED
-	halt
-	halt
-	ld   a, 'W'						; CMD_WRESET_ESP
-	out  (#07), a
-	ld   b, 180						; ~3s reboot
-.fh_dgb:
-	halt
-	djnz .fh_dgb
-	ld   c, 0						; contar drenados
-.fh_dgd:
-	in   a, (#07)
-	bit  0, a
-	jr   z, .fh_dgdd
-	in   a, (#06)
-	inc  c
-	ld   a, c
-	cp   200
-	jr   c, .fh_dgd
-.fh_dgdd:
-	ld   a, c
-	call fh_dec8					; bytes drenados tras el reset
-	ld   a, 20
-	out  (#06), a					; UART limpia
-
-	ld   hl, fh_m_p2				; " P2:" DNS de nuevo tras el reset
-	call ver_puts
-	ld   hl, fh_host
-	ld   b, 0
-	ld   a, 6
-	call fh_unapi
-	call fh_dec8					; err del DNS_Q post-reset
-	ld   a, ' '
-	call #00A2
-	ld   a, 10
-	ld   (FH_TRIES), a
-.fh_dg2:
-	ld   b, 120
-.fh_dg2w:
-	halt
-	djnz .fh_dg2w
-	ld   b, 1
-	ld   a, 7
-	call fh_unapi
-	or   a
-	jr   nz, .fh_dg2e
-	ld   a, b
-	cp   2
-	jr   z, .fh_dgok				; resuelto!
-	ld   a, b
-.fh_dg2e:
-	push af
-	ld   a, 'a'
-	call #00A2
-	pop  af
-	call fh_dec8
-	ld   a, ' '
-	call #00A2
-	ld   a, (FH_TRIES)
-	dec  a
-	ld   (FH_TRIES), a
-	jr   nz, .fh_dg2
-	jr   .fh_dgfin					; agotado
-.fh_dgok:
-	ld   a, l						; IP resuelta: L.H.E.D
-	ld   (FH_TCPP+0), a
-	ld   a, h
-	ld   (FH_TCPP+1), a
-	ld   a, e
-	ld   (FH_TCPP+2), a
-	ld   a, d
-	ld   (FH_TCPP+3), a
-	ld   hl, fh_m_dns
-	call ver_puts
-	ld   a, (FH_TCPP+0)
-	call fh_dec8
-	ld   a, '.'
-	call #00A2
-	ld   a, (FH_TCPP+1)
-	call fh_dec8
-	ld   a, '.'
-	call #00A2
-	ld   a, (FH_TCPP+2)
-	call fh_dec8
-	ld   a, '.'
-	call #00A2
-	ld   a, (FH_TCPP+3)
-	call fh_dec8
-	ld   hl, fh_m_ok
-	call ver_puts
-.fh_dgfin:
-
-	; 7) limpieza OBLIGATORIA: pagina 1 al menu + desinstalar area del driver
-.fh_cleanup:
-	ld   a, 20						; WIFIRELEASE ('h'): soltar la retencion de
-	out  (#06), a					; radio del WIFIHOLD de fh_dns_wake (si no se
-	ld   a, 'h'						; llego a mandar, un release suelto es inocuo:
-	out  (#07), a					; el propio INIT del driver lo hace igual)
-	di
-	ld   a, #87						; pagina 1 -> ROM del menu (slot 3-1)
-	ld   hl, #4000
-	call ENASLT
-	ld   hl, FH_SAVE_HTIMI			; H.TIMI original de vuelta
-	ld   de, FH_HTIMI
-	ld   bc, 5
-	ldir
-	ld   hl, (FH_SAVE_HIMEM)		; HIMEM de vuelta (deshace el -30)
-	ld   (FH_HIMEM), hl
-	xor  a							; anular puntero del area en SLTWRK: el
-	ld   (FH_SLTWRK_P), a			; driver re-asignara limpio en el proximo
-	ld   (FH_SLTWRK_P+1), a			; uso (menu o DOS)
-	ld   sp, (FH_SAVE_SP)			; stack original del menu
-	ei
-	ld   hl, fh_m_key
-	call ver_puts
-	call CHGET
+	out  (7), a
+	out  (7), a
+	jp   main_menu_restart
+.tw_err:
+	cp   3							; UNAPI_ERR_NO_DATA = sin coincidencias
+	ld   hl, tw_notfound
+	jr   z, .tw_pe
+	ld   hl, tw_error
+	jr   .tw_pe
+.tw_terr:
+	ld   hl, tw_timeout
+.tw_pe:
+	push hl
+	ld   hl, #030A
+	call POSIT
+	pop  hl
+	call print_string
+	call prompt_getkey
 	jp   main_menu_restart
 
-.fh_fail:							; HL = mensaje; sin llamadas UNAPI hechas,
-	call ver_puts					; la limpieza (valores identicos) es inocua
-	jr   .fh_cleanup
+; tw_rx: espera un byte de la UART del ESP (I/O 6/7). A=dato; CF=1 timeout ~2s.
+tw_rx:
+	push bc
+	ld   b, 100						; ~100 x 17ms
+.twr_f:
+	push bc
+	ld   bc, 2000					; poll rapido (~17ms)
+.twr_i:
+	in   a, (7)
+	rrca							; bit0 (hay dato) -> CF
+	jr   c, .twr_g
+	dec  bc
+	ld   a, b
+	or   c
+	jr   nz, .twr_i
+	pop  bc
+	djnz .twr_f
+	pop  bc
+	scf
+	ret
+.twr_g:
+	in   a, (6)
+	pop  bc
+	pop  bc
+	or   a							; CF=0
+	ret
+
+; tw_rx_long: como tw_rx pero ~40s (la descarga del TSX puede tardar).
+tw_rx_long:
+	push bc
+	ld   b, 20						; 20 x 2s
+.twl_f:
+	push bc
+	call tw_rx
+	pop  bc
+	jr   nc, .twl_ok
+	djnz .twl_f
+	pop  bc
+	scf
+	ret
+.twl_ok:
+	pop  bc
+	or   a
+	ret
 
 ; llama a la funcion UNAPI A (ROM del driver YA mapeado en pagina 1);
 ; conserva todos los registros de entrada, incluida HL
@@ -5446,27 +5363,9 @@ fh_dec8:
 	ld   a, e
 	ret
 
-fh_title:	.db "MSXnano - Test UNAPI (File-Hunter fase 0)",13,10,10,0
 fh_id:		.db "TCP/IP",0
 fh_host:	.db "api.file-hunter.com",0
-fh_m_noextb:	.db "EXTBIO: NO instalado (ESP offline o",13,10,"desactivado en el setup WiFi)",0
-fh_m_noimpl:	.db "UNAPI TCP/IP: no encontrado",0
-fh_m_impl:	.db "UNAPI: slot #",0
-fh_m_entry:	.db "  entry #",0
-fh_m_drv:	.db 13,10,"Driver: ",0
-fh_m_net:	.db 13,10,"Red: ",0
-fh_m_open:	.db " ABIERTA",0
-fh_m_notopen:	.db " NO abierta (estado ",0
-fh_m_dns:	.db 13,10,"DNS api.file-hunter.com: ",0
-fh_m_dnserr:	.db "error ",0
-fh_m_ok:	.db 13,10,10,"TEST OK - UNAPI operativo en el menu",0
-fh_m_key:	.db 13,10,10,"Pulsa una tecla para volver",0
-fh_m_u7:	.db 13,10,"U7:",0
 fh_m_rein:	.db 13,10,"Re-iniciando driver ESP...",13,10,0
-fh_m_hok:	.db 13,10,"H:",0
-fh_m_hook:	.db " K:",0
-fh_m_inst:	.db 13,10,"Instalando hook del driver...",0
-fh_m_nimp:	.db " N:",0
 fh_m_dq:	.db 13,10,"D:",0
 fh_m_p1:	.db 13,10,"P:",0
 fh_m_rst:	.db 13,10,"R:",0
