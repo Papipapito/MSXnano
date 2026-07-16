@@ -2402,40 +2402,12 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	; se mezcla ni deja residuos (tamano de 1-4 digitos, mappers de 6-15 chars).
 	; Se pinta YA (detect_mapper tarda 2-3s en ROMs grandes; el spinner gira en
 	; la fila de estado para que el Enter no parezca un cuelgue).
-	call cls_browser
-	xor  a							; BROWSING=0: apagar el marquee del browser (si no,
-	ld   (BROWSING), a				; con nombres >59 chars browse_getkey repinta el
-									; nombre en scroll ENCIMA de esta pantalla; browse
-									; lo re-asserta al volver con ESC, como la ayuda)
+	call .bls_skel					; esqueleto COMUN ROM/DSK (limpia, marquee off,
+									; lineas, Fichero+nombre, marco de la barra)
 	ld   hl, #2402					; titulo centrado (fila 2)
 	call POSIT
 	ld   hl, titleRomStr
 	call print_string
-	ld   a, 3						; linea fina (fila 3)
-	call draw_hline
-	ld   a, 21						; linea fina (fila 21)
-	call draw_hline
-	ld   hl, #0306
-	call POSIT
-	ld   hl, romInfoStr				; "Fichero:" (fila 6)
-	call print_string
-	call .bsr_name					; nombre (fila 8): max 72, con "..." si es mas largo
-	; marco de la barra (fila 15): '[' col8 + 64 celdas de linea fina + ']' col73.
-	; Las celdas (char #10) van por FILVRM directo a la name table: CHPUT IGNORA
-	; los codigos de control 0x00-0x1F (mismo motivo por el que draw_hline usa
-	; FILVRM). Name table en 0x0000, 80 cols: fila fisica 14 * 80 + col fisica 8.
-	ld   hl, #0468					; 14*80+8 = 1128
-	ld   bc, 64
-	ld   a, #10
-	call FILVRM
-	ld   hl, #080F					; '[' (col 8)
-	call POSIT
-	ld   a, '['
-	call CHPUT
-	ld   hl, #490F					; ']' (col 73)
-	call POSIT
-	ld   a, ']'
-	call CHPUT
 	ld   hl, analyzStr				; estado (fila 17): "Analizando ROM..." + spinner
 	call .bsr_status
 	call detect_mapper				; mapper por CONTENIDO (estilo Picoverse/openMSX);
@@ -2573,6 +2545,56 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	ld   b, 15
 	call clear_at
 	jp   print_mapper_name
+.bls_skel:							; ===== esqueleto COMUN de las pantallas de lanzar
+	call cls_browser				; ROM y DSK (identicas): limpia pantalla, apaga el
+	xor  a							; marquee del browser (BROWSING=0; si no, nombres
+	ld   (BROWSING), a				; >59 chars se pintan en scroll ENCIMA; browse lo
+									; re-asserta al volver con ESC, como la ayuda),
+	ld   a, 3						; lineas finas (filas 3 y 21),
+	call draw_hline
+	ld   a, 21
+	call draw_hline
+	ld   hl, #0306
+	call POSIT
+	ld   hl, romInfoStr				; "Fichero:" (fila 6)
+	call print_string
+	call .bsr_name					; nombre (fila 8): max 72, con "..." si es mas largo
+	; marco de la barra (fila 15): '[' col8 + 64 celdas de linea fina + ']' col73.
+	; Las celdas (char #10) van por FILVRM directo a la name table: CHPUT IGNORA
+	; los codigos de control 0x00-0x1F (mismo motivo por el que draw_hline usa
+	; FILVRM). Name table en 0x0000, 80 cols: fila fisica 14 * 80 + col fisica 8.
+	ld   hl, #0468					; 14*80+8 = 1128
+	ld   bc, 64
+	ld   a, #10
+	call FILVRM
+	ld   hl, #080F					; '[' (col 8)
+	call POSIT
+	ld   a, '['
+	call CHPUT
+	ld   hl, #490F					; ']' (col 73)
+	call POSIT
+	ld   a, ']'
+	jp   CHPUT
+.bsd_fillbar:						; barra al 100% de golpe (montaje DSK: sin carga
+	ld   hl, #090F					; larga; misma estetica que la ROM al terminar)
+	call POSIT
+	ld   b, 64
+.bsd_fb:
+	ld   a, #DB
+	call CHPUT
+	djnz .bsd_fb
+	ret
+.bsd_err:							; HL = mensaje de error DSK -> estado + pie "pulsa
+	call .bsr_status				; una tecla" + esperar y volver al navegador
+	ld   hl, #0116
+	ld   b, 79
+	call clear_at
+	ld   hl, #1A16					; "Pulsa una tecla..." (30 chars) centrado, col 26
+	call POSIT
+	ld   hl, helpEndStr
+	call print_string
+	call browse_getkey
+	jp   browse
 .bsr_isascii:						; CF=1 si MAPPER_ID es ASCII8/16 (unica con SRAM)
 	ld   a, (MAPPER_ID)
 	cp   MAP_A8_ID
@@ -2641,20 +2663,40 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	inc  hl							; record+1 = first cluster of the .dsk (dword)
 	ld   de, FILE_CLUS
 	call w_copy
-	call cls_browser
-	ld   hl, #0101
+	; ---- MISMA pantalla que lanzar ROM (esqueleto comun .bls_skel): titulo,
+	;      Fichero+nombre, fila de datos en columnas fijas, barra, estado, pie ----
+	call .bls_skel
+	ld   hl, #2302					; titulo centrado (fila 2): "Lanzar disco" (12)
 	call POSIT
-	ld   hl, dskInfoStr				; "Disco seleccionado:"
+	ld   hl, dskTitleStr
 	call print_string
-	ld   hl, #0103
+	ld   hl, #050B					; fila de datos (fila 11), columnas fijas
 	call POSIT
-	ld   hl, (BR_REC)
-	ld   de, NAME_OFF
-	add  hl, de
-	call print_string				; .dsk name
-	ld   hl, #0105
+	ld   hl, romClusStr				; "Tamano:" (col 5)
+	call print_string
+	ld   hl, #0D0B					; valor (col 13, campo 6)
+	ld   b, 6
+	call clear_at
+	call print_rom_kb
+	ld   a, 'K'
+	call CHPUT
+	ld   hl, #1B0B
 	call POSIT
-	ld   hl, dskAskStr				; "RETURN=montar y lanzar   ESC=volver"
+	ld   hl, dskTipoStr				; "Tipo:" (col 27, donde la ROM pone Mapper:)
+	call print_string
+	ld   hl, #230B					; valor (col 35, campo 15)
+	ld   b, 15
+	call clear_at
+	ld   hl, dskTipoValStr			; "Disco (Nextor)"
+	call print_string
+	ld   hl, dskReadyStr			; estado: "DSK listo para montar."
+	call .bsr_status
+	ld   hl, #0116					; pie DSK centrado (39 chars, col 21)
+	ld   b, 79
+	call clear_at
+	ld   hl, #1516
+	call POSIT
+	ld   hl, dskAskStr				; "RETURN = Montar y lanzar   ESC = Volver"
 	call print_string
 .bsd_ask:
 	call browse_getkey
@@ -2664,19 +2706,13 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	jp   z, browse				; (hook FH global)				; ESC -> back to the browser
 	jr   .bsd_ask
 .bsd_go:
-	ld   hl, #0107
-	call POSIT
-	ld   hl, dskMountStr			; "Montando disco (Nextor) y arrancando..."
-	call print_string
+	ld   hl, dskMountStr			; estado: "Montando disco Nextor..."
+	call .bsr_status
 	; 1) the image must be unfragmented (Nextor maps a linear sector range)
 	call dsk_check_contig
 	jr   nc, .bsd_contig
-	ld   hl, #0107
-	call POSIT
-	ld   hl, dskFragStr
-	call print_string
-	call browse_getkey
-	jp   browse					; (redraw: hook FH global)
+	ld   hl, dskFragStr				; error al campo de estado + "pulsa una tecla"
+	jp   .bsd_err
 .bsd_contig:
 	; 2) absolute start LBA of the .dsk -> DSK_LBA
 	ld   hl, FILE_CLUS
@@ -2734,12 +2770,8 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	call create_emufile				; not found -> create it (CF=1 on failure)
 	jr   nc, .bsd_haveemu
 .bsd_noemu:
-	ld   hl, #0107
-	call POSIT
-	ld   hl, dskNoEmuStr
-	call print_string
-	call browse_getkey
-	jp   browse					; (redraw: hook FH global)
+	ld   hl, dskNoEmuStr			; error al campo de estado + "pulsa una tecla"
+	jp   .bsd_err
 .bsd_haveemu:
 	; FILE_CLUS now = NEXTOR.EMU first cluster -> its abs LBA = the data-file sector.
 	; Safety net: never write with cluster < 2 (would target the root dir /
@@ -2765,13 +2797,10 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	ld   a, (SD_STATUS)
 	or   a
 	jr   z, .bsd_wrok
-	ld   hl, #0107
-	call POSIT
-	ld   hl, dskWrErrStr
-	call print_string
-	call browse_getkey
-	jp   browse					; (redraw: hook FH global)
+	ld   hl, dskWrErrStr			; error al campo de estado + "pulsa una tecla"
+	jp   .bsd_err
 .bsd_wrok:
+	call .bsd_fillbar				; barra al 100%: montaje OK, arrancamos
 	; 6) one-time pointer at #A000 -> the data file (device 1, LUN 1, EMU_LBA)
 	ld   hl, emuSig
 	ld   de, #A000
@@ -4880,18 +4909,26 @@ sramStr:
 	.db "SRAM:",0
 srchStr:
 	.db "Buscar: ",0
-dskInfoStr:
-	.db "Disco:",0
+; strings de la pantalla de lanzar DSK (mismo layout que la de ROM; los textos
+; de estado/error caben en el campo fijo de 30; el "pulsa una tecla" va al pie)
+dskTitleStr:
+	.db "Lanzar disco",0
+dskTipoStr:
+	.db "Tipo:",0
+dskTipoValStr:
+	.db "Disco (Nextor)",0
+dskReadyStr:
+	.db "DSK listo para montar.",0
 dskMountStr:
-	.db "Montando disco (Nextor) y arrancando...",0
+	.db "Montando disco Nextor...",0
 dskFragStr:
-	.db "DSK fragmentado: copialo de nuevo. Pulsa tecla",0
+	.db "DSK fragmentado: recopialo",0
 dskAskStr:
-	.db "RETURN=montar y lanzar   ESC=volver",0
+	.db "RETURN = Montar y lanzar   ESC = Volver",0
 dskNoEmuStr:
-	.db "Falta NEXTOR.EMU (>=512B) en la raiz. Tecla",0
+	.db "Falta NEXTOR.EMU en la raiz",0
 dskWrErrStr:
-	.db "Error escribiendo en la SD. Pulsa una tecla",0
+	.db "Error escribiendo en la SD",0
 ; Nextor disk-emulation "one-time" signature (16-byte field: 15 chars + NUL)
 emuSig:
 	.db "NEXTOR_EMU_DATA",0
