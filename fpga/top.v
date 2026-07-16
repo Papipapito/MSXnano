@@ -857,9 +857,9 @@ assign keyboard_addr = ppi_port_c[3:0];
     wire esp_boot_ok = 1'b1;
 `endif
 
-    // ===== Turbo mode toggle (F11) =====
+    // ===== Turbo mode (control: OUT &H41 software + Boot Turbo del menu) =====
     // Default turbo=0 -> M1 wait active -> ~100% real-MSX speed (3.58MHz behaviour).
-    // Press F11 (USB HID usage 0x44 = keyboard[68]) to toggle. v1.9: turbo=1 switches
+    // v1.9c: SIN atajo de tecla (F11 quitado de ambos teclados). turbo=1 switches
     // the CPU cadence to 5.37 MHz (WSX-style) while the per-M1 wait STAYS active, like
     // the real T9769 does at 5.37 MHz -> benchmarks report ~5.37 (150%). (The v1.8
     // "bypass M1 wait" turbo stacked on the 5.4 clock read as ~6.2 MHz on HW.)
@@ -868,15 +868,10 @@ assign keyboard_addr = ppi_port_c[3:0];
     // reaches the FPGA, so F11 (which does reach it, verified on HW) is used instead.
     reg turbo   = 1'b0;
     assign turbo_status = turbo;   // expone el estado turbo a un pin del FPGA (para el ESP32-C6 LCD)
-    reg f11_s0  = 1'b0;
-    reg f11_s1  = 1'b0;
-    reg f11_prev= 1'b0;
+    // v1.9c: F11 ELIMINADO de ambos teclados (BL616 keyboard[68] + Pico cmd_turbo_toggle).
+    // El turbo se controla SOLO por OUT &H41,n (software Panasonic, estilo T9769) y el
+    // "Boot Turbo" del menu de settings (#45, arranque en frio). Sin atajo de tecla.
     always @ (posedge clk_54m) begin
-        f11_s0   <= keyboard[68];   // sync HID F11 state into clk_54m domain
-        f11_s1   <= f11_s0;
-        f11_prev <= f11_s1;
-        if (f11_s1 & ~f11_prev)     // rising edge = F11 pressed
-            turbo <= ~turbo;        // toggle real-MSX <-> turbo
         // v1.9: control software Panasonic — OUT &H41,n con el dispositivo 8
         // seleccionado (decode pana41_wr junto al bloque config). bit0 activo-bajo:
         // 0 = turbo 5.37 MHz, 1 = 3.58. Puesto tras el F11: si coinciden en el
