@@ -2333,8 +2333,7 @@ memory_ctrl mem1 (
         .write_busy(flash_write_busy),
         .write_counter(flash_write_counter),
         .write_terminate(flash_write_terminate),
-        .write_addr(24'h280000), //24'h278000)
-        .dbg_state()               // (diag del build 9; sin consumidor ya)
+        .write_addr(24'h280000) //24'h278000)
     );
 
     reg [7:0] ff_flash_state = 8'd0;
