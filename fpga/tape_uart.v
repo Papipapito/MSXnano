@@ -108,6 +108,17 @@ module tape_uart #(
             pop_valid <= 1'b0; served <= 1'b0; pop_data <= 8'h00;
         end else begin
             if (flush) begin
+                // flush vacia el FIFO pero NO resetea la FSM del RX (otro always).
+                // Es SEGURO porque flush solo pulsa cuando el C6 esta ocioso: se
+                // dispara en el load-edge de cas_stream, que top.v genera al
+                // arrancar y al terminar la cinta (S_DONE) — y la reproduccion
+                // KCS es siempre MAS LENTA que la transmision UART (solo el
+                // piloto ya dura >100ms al reproducir vs ~10ms al enviar), asi
+                // que el C6 acabo de mandar mucho antes de que el FPGA llegue a
+                // S_DONE. No hay byte a medio recibir que pudiera colarse en el
+                // FIFO recien vaciado. (Revisado en la auditoria 2026-07; si algun
+                // dia flush pudiera dispararse con el C6 transmitiendo, habria que
+                // resetear tambien rxst aqui.)
                 wp <= 0; rp <= 0; rtr_r <= 1'b1;
                 pop_valid <= 1'b0; served <= 1'b0;
             end else begin
