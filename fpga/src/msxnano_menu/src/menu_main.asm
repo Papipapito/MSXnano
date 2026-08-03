@@ -4849,7 +4849,7 @@ tagDskStr:
 	.db "[DSK] ",0
 hdrTitleStr:
 IF MSXIMUS
-	.db "MSXimus  v2.1",0
+	.db "MSXimus   v2.1",0
 ELSE
 	.db "MSX Nano  v1.9",0
 ENDIF
