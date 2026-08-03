@@ -197,9 +197,17 @@ ver_hex1:
 	add  a, '0'
 	call #00A2
 	ret
+IF MSXIMUS
+ver_msg1:	.db 13,10,10,"  MSXimus: VERSION MISMATCH",13,10,10,"  Bitstream (.fs): ",0
+ELSE
 ver_msg1:	.db 13,10,10,"  MSXnano: VERSION MISMATCH",13,10,10,"  Bitstream (.fs): ",0
+ENDIF
 ver_msg2:	.db 13,10,"  BIOS pack (.bin): ",0
+IF MSXIMUS
+ver_msg3:	.db 13,10,10,"  Flash the .fs and .bin from",13,10,"  the SAME MSXimus version.",0
+ELSE
 ver_msg3:	.db 13,10,10,"  Flash the .fs and .bin from",13,10,"  the SAME MSXnano version.",0
+ENDIF
 
 ; --- Option 1: continue the normal MSX boot ---------------------------------
 ; Behaves EXACTLY like the proven "Save & Exit" of the config menu (known to
@@ -324,6 +332,9 @@ LOAD_OFF	equ	#C0C9			; 2 bytes: byte offset within the current 8K segment
 MEG_RB		equ	#C0CD			; 8 bytes: megaram readback scratch (load verify)
 SRCH_BUF	equ	#E880			; 13 bytes: consulta de busqueda del navegador (ASCIIZ)
 SRAM_FLAG	equ	#C0D9			; 1 byte: SRAM de cartucho para este lanzamiento (0/1)
+P2_SLOT		equ	#C0DA			; 1 byte: slot de la pag.2 al llamar al INIT (v2.0.1
+									; caso Aleste2: la BIOS real deja RAM en 0x8000;
+									; #02=megaram solo para ROMs lineales MAP_PLAIN)
 SD_READY	equ	#C0DB			; 1 byte: SD ya montada+escaneada (bajo el logo)
 MAP_SWIO	equ	#C0DC			; 1 byte: smart command del mapper (lo aplica el stub)
 DSK_PEND	equ	#C0DD			; 1 byte: registro .dsk pendiente de reescribir (2o pase)
@@ -375,6 +386,7 @@ BAR_TOT		equ	#E83E			; 2 bytes: total de segmentos 8K de la ROM (escala barra)
 BAR_CNT		equ	#E85A			; 1 byte: celdas pintadas de la barra (tope fisico 64)
 JOY_RPT_DELAY equ 14			; frames before a held stick starts repeating
 JOY_RPT_RATE  equ 2				; frames between repeats (lower = faster)
+RAM_SLOT_30	equ	#83				; ENASLT id: expandido, primario 3, secundario 0 (RAM mapeada)
 MEG_SLOT	equ	#02				; primary slot 2 (the OCM relocates the megaram here
 								; when Slot2Mode is set via the SWIO smart command)
 ; mapper ids
@@ -1539,6 +1551,22 @@ detect_mapper:
 .det_scan:
 	call scan_rom
 	call decide_mapper				; MAPPER_ID por CONTENIDO (estilo openMSX)
+	; v2.0.1: promocion Konami4 -> Konami-SCC en ROMs grandes. Konami4 real
+	; nunca pasa de 256KB; los megaroms "Konami" grandes son conversiones
+	; MFR SCC+ (Aleste2 v8 2MB: su probe dual enganyaba al scan por 1 punto
+	; de ruido). +24 bytes medidos; el guard ds #A000-$ vigila el banco.
+	ld   a, (MAPPER_ID)
+	cp   MAP_KON_ID					; ?el scan dijo Konami4?
+	jr   nz, .det_kok
+	ld   hl, (BR_REC)
+	ld   de, SIZE_OFF+2
+	add  hl, de
+	ld   a, (hl)					; size[23:16]
+	cp   5							; >= 320 KB -> promocionar a SCC
+	jr   c, .det_kok
+	ld   a, MAP_SCC_ID
+	ld   (MAPPER_ID), a
+.det_kok:
 	ld   a, (MAPPER_ID)
 	or   a							; MAP_PLAIN = 0 -> el code-scan no vio mapper
 	ret  nz							; el contenido decidio -> respetarlo SIEMPRE
@@ -1953,6 +1981,17 @@ launch_rom:
 	ld   (MAP_SWIO), a				; el stub lo aplica TRAS inicializar los bancos
 									; (el modo se queda en SCC, el del load, para que
 									; las escrituras de bancos del stub funcionen)
+	; v2.0.1 (caso Aleste2 2MB, probado en openMSX): la BIOS real llama al INIT
+	; con RAM en la pagina 2; nosotros dejabamos la megaram y las conversiones
+	; de disco (usan 0x8000 de buffer) escribian al vacio o sobre reg2/reg3.
+	; Solo las ROMs lineales 32/48K necesitan el cartucho en la pagina 2.
+	ld   a, (MAPPER_ID)
+	or   a							; MAP_PLAIN = 0 -> lineal: pag.2 = megaram
+	ld   a, MEG_SLOT
+	jr   z, .lr_p2sl
+	ld   a, RAM_SLOT_30				; megarom: pag.2 = RAM (fiel a la BIOS)
+.lr_p2sl:
+	ld   (P2_SLOT), a
 	; VDP a estado limpio: INIT32 (R0-R7 + espejo) y R8-R23/R25-R27 a cero
 	call #006F						; INIT32 (SCREEN 1)
 	di								; INIT32 puede reactivar IRQs
@@ -2008,8 +2047,9 @@ vdp_clean_tbl:
 	.db #00,#9A						; R26 = 0 (V9958 horiz scroll H)
 	.db #00,#9B						; R27 = 0 (V9958 horiz scroll L)
 
-; boot_stub: runs from #E000 (page-3 RAM). Switches pages 1+2 to slot 2
-; (megaram = the loaded ROM) and CALLS the cartridge INIT at (0x4002) the way
+; boot_stub: runs from #E000 (page-3 RAM). Switches page 1 to slot 2 (and
+; page 2 to RAM for megaroms / slot 2 for plain ROMs, like the real BIOS)
+; and CALLS the cartridge INIT at (0x4002) the way
 ; the BIOS boots a cartridge. Single-stage games never return. If the INIT
 ; returns (two-stage Konami that hooked H.STKE expecting the BIOS to chain),
 ; invoke the hook ourselves -- without any hardware reset (megaram decays).
@@ -2029,6 +2069,10 @@ boot_stub:
 	ld   (#9000), a					; en la pagina 2. Aqui el modo aun es SCC (load).
 	ld   a, 3
 	ld   (#B000), a
+	ld   a, (P2_SLOT)				; v2.0.1: pag.2 -> RAM en megaroms (la BIOS real
+	ld   hl, #8000					; arranca asi; los bancos canonicos de arriba se
+	call ENASLT						; fijaron con la megaram aun mapeada) / megaram
+									; solo en ROMs lineales (MAP_PLAIN)
 	ld   a, #D4						; ahora si: mapper real del juego via SWIO
 	out  (#40), a
 	ld   a, (MAP_SWIO)
@@ -2085,8 +2129,11 @@ browse:
 	; and every redraw re-entry re-asserts it in one spot.
 	ld   a, 1
 	ld   (BROWSING), a
-.br_redraw:
-	call draw_browser
+browse_redraw:						; global: asMSX no ve locales desde browse_enter/
+	call draw_browser				; browse_back -> etiquetas globales propias
+browse_key:							; global: bucle de teclado SIN redibujar (re-entrada
+									; con el navegador YA pintado: refresh_list ya pinto el
+									; listado; jp browse repintaba encima = doble listado)
 .br_key:
 	call browse_getkey				; A = key code
 	ld   c, a						; modo File-Hunter: fh_key_filter (CALL) se come
@@ -2147,7 +2194,7 @@ browse:
 	jp   .br_key					; (jp: el hook FH dejo .br_key fuera de rango jr)
 .br_help:
 	call help_screen
-	jp   .br_redraw
+	jp   browse_redraw
 .br_from:
 	xor  a							; FILTER = 0 (ROM)
 	jr   .br_setfilter
@@ -2254,7 +2301,7 @@ browse:
 	cp   #0D
 	jr   z, .bs_go
 	cp   #1B
-	jp   z, .br_redraw				; cancelar (redibuja y limpia el prompt)
+	jp   z, browse_redraw			; cancelar (redibuja y limpia el prompt)
 	cp   #08
 	jr   z, .bs_del
 	cp   ' '
@@ -2294,7 +2341,7 @@ browse:
 	ld   (hl), 0					; terminar la consulta
 	ld   a, b
 	or   a
-	jp   z, .br_redraw				; consulta vacia
+	jp   z, browse_redraw			; consulta vacia
 	ld   a, (BR_SEL)
 	ld   d, a						; d = indice de partida
 	ld   a, (ENT_COUNT)
@@ -2319,12 +2366,12 @@ browse:
 	jr   c, .bs_found
 	dec  e
 	jr   nz, .bs_loop
-	jp   .br_redraw					; sin coincidencias
+	jp   browse_redraw				; sin coincidencias
 .bs_found:
 	ld   a, d
 	ld   (BR_SEL), a
 	call ensure_visible				; recolocar la ventana si hace falta
-	jp   .br_redraw					; redibuja todo (borra el prompt)
+	jp   browse_redraw				; redibuja todo (borra el prompt)
 
 .br_move:
 	; Repaint only the old and new rows so the '>' marker moves without a
@@ -2348,7 +2395,7 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 .br_enter:
 	ld   a, (ENT_COUNT)
 	or   a
-	jp   z, browse				; (hook FH global)					; empty list
+	jp   z, browse_key				; empty list (pantalla intacta: no redibujar)
 	ld   a, (BR_SEL)
 	call ent_addr					; hl = record
 	ld   a, (hl)					; type (0=dir, 1=rom, 2=dsk)
@@ -2363,7 +2410,7 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	; --- directory: push current cluster, descend ---
 	ld   a, (DIR_SP)
 	cp   8
-	jp   nc, browse				; (hook FH global)				; stack full -> ignore
+	jp   nc, browse_key				; stack full -> ignore (no redibujar)
 	add  a, a						; DIR_STACK[DIR_SP] = CUR_CLUS (4 bytes/nivel)
 	add  a, a
 	ld   e, a
@@ -2386,7 +2433,7 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	ld   (BR_SEL), a
 	ld   (BR_TOP), a
 	call refresh_list				; soft repaint of the new directory (no flicker)
-	jp   browse					; (redraw+loop: hook FH global)
+	jp   browse_key					; NO jp browse: draw_browser repintaba encima (doble listado)
 .br_selrom:
 	; --- selected file: load it straight into the megaram, then offer to launch.
 	;     No debug dump, no separate "load" step -> fastest path to launch. ---
@@ -2822,7 +2869,7 @@ browse_back:						; global (pareja del anterior)
 .br_back:
 	ld   a, (DIR_SP)
 	or   a
-	jp   z, browse				; (hook FH global)					; already at root
+	jp   z, browse_key				; already at root (no redibujar)
 	dec  a
 	ld   (DIR_SP), a
 	add  a, a						; CUR_CLUS = DIR_STACK[DIR_SP] (4 bytes/nivel)
@@ -2838,7 +2885,7 @@ browse_back:						; global (pareja del anterior)
 	ld   (BR_SEL), a
 	ld   (BR_TOP), a
 	call refresh_list				; soft repaint of the parent directory (no flicker)
-	jp   browse					; (redraw+loop: hook FH global)
+	jp   browse_key					; NO jp browse: evitar doble listado (ver .br_isdir)
 
 ; rom_kb: HL = tamano de la ROM seleccionada en KB (desde BR_REC). Lo usan
 ; print_rom_kb (mostrar) y load_rom (escalar la barra de progreso).
@@ -4486,22 +4533,8 @@ ENDIF ;ENABLE_SDCARD
 	rlca
 	rlca							; bit5 -> bit0
 	ld   (var_stereo), a
-IF MSXIMUS
-	ld   a, b
-	and  #08						; Bit 3: sprites 8/linea (MSXimus: el bit4 es 16:9)
-	rrca
-	rrca
-	rrca							; bit3 -> bit0
-	ld   (var_sprlim), a
-	ld   a, b
-	and  #10						; Bit 4: pantalla 16:9
-	rrca
-	rrca
-	rrca
-	rrca							; bit4 -> bit0
-	ld   (var_aspct), a
-ELSE
-	ld   a, b
+IF !MSXIMUS					; 60K: sprites 8/linea (bit3) y 16:9 (bit4) ELIMINADOS
+	ld   a, b						; (V9968 hace 16/linea; core _143 = pantalla unica)
 	and  #10						; Bit 4: sprites 8/linea (anti-parpadeo screen2)
 	rrca
 	rrca
@@ -4539,14 +4572,9 @@ ONOFF_Y = ONOFF_Y + 2
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 
-	ld   hl,#2b00 + ONOFF_Y			; Print Sprites 8/linea
+IF !MSXIMUS
+	ld   hl,#2b00 + ONOFF_Y			; Print Sprites 8/linea (solo nano)
 	ld   a,(var_sprlim)
-	call print_on_off
-ONOFF_Y = ONOFF_Y + 2
-
-IF MSXIMUS
-	ld   hl,#2b00 + ONOFF_Y			; Print Pantalla 16:9
-	ld   a,(var_aspct)
 	call print_on_off
 ONOFF_Y = ONOFF_Y + 2
 ENDIF
@@ -4618,13 +4646,9 @@ selected_stereo:
 	ld   hl, var_stereo
 	jp   .selected_on_off
 
+IF !MSXIMUS
 selected_spritelimit:
 	ld   hl, var_sprlim
-	jp   .selected_on_off
-
-IF MSXIMUS
-selected_aspect:
-	ld   hl, var_aspct
 	jp   .selected_on_off
 ENDIF
 
@@ -4720,21 +4744,8 @@ ENDIF
 	rrca							; bit0 -> bit5
 	or   b
 	ld   b, a
-IF MSXIMUS
-	ld   a, (var_sprlim)			; #42 Bit 3: sprites 8/linea (MSXimus)
-	rlca
-	rlca
-	rlca							; bit0 -> bit3
-	or   b
-	ld   b, a
-	ld   a, (var_aspct)				; #42 Bit 4: pantalla 16:9
-	rlca
-	rlca
-	rlca
-	rlca							; bit0 -> bit4
-	or   b
-ELSE
-	ld   a, (var_sprlim)			; #42 Bit 4: sprites 8/linea
+IF !MSXIMUS
+	ld   a, (var_sprlim)			; #42 Bit 4: sprites 8/linea (solo nano; 60K sin sprite-limit)
 	rlca
 	rlca
 	rlca
@@ -4837,7 +4848,11 @@ tagRomStr:
 tagDskStr:
 	.db "[DSK] ",0
 hdrTitleStr:
+IF MSXIMUS
+	.db "MSXimus  v2.1",0
+ELSE
 	.db "MSX Nano  v1.9",0
+ENDIF
 tabRStr:
 	.db "[R]OM",0
 tabDStr:
@@ -4847,7 +4862,11 @@ tabAStr:
 footerStr:
 	.db "R/D/A=Filtro  ESC=Boot  S=Set  W=WiFi  TAB=Part  H=Ayuda",0
 helpTitleStr:
+IF MSXIMUS
+	.db "MSXimus - AYUDA",0
+ELSE
 	.db "MSXnano - AYUDA",0
+ENDIF
 ; ============================== DATOS (>= A010) ==============================
 ; El codigo debe quedar por debajo de #A000; cadenas y tablas viven a partir de
 ; #A010, dejando #A000-#A00F como hueco para el registro NEXTOR_EMU_DATA que
@@ -4911,7 +4930,11 @@ sramStr:
 srchStr:
 	.db "Buscar: ",0
 tw_title:
+IF MSXIMUS
+	.db "MSXimus - Cinta web (tsx.eslamejor.com)",13,10,0
+ELSE
 	.db "MSXnano - Cinta web (tsx.eslamejor.com)",13,10,0
+ENDIF
 tw_search:
 	.db "Buscando y descargando (hasta 40s)...",0
 tw_notfound:
@@ -4964,18 +4987,20 @@ noSdStr2:
 	.db "RETURN=Boot MSX   S=Settings   W=WiFi",0
 
 menuTitleStr:
+IF MSXIMUS
+	.db "MSXimus - Ajustes",0
+ELSE
 	.db "MSXnano - Ajustes",0
+ENDIF
 slot1GhostStr:
 	.db "Second SCC",0			; config1 bit2 (former ghost SCC): SCC+ nr.2 in the free slot
 enableScanlinesStr:
 	.db "Enable Scanlines",0
 stereoStr:
 	.db "Stereo Sound",0
+IF !MSXIMUS
 spriteStr:
 	.db "Sprites 8/linea",0
-IF MSXIMUS
-aspectStr:
-	.db "Pantalla 16:9",0
 ENDIF
 bootTurboStr:
 	.db "Boot Turbo",0			; arrancar siempre a 5.37 MHz (flash byte[4]='T')
@@ -5029,41 +5054,34 @@ POS_Y = POS_Y + 2
 struct_Stereo:
 	.db 21, POS_Y+1
 	.dw stereoStr
+IF MSXIMUS
+	.dw struct_EnableScanlines, struct_BootTurbo, struct_Stereo
+ELSE
 	.dw struct_EnableScanlines, struct_SpriteLimit, struct_Stereo
+ENDIF
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_stereo
 POS_Y = POS_Y + 2
 
+IF !MSXIMUS					; Sprites 8/linea = solo nano (60K: V9968 hace 16/linea)
 struct_SpriteLimit:
 	.db 21, POS_Y+1
 	.dw spriteStr
-IF MSXIMUS
-	.dw struct_Stereo, struct_Aspect, struct_SpriteLimit
-ELSE
 	.dw struct_Stereo, struct_BootTurbo, struct_SpriteLimit
-ENDIF
 	.dw #0800 + POS_Y*10 + 2
 	.db 4
 	.dw selected_spritelimit
 POS_Y = POS_Y + 2
-
-IF MSXIMUS
-struct_Aspect:
-	.db 21, POS_Y+1
-	.dw aspectStr
-	.dw struct_SpriteLimit, struct_BootTurbo, struct_Aspect
-	.dw #0800 + POS_Y*10 + 2
-	.db 4
-	.dw selected_aspect
-POS_Y = POS_Y + 2
 ENDIF
+
+; struct_Aspect (Pantalla 16:9) ELIMINADO del 60K: core _143 = pantalla unica full-screen
 
 struct_BootTurbo:
 	.db 21, POS_Y+1
 	.dw bootTurboStr
-	IF MSXIMUS
-	.dw struct_Aspect, struct_SaveExit, struct_BootTurbo
+IF MSXIMUS
+	.dw struct_Stereo, struct_SaveExit, struct_BootTurbo
 ELSE
 	.dw struct_SpriteLimit, struct_SaveExit, struct_BootTurbo
 ENDIF
@@ -6704,12 +6722,14 @@ fh2_meta:
 	call fh2_find					; HL -> tras "size:" / CF=1
 	jp   c, .m_bad
 	call fh2_pdec					; FH_FSIZE (32b) desde (HL)
-	; sanity: 0 < size <= 1MB
+	; sanity: 0 < size <= 2MB (v2.0.1: era 1MB y rechazaba ROMs grandes
+	; — Aleste 2 de 1216KB/2048KB — con "respuesta inesperada de la API";
+	; 2MB = el limite fisico real de la megaram en ambas placas)
 	ld   a, (FH_FSIZE+3)
 	or   a
 	jp   nz, .m_bad
 	ld   a, (FH_FSIZE+2)
-	cp   #11
+	cp   #21
 	jp   nc, .m_bad
 	ld   hl, (FH_FSIZE+0)
 	ld   a, h
@@ -8255,9 +8275,7 @@ ENDIF
 	var_stereo: ds 1
 	var_sprlim: ds 1
 	var_btturb: ds 1
-IF MSXIMUS
-	var_aspct: ds 1
-ENDIF
+; var_aspct ELIMINADO (Pantalla 16:9 muerta en el 60K)
 
 	; File-Hunter fase 0 (test UNAPI)
 	FH_SAVE_SP:    ds 2

@@ -64,6 +64,15 @@ $(ROMBIN): $(MENUBIN)
 	@echo "$(COL_WHITE)###### Creating ROM$(COL_RESET)"
 	@cp $(ROMEMPTY) $@
 	@dd if="$^" of="$@" bs=1 seek=$(ADDRESSBIN) conv=notrunc > /dev/null
+# STATEMENT de la cabecera ROM a CERO (bytes 4-5). El ROM base traia un
+# handler de comandos CALL en 0x5000, pero el dd de arriba SOBREESCRIBE esa
+# zona con el menu comprimido (ZX0) => la BIOS marcaba el bit de expansion de
+# sentencias y cada "_XXX" saltaba a ejecutar DATOS como codigo: machacaba la
+# RAM (CURLIN=0x21FF => "Syntax error in 8703") y, como el slot 3-1 se escanea
+# ANTES que el 3-2, Nextor nunca recibia sus comandos (_NEXTOR/_CURDRV/...).
+# Con STATEMENT=0 el menu deja de reclamar CALLs (se entra por INIT, no por
+# CALL) y Nextor los atiende. Verificado A/B en openMSX. INIT NO se toca.
+	@printf '\0\0' | dd of="$@" bs=1 seek=4 conv=notrunc > /dev/null 2>&1
 
 
 test: $(ROMBIN)
