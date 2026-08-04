@@ -2523,7 +2523,7 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	cp   #0D
 	jp   z, launch_rom
 	cp   #1B
-	jp   z, .bsr_esc				; _182c: desarmar la megaram antes de volver
+	jp   z, meg_disarm_esc			; _182c: desarmar la megaram antes de volver (banco A010)
 	cp   'M'
 	jp   z, .bsr_map
 	cp   'm'
@@ -2533,35 +2533,6 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	cp   's'
 	jp   z, .bsr_srtg
 	jr   .bsr_lk
-.bsr_esc:
-	; _182c (patron cazado por Albert: cargar ROM -> ESC -> boot = cuelgue o
-	; reset intermitente tras el logo, y a veces basura en screen1): la carga
-	; deja la megaram ARMADA en el slot 2 (Slot2Mode del SWIO) con el "AB" del
-	; juego a medias dentro y escribible; la BIOS del siguiente arranque la
-	; escanea y EJECUTA el cartucho fantasma. Al salir sin lanzar: envenenar
-	; la cabecera (AB -> 00 00, banco 0 en modo SCC, que es como carga SIEMPRE
-	; load_rom) y dejarla write-protect. El Slot2Mode se queda como esta -- un
-	; slot SCC vacio sin AB es invisible para la BIOS (mismo estado que deja
-	; un lanzamiento normal tras su reset).
-	di
-	ld   a, MEG_SLOT				; pag.1 = megaram (slot 2)
-	ld   hl, #4000
-	call ENASLT
-	xor  a
-	ld   (#7FFE), a					; write-protect (el banco se fija asi)
-	ld   (#5000), a					; reg0 = banco 0 (donde vive el "AB")
-	ld   a, #10
-	ld   (#7FFE), a					; write-enable
-	xor  a
-	ld   (#4000), a					; 'A' -> 0
-	ld   (#4001), a					; 'B' -> 0
-	ld   (#7FFE), a					; write-protect de nuevo
-	ld   a, SD_SLOT_31				; pag.1 de vuelta al menu (slot 3-1)
-	ld   hl, #4000
-	call ENASLT
-	ei
-	jp   browse
-
 .bsr_srtg:
 	call .bsr_isascii				; la tecla S solo actua en ASCII8/16 (en Konami/
 	jr   nc, .bsr_lk				; SCC no hay SRAM: ignorar para no confundir)
@@ -6914,6 +6885,37 @@ fh2_pdec:
 	ret
 
 ; ---- nombre de la API (HL, hasta NUL) -> FH_NAME83 (11B) + FH_NAMEDOT ----
+; _182c: vive en el banco A010 (RAM) porque el banco de codigo iba tan justo
+; que la variante NANO desbordaba el guard ds #A000-$ con el bloque dentro.
+meg_disarm_esc:
+	; _182c (patron cazado por Albert: cargar ROM -> ESC -> boot = cuelgue o
+	; reset intermitente tras el logo, y a veces basura en screen1): la carga
+	; deja la megaram ARMADA en el slot 2 (Slot2Mode del SWIO) con el "AB" del
+	; juego a medias dentro y escribible; la BIOS del siguiente arranque la
+	; escanea y EJECUTA el cartucho fantasma. Al salir sin lanzar: envenenar
+	; la cabecera (AB -> 00 00, banco 0 en modo SCC, que es como carga SIEMPRE
+	; load_rom) y dejarla write-protect. El Slot2Mode se queda como esta -- un
+	; slot SCC vacio sin AB es invisible para la BIOS (mismo estado que deja
+	; un lanzamiento normal tras su reset).
+	di
+	ld   a, MEG_SLOT				; pag.1 = megaram (slot 2)
+	ld   hl, #4000
+	call ENASLT
+	xor  a
+	ld   (#7FFE), a					; write-protect (el banco se fija asi)
+	ld   (#5000), a					; reg0 = banco 0 (donde vive el "AB")
+	ld   a, #10
+	ld   (#7FFE), a					; write-enable
+	xor  a
+	ld   (#4000), a					; 'A' -> 0
+	ld   (#4001), a					; 'B' -> 0
+	ld   (#7FFE), a					; write-protect de nuevo
+	ld   a, SD_SLOT_31				; pag.1 de vuelta al menu (slot 3-1)
+	ld   hl, #4000
+	call ENASLT
+	ei
+	jp   browse
+
 ; ---- _182: mete el mapper que YA manda la API como etiqueta en el nombre ----
 ; La cabecera empieza "type:<valor>,": ascii16 / ascii8 / konami / konamiscc
 ; (dsk y desconocidos: sin etiqueta). Se sobrescribe el nombre EN FH_METAB
