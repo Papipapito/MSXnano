@@ -1549,6 +1549,17 @@ detect_mapper:
 	ld   (MAPPER_ID), a
 	ret
 .det_scan:
+	; _182b (Albert, 04/08): la ETIQUETA del nombre MANDA sobre el contenido.
+	; La pone la API en las descargas (fh2_typetag) y el usuario al renombrar;
+	; el escaneo de opcodes queda de RESPALDO para nombres sin etiqueta (con
+	; su promocion Konami>=320K intacta). Antes era al reves (la etiqueta solo
+	; como ultima red) y el probe de Compile ganaba a un [ASCII16] explicito.
+	xor  a
+	ld   (MAPPER_ID), a				; base: sin decision (MAP_PLAIN)
+	call override_mapper_by_name	; pone MAPPER_ID si el nombre lleva tag
+	ld   a, (MAPPER_ID)
+	or   a
+	ret  nz							; habia etiqueta -> manda el nombre
 	call scan_rom
 	call decide_mapper				; MAPPER_ID por CONTENIDO (estilo openMSX)
 	; v2.0.1: promocion Konami4 -> Konami-SCC en ROMs grandes. Konami4 real
@@ -1567,11 +1578,7 @@ detect_mapper:
 	ld   a, MAP_SCC_ID
 	ld   (MAPPER_ID), a
 .det_kok:
-	ld   a, (MAPPER_ID)
-	or   a							; MAP_PLAIN = 0 -> el code-scan no vio mapper
-	ret  nz							; el contenido decidio -> respetarlo SIEMPRE
-	jp   override_mapper_by_name	; solo si el scan no ve nada (juegos ld(hl),a):
-									; el tag [..] del nombre como ultima red
+	ret								; _182b: la etiqueta ya se miro ANTES del scan
 
 ; megaram_test: set the megaram to Konami-SCC mode (OCM SWIO), write-enable it,
 ; write A5/5A to bank 0, read them back into MEG_T0/MEG_T1. No reset (safe).
@@ -2516,7 +2523,7 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	cp   #0D
 	jp   z, launch_rom
 	cp   #1B
-	jp   z, browse				; (hook FH global)
+	jp   z, .bsr_esc				; _182c: desarmar la megaram antes de volver
 	cp   'M'
 	jp   z, .bsr_map
 	cp   'm'
@@ -2526,6 +2533,35 @@ browse_enter:						; global: el auto-lanzado de File-Hunter entra aqui
 	cp   's'
 	jp   z, .bsr_srtg
 	jr   .bsr_lk
+.bsr_esc:
+	; _182c (patron cazado por Albert: cargar ROM -> ESC -> boot = cuelgue o
+	; reset intermitente tras el logo, y a veces basura en screen1): la carga
+	; deja la megaram ARMADA en el slot 2 (Slot2Mode del SWIO) con el "AB" del
+	; juego a medias dentro y escribible; la BIOS del siguiente arranque la
+	; escanea y EJECUTA el cartucho fantasma. Al salir sin lanzar: envenenar
+	; la cabecera (AB -> 00 00, banco 0 en modo SCC, que es como carga SIEMPRE
+	; load_rom) y dejarla write-protect. El Slot2Mode se queda como esta -- un
+	; slot SCC vacio sin AB es invisible para la BIOS (mismo estado que deja
+	; un lanzamiento normal tras su reset).
+	di
+	ld   a, MEG_SLOT				; pag.1 = megaram (slot 2)
+	ld   hl, #4000
+	call ENASLT
+	xor  a
+	ld   (#7FFE), a					; write-protect (el banco se fija asi)
+	ld   (#5000), a					; reg0 = banco 0 (donde vive el "AB")
+	ld   a, #10
+	ld   (#7FFE), a					; write-enable
+	xor  a
+	ld   (#4000), a					; 'A' -> 0
+	ld   (#4001), a					; 'B' -> 0
+	ld   (#7FFE), a					; write-protect de nuevo
+	ld   a, SD_SLOT_31				; pag.1 de vuelta al menu (slot 3-1)
+	ld   hl, #4000
+	call ENASLT
+	ei
+	jp   browse
+
 .bsr_srtg:
 	call .bsr_isascii				; la tecla S solo actua en ASCII8/16 (en Konami/
 	jr   nc, .bsr_lk				; SCC no hay SRAM: ignorar para no confundir)
@@ -6747,6 +6783,7 @@ fh2_meta:
 	ld   de, fh2_k_name
 	call fh2_find
 	jp   c, .m_bad
+	call fh2_typetag				; _182: el type: de la API -> etiqueta [mapper]
 	call fh2_make83					; FH_NAME83 + FH_NAMEDOT
 	; mostrar "-> NOMBRE tamKB"
 	push hl
@@ -6877,6 +6914,71 @@ fh2_pdec:
 	ret
 
 ; ---- nombre de la API (HL, hasta NUL) -> FH_NAME83 (11B) + FH_NAMEDOT ----
+; ---- _182: mete el mapper que YA manda la API como etiqueta en el nombre ----
+; La cabecera empieza "type:<valor>,": ascii16 / ascii8 / konami / konamiscc
+; (dsk y desconocidos: sin etiqueta). Se sobrescribe el nombre EN FH_METAB
+; desde su ultimo punto: "NOMBRE.rom" -> "NOMBRE [ASCII16].rom". Todo lo de
+; aguas abajo (8.3, display, precheck de existencia y escritura LFN) lee de
+; ahi, asi que heredan la etiqueta sin tocarlos; y el lanzador ya prioriza
+; la etiqueta del nombre sobre el escaneo (override_mapper_by_name), que es
+; exactamente el reparto pedido: nombre primero, escaneo despues.
+; Re-descargas: mismo type => mismo nombre etiquetado => el precheck de
+; sobreescritura sigue casando. Entra/sale con HL = nombre en FH_METAB.
+fh2_typetag:
+	push hl
+	ld   a, (FH_METAB)				; sanidad: la meta empieza por "type:"
+	cp   't'
+	jr   nz, .tt_r
+	ld   a, (FH_METAB+5)			; valor[0]
+	ld   de, fh2_tag_a16
+	cp   'a'
+	jr   z, .tt_a
+	cp   'k'
+	jr   nz, .tt_r					; plain/dsk/desconocido: sin etiqueta
+	ld   a, (FH_METAB+11)			; "konami"+valor[6]: ',' fin o 's' de scc
+	ld   de, fh2_tag_kon
+	cp   's'
+	jr   nz, .tt_i
+	ld   de, fh2_tag_scc
+	jr   .tt_i
+.tt_a:
+	ld   a, (FH_METAB+10)			; "ascii"+valor[5]: '1'=16, '8'=8
+	cp   '8'
+	jr   nz, .tt_i
+	ld   de, fh2_tag_a8
+.tt_i:
+	ld   b, 0						; BC = ptr al ultimo '.' (0 = ninguno)
+	ld   c, b
+.tt_d:
+	ld   a, (hl)
+	or   a
+	jr   z, .tt_de
+	cp   '.'
+	jr   nz, .tt_dn
+	ld   b, h
+	ld   c, l
+.tt_dn:
+	inc  hl
+	jr   .tt_d
+.tt_de:
+	ld   a, b
+	or   c
+	jr   z, .tt_r					; sin punto: no tocar
+	ld   h, d						; HL = etiqueta " [TAG].rom",0
+	ld   l, e
+	ld   d, b						; DE = ultimo punto del nombre
+	ld   e, c
+.tt_c:
+	ld   a, (hl)
+	ld   (de), a
+	inc  hl
+	inc  de
+	or   a
+	jr   nz, .tt_c
+.tt_r:
+	pop  hl
+	ret
+
 fh2_make83:
 	push hl
 	ld   hl, FH_NAME83				; rellenar con espacios
@@ -8246,6 +8348,12 @@ fh2_m_exists:	.db "Ya existe. Sobreescribir? (S/N)",0
 
 fh2_k_size:	.db "size:",0
 fh2_k_name:	.db "name:",0
+; _182: etiquetas de mapper (el lanzador reconoce ASCII16/ASCII8/SCC/Konami
+; en el nombre; SCC se comprueba ANTES que Konami, por eso basta [SCC])
+fh2_tag_a16:	.db " [ASCII16].rom",0
+fh2_tag_a8:	.db " [ASCII8].rom",0
+fh2_tag_scc:	.db " [SCC].rom",0
+fh2_tag_kon:	.db " [Konami].rom",0
 fh2_n_fhunt:	.db "FHUNT      "
 fh2_n_dot:	.db ".          "
 fh2_n_ddot:	.db "..         "
