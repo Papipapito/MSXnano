@@ -1,0 +1,32 @@
+diff --git a/fpga/tn_vdp_v3_v9958/src/vdp/vdp.vhd b/fpga/tn_vdp_v3_v9958/src/vdp/vdp.vhd
+index 26b90a5..bbef951 100644
+--- a/fpga/tn_vdp_v3_v9958/src/vdp/vdp.vhd
++++ b/fpga/tn_vdp_v3_v9958/src/vdp/vdp.vhd
+@@ -1142,7 +1142,26 @@ BEGIN
+     PROCESS( CLK21M )
+     BEGIN
+         IF( CLK21M'EVENT AND CLK21M = '1' )THEN
+-            IF( PREDOTCOUNTER_X = 255+25 OR PREDOTCOUNTER_X = "111111111")THEN
++            -- UNA sola ventana por linea. El termino  OR PREDOTCOUNTER_X =
++            -- "111111111"  que habia aqui provocaba DOS interrupciones de linea
++            -- para la MISMA linea, separadas decenas de microsegundos:
++            --   * 511 es exactamente el punto donde avanza la linea
++            --     (vdp_ssg.vhd:399: W_HSYNC con FF_PRE_X_CNT = "111111111"), y
++            --   * el contador Y va un ciclo por detras (vdp_ssg.vhd:454), asi
++            --     que durante esa ventana Y_CNT todavia vale la linea ANTERIOR
++            --     y vuelve a casar con R#19.
++            -- Como el borrado del flag (leer S#1) es un pulso, si la ISR hacia
++            -- el ack entre las dos ventanas la segunda re-pedia interrupcion y
++            -- la rutina corria DOS VECES en la misma linea. Que cayera dentro o
++            -- fuera dependia de la instruccion que ejecutara el Z80 al aceptar
++            -- la INT -> fallaba en un PORCENTAJE de frames. Es el jitter que
++            -- veiamos en R-Type con el parche de smooth-scroll (y que en su dia
++            -- dimos por "culpa del parche": no lo era).
++            -- Ni el upstream OCM (una ventana, calibrada por KdL segun modo) ni
++            -- el clon TangCartMSX (= 255) llevan ese segundo termino: era
++            -- exclusivo del linaje goauld.
++            -- Demostrado en tools/hsync_int_sim/tb_hsync_int.v (Icarus).
++            IF( PREDOTCOUNTER_X = 255+25 )THEN
+                 ACTIVE_LINE <= '1';
+             ELSE
+                 ACTIVE_LINE <= '0';
