@@ -1701,7 +1701,12 @@ memory_ctrl mem1 (
     assign psgBdir = ( bus_addr[7:3]== 5'b10100 && iorq_wr_n == 0 && bus_addr[1]== 0 ) ?  1 : 0; // I/O:A0-A2h / PSG(AY-3-8910) bdir = 1 when writing to &HA0-&Ha1
     assign psgBc1 = ( bus_addr[7:3]== 5'b10100 && ((iorq_rd_n==0 && bus_addr[1]== 1) || (bus_addr[1]==0 && iorq_wr_n==0 && bus_addr[0]==0))) ? 1 : 0; // I/O:A0-A2h / PSG(AY-3-8910) bc1 = 1 when writing A0 or reading A2
     assign psgPA =8'h00;
-    reg psgPB = 8'hff;
+    // niquelado (portado del MSXimus): aqui habia un `reg psgPB = 8'hff;` que
+    // DUPLICABA el `wire [7:0] psgPB` de unas lineas mas arriba -- mismo nombre,
+    // ancho 1 contra 8. Una mina: la sintesis se queda con uno de los dos sin
+    // avisar. Y el raton MSX necesita psgPB[5] (pin 8 del puerto 2), asi que
+    // sobre un reg de 1 bit no habria funcionado nunca.
+    // El wire con el bucle O_IOB -> I_IOB es la conexion correcta del puerto B.
 
     wire clk_enable_1m8;
     reg clk_1m8_prev;
@@ -2801,7 +2806,6 @@ memory_ctrl mem1 (
     wire  swio_req;
     wire [7:0] io42_id212;
     wire iSlt2_linear;
-    wire swio_req;
     wire swio_req_r;
     wire swio_req_w;
     wire [7:0] swio_dout;
