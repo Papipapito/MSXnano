@@ -163,6 +163,8 @@ int main() {
 
         joy_autofire_tick(now);   // advance autofire square wave + emit composed joy byte
 
+        mouse_tick(now);          // vuelca el acumulador del raton a 100 Hz (0xD0)
+
         // Periodic full-matrix resync (also self-heals any dropped byte).
         if ((int64_t)(now - next_resync) >= 0) {
             kb_send_resync();

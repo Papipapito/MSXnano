@@ -92,6 +92,12 @@ u8 hid_parse_keyboard_modifiers(hid_report_info_t* report_info_arr, const u8 *re
 bool hid_parse_keyboard_is_nkro(hid_report_info_t* report_info_arr);
 void kb_report_receive(u8 modifiers, u8 const* report, u16 len);
 
+// Raton USB -> raton MSX (mensaje 0xD0). mouse_tick() DEBE llamarse desde el
+// super-bucle, no desde el callback USB: es quien vacia el acumulador al cable.
+extern volatile uint8_t g_mouse_mounted;
+void mouse_report_receive(u8 const* report, u16 len);
+void mouse_tick(uint64_t now);
+
 // MSX Goa'uld keyboard UART link (uart0 @ 115200 8N1, GPIO0 = TX).
 void kb_uart_init(void);     // configure uart0 + GPIO0 for the keyboard link
 void kb_tx_pump(void);       // drain the TX ring into the UART FIFO (non-blocking)

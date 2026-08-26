@@ -67,6 +67,13 @@
 //   bit3=Up bit4=A(TrigA/fire1) bit5=B(TrigB/fire2) bits6-7=0.
 //   (The FPGA inverts to MSX active-low.)
 #define OP_JOY         0xB0
+
+// USB HID mouse -> raton MSX (puerto 2 del joystick).
+//   0xD0 <dx> <dy> <btn>   dx/dy CON SIGNO (complemento a dos), + = derecha/abajo
+//   btn ACTIVO ALTO: bit0 = izquierdo, bit1 = derecho.
+// Los deltas van SIN NEGAR: negarlos es cosa de msx_mouse.v en la FPGA
+// (openMSX Mouse.cc:255). Hacerlo en los dos sitios lo dejaria al reves.
+#define OP_MOUSE       0xD0
 #define JOY_RIGHT      0x01
 #define JOY_LEFT       0x02
 #define JOY_DOWN       0x04
@@ -186,6 +193,59 @@ static void joy_emit(uint8_t port, uint8_t b, bool bump_led) {
     tx_push(OP_JOY);
     tx_push(port);
     tx_push(b);
+}
+
+// ---------------------------------------------------------------------------
+// RATON. Se ACUMULA y se manda a ritmo fijo, no en cada informe.
+// Un raton de oficina informa a 125 Hz, pero uno "gaming" puede ir a 1000, y a
+// 4 bytes por informe eso serian 4 KB/s de los 11,5 que da el enlace -- con el
+// teclado compitiendo por el mismo cable. Acumulando, el gasto queda acotado a
+// ~400 B/s (3,5%) venga el raton que venga, y no se pierde ni un pixel: los
+// deltas se suman mientras tanto.
+// 100 Hz sobra: el MSX sondea el raton una vez por frame (50-60 Hz).
+// ---------------------------------------------------------------------------
+#define MOUSE_TX_PERIOD_US 10000ull   // 100 Hz
+
+static volatile int32_t mou_acc_x = 0, mou_acc_y = 0;
+static volatile uint8_t mou_btn   = 0;
+static volatile uint8_t mou_dirty = 0;
+volatile uint8_t g_mouse_mounted  = 0;
+
+// Informe de raton en protocolo BOOT: [botones][dx][dy], dx/dy con signo.
+void mouse_report_receive(u8 const* report, u16 len) {
+    if(len < 3) return;
+    mou_acc_x += (int8_t)report[1];
+    mou_acc_y += (int8_t)report[2];
+    mou_btn    = (u8)(report[0] & 0x03);   // bit0 izq, bit1 der
+    mou_dirty  = 1;
+    g_last_key_us = time_us_64();          // parpadeo del LED de estado
+}
+
+static inline int8_t mou_clamp(int32_t v) {
+    return (int8_t)(v > 127 ? 127 : (v < -127 ? -127 : v));
+}
+
+// Vacia el acumulador. Se llama desde el super-bucle, NO desde el callback USB.
+void mouse_tick(uint64_t now) {
+    static uint64_t next_tx = 0;
+    static uint8_t  last_btn = 0;
+    if(!g_mouse_mounted) return;
+    if((int64_t)(now - next_tx) < 0) return;
+    next_tx = now + MOUSE_TX_PERIOD_US;
+    // Nada que contar y los botones igual que antes -> ni un byte al cable.
+    if(!mou_dirty && mou_btn == last_btn) return;
+    int8_t dx = mou_clamp(mou_acc_x);
+    int8_t dy = mou_clamp(mou_acc_y);
+    // Se resta LO ENTREGADO, no se pone a cero: si el movimiento saturo, el
+    // resto se manda en el siguiente tick en vez de perderse.
+    mou_acc_x -= dx;
+    mou_acc_y -= dy;
+    if(mou_acc_x == 0 && mou_acc_y == 0) mou_dirty = 0;
+    last_btn = mou_btn;
+    tx_push(OP_MOUSE);
+    tx_push((u8)dx);
+    tx_push((u8)dy);
+    tx_push(mou_btn);
 }
 
 // Send-on-change: update the shadow and emit 0xB0 <port> <byte> when it changes.
@@ -848,7 +908,14 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 	hid_info[slot].report_count = hid_parse_report_descriptor(hid_info[slot].report_info, MAX_REPORT, desc_report, desc_len);
 	if(!tuh_hid_receive_report(dev_addr, instance)) {
 	} else {
-		if(hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD) {
+		if(hid_if_proto == HID_ITF_PROTOCOL_MOUSE) {
+		    // BOOT: informe fijo de 3 bytes, lo soportan TODOS los ratones. Evita
+		    // tener que interpretar descriptores raros, y funciona igual detras de
+		    // un receptor inalambrico, que expone el raton en su propia interfaz.
+		    tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
+		    mou_acc_x = 0; mou_acc_y = 0; mou_btn = 0; mou_dirty = 0;
+		    g_mouse_mounted = 1;
+		} else if(hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD) {
 			for(uint8_t i = 0; i < 8; i++) {
 				if(keyboards[i].dev_addr == 0 && keyboards[i].instance == 0) {
 					keyboards[i].dev_addr = dev_addr;
@@ -925,6 +992,14 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 	// Generic HID gamepad/joystick: handle and re-arm here, leaving the keyboard
 	// path below completely untouched. gamepad_report_receive() does its own
 	// report-ID resolution on the raw report (same as the keyboard path).
+	// Raton: se reconoce por el protocolo de interfaz, sin registro aparte.
+	// Se pide BOOT al montarlo, asi que el informe es siempre [btn][dx][dy].
+	if(tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_MOUSE) {
+	    mouse_report_receive(report, len);
+	    tuh_hid_receive_report(dev_addr, instance);
+	    return;
+	}
+
 	if(is_registered_gamepad(dev_addr, instance)) {
 		gamepad_report_receive(dev_addr, instance, report, len);
 		tuh_hid_receive_report(dev_addr, instance);
