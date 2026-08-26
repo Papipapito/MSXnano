@@ -558,9 +558,19 @@ wire [7:0] joy1_goauld_msx = {2'b11, ~gjoy1[5], ~gjoy1[4], ~gjoy1[0], ~gjoy1[1],
 // raton vivo; sin el, el joystick sigue igual que siempre.
 wire [7:0] msx_mouse_data;
 wire       msx_mouse_present;
+// El valor del PUERTO 2 se calcula en un REGISTRO, no en el mux de lectura.
+// Medido: metiendo el raton combinacionalmente en la cadena del cpu_din, esa
+// cadena -- que ya iba con 20 ns de camino contra 18,2 -- se pasaba de largo.
+// El retardo de un ciclo (18,5 ns) es INVISIBLE aqui: el MSX sondea el raton
+// por handshake y entre el OUT del strobe y el IN siguiente pasan varios
+// T-estados de ~280 ns. Lo mismo vale para el joystick, que se lee por frame.
+reg [7:0] psg_port2_q = 8'hFF;
+always @(posedge clk_54m) begin
+    psg_port2_q <= msx_mouse_present ? msx_mouse_data
+                                     : (joy1_msx & joy1_goauld_msx);
+end
 wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? (joy0_msx & joy0_goauld_msx) :
-                              (!psg_reg15_joy_sel[1]) ? (msx_mouse_present ? msx_mouse_data
-                                                                           : (joy1_msx & joy1_goauld_msx)) :
+                              (!psg_reg15_joy_sel[1]) ? psg_port2_q :
                               8'hFF;
 // ===== CINTA VIRTUAL: bit7 del PortA del PSG (CASIN) = dato de cas_stream =====
 // Comparte el bit7 con el joystick fusionado BL616+Pico (bits[6:0] intactos).
@@ -571,7 +581,6 @@ wire        cas_bit = cas_playing ? cas_casin : 1'b1;
 wire [7:0]  psg_joy_data = {cas_bit, psg_joy_data_raw[6:0]};
 
 // ===== STANDALONE MERGE: USB keyboard (PPI port B 0xA9 read / port C 0xAA latch) =====
-wire ppi_portb_req_r = (bus_addr[7:0] == 8'hA9 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
 wire ppi_portc_req_w = (bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0);
 // PORTADO DEL MSXimus v3.1 (commit 565ed77, validado en placa el 26/08/2026).
 // Aqui faltaban DOS cosas, y entre las dos mataban el LED de CAPS y el click:
@@ -582,7 +591,17 @@ wire ppi_portc_req_w = (bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n ==
 //    OUT (0AAh),A). Al recibir FF del bus flotante se borraba ella misma los
 //    bits altos ~60 veces por segundo.
 wire ppi_ctrl_req_w  = (bus_addr[7:0] == 8'hAB && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0);
-wire ppi_portc_req_r = (bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0);
+// UN SOLO decodificador para las lecturas de A9h (puerto B) y AAh (puerto C).
+// Medido: con dos terminos separados en la cadena de prioridad del cpu_din,
+// clk_54m se caia de 54,4 a 44,6 MHz. Esa cadena ya estaba al limite (20 ns
+// de camino contra 18,2 disponibles) y un nivel mas la reventaba.
+// El XOR de los dos bits bajos deja pasar SOLO A9h (01) y AAh (10), y excluye
+// A8h (00) y ABh (11) -- importante, porque A8h se sirve mas abajo en la
+// misma cadena (ppi_req_r) y taparlo aqui lo dejaria mudo.
+// De regalo: una carga menos sobre bus_rd_n, que es la red mas cargada del
+// diseno (origen de los peores caminos incluso SIN estos cambios).
+wire ppi_bc_rd = (bus_addr[7:2] == 6'b101010) && (bus_addr[1] ^ bus_addr[0])
+                 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0;
 
 wire [3:0] keyboard_addr;
 reg [7:0] keyboard_data;
@@ -731,8 +750,8 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
                 `ifdef ENABLE_SOUND
                      ( psg2_req_r == 1 ) ? psg2_dout :
                 `endif
-                ( ppi_portc_req_r == 1 ) ? ppi_port_c :                     // AAh: releer el latch
-                ( ppi_portb_req_r == 1 ) ? (keyboard_data & vkey_row) :
+                // bit1=1 -> AAh (releer el latch del puerto C); bit1=0 -> A9h (teclado)
+                ( ppi_bc_rd == 1 ) ? (bus_addr[1] ? ppi_port_c : (keyboard_data & vkey_row)) :
                 `ifdef ENABLE_V9958
                      ( vdp_csr_n == 0) ? vdp_dout :
                 `endif
