@@ -29,6 +29,17 @@ Before build, make sure to:
 
 * have `pico-sdk` with `tinyusb` library
 * check `PICO_SDK_PATH` environment variable linked to `pico-sdk` directory
+* have the **Arm bare-metal compiler**: `arm-none-eabi-gcc`
+  (on Windows: `winget install --id Arm.GnuArmEmbeddedToolchain`)
+* have a **native host C/C++ compiler too** — and this one catches people out.
+  SDK 2.x builds `picotool` from source to turn the `.elf` into a `.uf2`, and
+  picotool runs on your PC, not on the RP2040, so the Arm compiler alone is not
+  enough. On Windows, running the build from a Visual Studio *vcvars64* shell is
+  enough; on Linux, `build-essential`.
+
+Both `.uf2` in this directory are built from this source: `rp2040_keyboard.uf2`
+for the Waveshare RP2040-Zero (default) and `rp2040_keyboard_pico.uf2` for a
+plain Pico (`-DRP2040_ZERO=0`). Rebuild BOTH when you change the firmware.
 
 ```
 mkdir build && cd build
