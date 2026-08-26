@@ -550,8 +550,17 @@ wire [7:0] joy1_msx = {2'b11, ~af_fb1, ~af_fa1, ~joystick1[0], ~joystick1[1], ~j
 // Idle/absent Pico -> gjoyN=0x00 -> remap 0xFF -> AND transparent to the BL616 pad.
 wire [7:0] joy0_goauld_msx = {2'b11, ~gjoy0[5], ~gjoy0[4], ~gjoy0[0], ~gjoy0[1], ~gjoy0[2], ~gjoy0[3]};
 wire [7:0] joy1_goauld_msx = {2'b11, ~gjoy1[5], ~gjoy1[4], ~gjoy1[0], ~gjoy1[1], ~gjoy1[2], ~gjoy1[3]};
+// ===== RATON MSX (puerto 2), servido por el RP2040 =====
+// El raton MSX no es de cuadratura: habla por handshake con el pin 8 del
+// puerto (psgPB[5] = puerto 2) y va presentando cuatro nibbles por los bits
+// 0-3. Todo el protocolo esta en fpga/src/msx_mouse.v, portado del MSXimus
+// donde ESTA VALIDADO EN PLACA. Solo se apodera del puerto 2 cuando hay
+// raton vivo; sin el, el joystick sigue igual que siempre.
+wire [7:0] msx_mouse_data;
+wire       msx_mouse_present;
 wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? (joy0_msx & joy0_goauld_msx) :
-                              (!psg_reg15_joy_sel[1]) ? (joy1_msx & joy1_goauld_msx) :
+                              (!psg_reg15_joy_sel[1]) ? (msx_mouse_present ? msx_mouse_data
+                                                                           : (joy1_msx & joy1_goauld_msx)) :
                               8'hFF;
 // ===== CINTA VIRTUAL: bit7 del PortA del PSG (CASIN) = dato de cas_stream =====
 // Comparte el bit7 con el joystick fusionado BL616+Pico (bits[6:0] intactos).
@@ -2974,7 +2983,34 @@ memory_ctrl mem1 (
         .cmd_osd_toggle      (),
         // F11 del teclado Pico -> pulso turbo. Sin cablear en v1: el turbo del
         // Nano va por el BL616 (keyboard[68]) y el menu. (Gowin poda el puerto.)
-        .cmd_turbo_toggle    ()
+        .cmd_turbo_toggle    (),
+        // Raton USB (mensaje 0xD0 del Pico) -> msx_mouse.v, justo debajo.
+        .mouse_dx            (mo_dx),
+        .mouse_dy            (mo_dy),
+        .mouse_btn           (mo_btn),
+        .mouse_pulse         (mo_pulse),
+        .mouse_present       (msx_mouse_present)
+    );
+
+    // El raton. Ya viene todo en el dominio clk_54m (el receptor UART vive ahi
+    // entero), asi que no hay cruce de relojes que sincronizar.
+    wire signed [7:0] mo_dx, mo_dy;
+    wire [1:0]        mo_btn;
+    wire              mo_pulse;
+    // Sensibilidad: el delta se divide por 2^MOUSE_SENS. Mismo valor que el
+    // MSXimus. SIN VALIDAR con software de dibujo: si va rapido, subirlo.
+    localparam [2:0] MOUSE_SENS = 3'd2;
+    msx_mouse u_msx_mouse (
+        .clk       (clk_54m),
+        .rst_n     (bus_reset_n),
+        .rep_pulse (mo_pulse),
+        .dx        (mo_dx),
+        .dy        (mo_dy),
+        .btn       ({mo_btn[1], mo_btn[0]}),   // {derecho, izquierdo}
+        .sens      (MOUSE_SENS),
+        .strobe    (psgPB[5]),                 // pin 8 del PUERTO 2
+        .data      (msx_mouse_data),
+        .dbg_phase ()
     );
 
 endmodule

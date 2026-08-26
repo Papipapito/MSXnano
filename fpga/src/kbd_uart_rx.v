@@ -40,6 +40,12 @@
 //       link-loss watchdog ("no firmware announced"). ADDITIVE: an old FPGA
 //       ignores 0xC0 in D_IDLE and the version byte after it decodes as an
 //       unknown command, also ignored.
+//     - MOUSE state: 0xD0 <dx> <dy> <btn> (4 bytes). dx/dy son deltas CON SIGNO
+//       (complemento a dos, + = derecha / abajo, los del host sin negar: negarlos
+//       es cosa de msx_mouse.v). btn bit0 = izquierdo, bit1 = derecho, ACTIVO ALTO.
+//       Al recibir el 4o byte se emite mouse_pulse de 1 ciclo y se marca
+//       mouse_present. ADITIVO: una FPGA vieja ignora 0xD0 en D_IDLE y los tres
+//       bytes siguientes caen como opcodes desconocidos, tambien ignorados.
 //     - USB joystick state: 0xB0 <port> <joybyte> (3 bytes). port: 0 = MSX
 //       joystick port 1 (joy_state0), 1 = port 2 (joy_state1). joybyte is
 //       ACTIVE-HIGH: bit0=Right, bit1=Left, bit2=Down, bit3=Up, bit4=A(TrigA),
@@ -78,7 +84,15 @@ module kbd_uart_rx #(
     output reg         cmd_scanline_toggle,
     output reg         cmd_reset_pulse,
     output reg         cmd_osd_toggle,
-    output reg         cmd_turbo_toggle
+    output reg         cmd_turbo_toggle,
+
+    // Raton USB servido por el RP2040 (mensaje 0xD0). Alimenta msx_mouse.v,
+    // que es agnostico de la fuente: solo pide deltas, botones y un pulso.
+    output reg signed [7:0] mouse_dx,
+    output reg signed [7:0] mouse_dy,
+    output reg  [1:0]  mouse_btn,      // {derecho, izquierdo}, activo ALTO
+    output reg         mouse_pulse,    // 1 ciclo por informe completo
+    output reg         mouse_present   // hay raton vivo (lo baja el watchdog)
 );
 
     //------------------------------------------------------------------------
@@ -217,14 +231,19 @@ module kbd_uart_rx #(
         fw_version = 8'h00;
     end
 
-    localparam [2:0] D_IDLE     = 3'd0,   // waiting for a command/opcode byte
-                     D_CELL     = 3'd1,   // expecting the cell byte after 0x90/0xA0
-                     D_LOAD     = 3'd2,   // counted full-matrix load after 0xFE
-                     D_JOY_PORT = 3'd3,   // expecting the port byte after 0xB0
-                     D_JOY_BYTE = 3'd4,   // expecting the joystick byte after the port
-                     D_VERSION  = 3'd5;   // expecting the version byte after 0xC0
+    localparam [3:0] D_IDLE     = 4'd0,   // waiting for a command/opcode byte
+                     D_CELL     = 4'd1,   // expecting the cell byte after 0x90/0xA0
+                     D_LOAD     = 4'd2,   // counted full-matrix load after 0xFE
+                     D_JOY_PORT = 4'd3,   // expecting the port byte after 0xB0
+                     D_JOY_BYTE = 4'd4,   // expecting the joystick byte after the port
+                     D_VERSION  = 4'd5,   // expecting the version byte after 0xC0
+                     D_MOU_DX   = 4'd6,   // dx tras 0xD0
+                     D_MOU_DY   = 4'd7,   // dy
+                     D_MOU_BTN  = 4'd8;   // botones; aqui se dispara el pulso   // expecting the version byte after 0xC0
 
-    reg [2:0] dstate      = D_IDLE;
+    reg [3:0] dstate      = D_IDLE;
+
+    reg [7:0] mou_dx_t = 8'd0, mou_dy_t = 8'd0;   // dx/dy en vuelo
     reg       pending_make= 1'b0;     // 1 = MAKE (press), 0 = BREAK (release)
     reg [3:0] load_idx    = 4'd0;     // 0..10 row index during full-matrix load
     reg       joy_port    = 1'b0;     // latched port index from 0xB0 (0 or 1)
@@ -273,6 +292,9 @@ module kbd_uart_rx #(
             cmd_reset_pulse     <= 1'b0;
             cmd_osd_toggle      <= 1'b0;
             cmd_turbo_toggle    <= 1'b0;
+            mouse_dx <= 8'sd0; mouse_dy <= 8'sd0;
+            mouse_btn <= 2'b00; mouse_pulse <= 1'b0; mouse_present <= 1'b0;
+            mou_dx_t <= 8'd0;  mou_dy_t <= 8'd0;
             for (i = 0; i < 16; i = i + 1)
                 vkey_matrix[i] <= 8'hFF;   // all keys released on reset
         end else begin
@@ -281,6 +303,7 @@ module kbd_uart_rx #(
             cmd_reset_pulse     <= 1'b0;
             cmd_osd_toggle      <= 1'b0;
             cmd_turbo_toggle    <= 1'b0;
+            mouse_pulse         <= 1'b0;   // pulso de 1 ciclo
 
             if (rx_valid) begin
                 case (dstate)
@@ -292,7 +315,8 @@ module kbd_uart_rx #(
                             8'h90: begin pending_make <= 1'b1; dstate <= D_CELL; end // MAKE
                             8'hA0: begin pending_make <= 1'b0; dstate <= D_CELL; end // BREAK
                             8'hB0: begin                       dstate <= D_JOY_PORT; end // USB joystick
-                            8'hC0: begin                       dstate <= D_VERSION; end // fw version announce
+                            8'hC0: begin                       dstate <= D_VERSION; end                        // fw version announce
+                            8'hD0: begin                       dstate <= D_MOU_DX;  end // raton USB // fw version announce
                             8'hFE: begin load_idx <= 4'd0;     dstate <= D_LOAD; end // resync start
                             8'h01: cmd_scanline_toggle <= 1'b1;                       // command
                             8'h02: cmd_reset_pulse     <= 1'b1;                       // command
@@ -345,6 +369,24 @@ module kbd_uart_rx #(
                     end
 
                     //--------------------------------------------------------
+                    // D_MOU_*: raton. 0xD0 <dx> <dy> <btn>. Los deltas llegan
+                    // CON SIGNO y SIN negar: negarlos es cosa de msx_mouse.v
+                    // (openMSX Mouse.cc:255), y hacerlo dos veces lo dejaria al
+                    // derecho... o sea, al reves. El pulso sale con el 4o byte,
+                    // no antes: asi msx_mouse.v ve dx, dy y botones coherentes.
+                    //--------------------------------------------------------
+                    D_MOU_DX: begin mou_dx_t <= rx_byte; dstate <= D_MOU_DY;  end
+                    D_MOU_DY: begin mou_dy_t <= rx_byte; dstate <= D_MOU_BTN; end
+                    D_MOU_BTN: begin
+                        mouse_dx      <= $signed(mou_dx_t);
+                        mouse_dy      <= $signed(mou_dy_t);
+                        mouse_btn     <= rx_byte[1:0];   // bit0 izq, bit1 der
+                        mouse_pulse   <= 1'b1;
+                        mouse_present <= 1'b1;
+                        dstate        <= D_IDLE;
+                    end
+
+                    //--------------------------------------------------------
                     // D_LOAD: counted full-matrix resync. Store EVERY byte into the
                     // next row (0..10); after row 10 return to D_IDLE. Do NOT treat
                     // a data 0xFF as a terminator: 0xFF is the normal "row all-
@@ -378,6 +420,8 @@ module kbd_uart_rx #(
                 pending_make <= 1'b0;
                 load_idx     <= 4'd0;
                 joy_port     <= 1'b0;
+                mouse_dx <= 8'sd0; mouse_dy <= 8'sd0; mouse_btn <= 2'b00;
+                mouse_present <= 1'b0;   // sin enlace no hay raton: top.v vuelve al joystick
             end
         end
     end
