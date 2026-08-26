@@ -68,8 +68,11 @@ add_file top.v
 add_file cas_stream.v
 add_file tape_uart.v
 
-# ----- pico-companion: goauld RP2040 USB keyboard/joystick over UART (pin 31) -----
+# ----- pico-companion: goauld RP2040 USB keyboard/joystick/raton over UART (pin 31) -----
 add_file src/kbd_uart_rx.v
+# Raton MSX (portado del MSXimus): lo alimenta el mensaje 0xD0 del receptor de
+# arriba. Sin esta linea el modulo NO entra en la sintesis.
+add_file src/msx_mouse.v
 
 # ----- STANDALONE MERGE: USB subsystem (BL616 FPGA Companion) -----
 # NOTE: add mcu_spi_new.v ONLY (mcu_spi.v has a colliding "module mcu_spi"). ws2812.v unused.
