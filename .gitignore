@@ -55,3 +55,14 @@ fpga/gowin_build*.log
 # imagenes de cinta de juegos reales (copyright)
 fpga/*.hex
 !fpga/testcv.hex
+
+# Salidas de sintesis del frontend M0 (regenerables)
+fpga/frontend_m0/impl/
+
+# Caches de Python de las herramientas
+__pycache__/
+*.pyc
+
+# ROM comercial usada como banco de pruebas del SCC (copyright) — NO se
+# redistribuye. El repo es PUBLICO: sin esta linea, un "git add -A" la publica.
+tools/scctest/opcheck/*.rom
