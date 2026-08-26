@@ -564,17 +564,52 @@ wire [7:0]  psg_joy_data = {cas_bit, psg_joy_data_raw[6:0]};
 // ===== STANDALONE MERGE: USB keyboard (PPI port B 0xA9 read / port C 0xAA latch) =====
 wire ppi_portb_req_r = (bus_addr[7:0] == 8'hA9 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
 wire ppi_portc_req_w = (bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0);
+// PORTADO DEL MSXimus v3.1 (commit 565ed77, validado en placa el 26/08/2026).
+// Aqui faltaban DOS cosas, y entre las dos mataban el LED de CAPS y el click:
+//  * ABh (bit set/reset del 8255) solo se decodificaba para el bit 4, el motor
+//    del casete. Los bits 6 (CAPS) y 7 (click) no llegaban NUNCA.
+//  * AAh no se podia RELEER. Y esa es la causa de raiz: la BIOS relee el puerto
+//    C para cambiar de fila de teclado (IN A,(0AAh) / AND 0F0h / OR fila /
+//    OUT (0AAh),A). Al recibir FF del bus flotante se borraba ella misma los
+//    bits altos ~60 veces por segundo.
+wire ppi_ctrl_req_w  = (bus_addr[7:0] == 8'hAB && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0);
+wire ppi_portc_req_r = (bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0);
 
 wire [3:0] keyboard_addr;
 reg [7:0] keyboard_data;
 wire [1:12] function_keys;
 
-reg [7:0] ppi_port_c = 8'h00;   // R4: ppi_port_c did not exist in base — created here
+// EL BIT SET/RESET SE APLICA UNA VEZ, AL TERMINAR LA ESCRITURA (no por nivel).
+// El dato de ABh elige QUE BIT se toca, asi que un valor a medio formar escribe
+// un bit AL AZAR -- incluidos los bits 0..3, que son la SELECCION DE FILA DEL
+// TECLADO. En el MSXimus eso colgaba INDEV.COM, que sondea el hardware a
+// conciencia; con el uso normal no se notaba porque la BIOS reescribe sin parar.
+reg       ab_req_d = 1'b0;
+reg [7:0] ab_dat   = 8'd0;
+wire      ab_fin   = ab_req_d & ~ppi_ctrl_req_w;   // flanco de bajada = fin del ciclo
+always @(posedge clk_54m or negedge bus_reset_n) begin
+    if (!bus_reset_n) begin
+        ab_req_d <= 1'b0; ab_dat <= 8'd0;
+    end else begin
+        ab_req_d <= ppi_ctrl_req_w;
+        if (ppi_ctrl_req_w) ab_dat <= cpu_dout;
+    end
+end
+
+// RESET A 8'h10, NO a 0: el bit 4 es el motor del casete y es ACTIVO-BAJO, asi
+// que un 0 lo deja ENCENDIDO. Antes daba igual porque el motor vivia en su
+// propio registro, que reseteaba a OFF; ahora que PC4 vive aqui, resetear a 0
+// haria que la cinta virtual empezase a emitir pulsos durante el arranque (se
+// auto-arma tras el reset y el motor solo hace de pausa dentro de S_EMIT).
+// Los demas bits los reescribe la BIOS a los pocos microsegundos.
+reg [7:0] ppi_port_c = 8'h10;   // R4: ppi_port_c did not exist in base — created here
 always @(posedge clk_54m or negedge bus_reset_n) begin
     if (!bus_reset_n)
-        ppi_port_c <= 8'h00;
+        ppi_port_c <= 8'h10;
     else if (ppi_portc_req_w)
         ppi_port_c <= cpu_dout;
+    else if (ab_fin && ab_dat[7] == 1'b0)          // bit7=0 = bit set/reset; bit7=1 = modo
+        ppi_port_c[ab_dat[3:1]] <= ab_dat[0];
 end
 assign keyboard_addr = ppi_port_c[3:0];
 
@@ -584,18 +619,13 @@ assign keyboard_addr = ppi_port_c[3:0];
 // Reloj clk_54m + ce=clk_enable_3m6_54 (1 T-state). Motor = PPI PC4 (activo-bajo,
 // 0=ON). Se arma un pulso tras salir de reset; el motor hace de gate.
 // ============================================================================
-// Motor de cassette: la BIOS lo controla SOLO via OUT (0xAB) (bit set/reset de
-// PC4): 0x08 = ON (PC4=0), 0x09 = OFF (PC4=1). PC4 es activo-bajo -> cas_motor
-// (activo-alto) = ~PC4. Se rastrea aparte porque el core solo capturaba 0xAA,
-// NO 0xAB -> el gate del motor estaba muerto (este era el bug).
-reg  cas_motor_on = 1'b0;
-always @(posedge clk_54m or negedge bus_reset_n) begin
-    if (!bus_reset_n) cas_motor_on <= 1'b0;
-    else if (bus_addr[7:0]==8'hAB && bus_iorq_n==1'b0 && bus_m1_n==1'b1
-             && bus_wr_n==1'b0 && cpu_dout[7]==1'b0 && cpu_dout[3:1]==3'b100)
-        cas_motor_on <= ~cpu_dout[0];             // PC4=0 -> motor ON
-end
-wire cas_motor = cas_motor_on;
+// Motor de cassette: la BIOS lo controla via OUT (0xAB) (bit set/reset de PC4):
+// 0x08 = ON (PC4=0), 0x09 = OFF (PC4=1). PC4 es activo-bajo -> cas_motor
+// (activo-alto) = ~PC4.
+// Ya NO se rastrea aparte: cas_motor_on era un parche del SINTOMA -- se arreglo
+// el motor sin ver que el agujero de ABh era general. Ahora que ABh se decodifica
+// entero, PC4 vive en ppi_port_c como en el 8255 real y el motor sale de ahi.
+wire cas_motor = ~ppi_port_c[4];                  // PC4 activo-bajo: 0 = motor ON
 // Arma la cinta tras el reset y la rearma al terminar (bucle) para el siguiente
 // RUN"CAS:". El motor hace de gate real de la reproduccion.
 reg  cas_armed = 1'b0;
@@ -692,6 +722,7 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
                 `ifdef ENABLE_SOUND
                      ( psg2_req_r == 1 ) ? psg2_dout :
                 `endif
+                ( ppi_portc_req_r == 1 ) ? ppi_port_c :                     // AAh: releer el latch
                 ( ppi_portb_req_r == 1 ) ? (keyboard_data & vkey_row) :
                 `ifdef ENABLE_V9958
                      ( vdp_csr_n == 0) ? vdp_dout :
