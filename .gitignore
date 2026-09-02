@@ -66,3 +66,18 @@ __pycache__/
 # ROM comercial usada como banco de pruebas del SCC (copyright) — NO se
 # redistribuye. El repo es PUBLICO: sin esta linea, un "git add -A" la publica.
 tools/scctest/opcheck/*.rom
+
+# ROMs de sistema MSX extraidas del pack (copyright ASCII/Microsoft/Panasonic).
+# Se obtienen descomponiendo tu propio pack con el desmontar_pack.py de
+# bios-msxnano-msximus/tools/;
+# NO se redistribuyen.
+fpga/src/rom/a1xxjis1.rom
+fpga/src/rom/a1xxjis2.rom
+fpga/src/rom/a1wsxyen.rom
+fpga/src/rom/2pextrtc.rom
+fpga/src/rom/32k_msx2p_int_fix.bin
+fpga/src/rom/16k_msx2p_subrom.bin
+fpga/src/rom/knmsxppl.rom
+fpga/src/rom/esp8266e.rom
+fpga/src/rom/extraido_int/
+fpga/src/rom/extraido_jap/
