@@ -209,6 +209,8 @@ static void joy_emit(uint8_t port, uint8_t b, bool bump_led) {
 static volatile int32_t mou_acc_x = 0, mou_acc_y = 0;
 static volatile uint8_t mou_btn   = 0;
 static volatile uint8_t mou_dirty = 0;
+volatile uint8_t  g_mouse_mounted = 0;   // 1 = hay un raton USB montado
+volatile uint64_t g_last_mouse_us = 0;   // ultimo informe recibido (LED de estado)
 // Informe de raton. Se pide BOOT al montarlo -> [botones][dx][dy]. Pero si el
 // raton IGNORA el SET_PROTOCOL (algunos lo hacen, y detras de un hub pasa mas)
 // puede seguir en REPORT y colar un ID delante. Se detecta por la longitud: 3 =
@@ -220,7 +222,8 @@ void mouse_report_receive(u8 const* report, u16 len) {
     mou_acc_y += (int8_t)r[2];
     mou_btn    = (u8)(r[0] & 0x03);        // bit0 izq, bit1 der
     mou_dirty  = 1;
-    g_last_key_us = time_us_64();          // parpadeo del LED de estado
+    g_last_key_us   = time_us_64();     // parpadeo del LED de estado
+    g_last_mouse_us = g_last_key_us;    // ...y el contador propio del raton
 }
 
 static inline int8_t mou_clamp(int32_t v) {

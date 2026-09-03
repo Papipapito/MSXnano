@@ -20,6 +20,8 @@
 //   idle (no USB kbd)     -> solid red
 //   USB keyboard mounted  -> solid green
 //   key pressed           -> brief white flash
+//   USB mouse mounted     -> solid cyan
+//   mouse moving          -> magenta flash
 #ifndef RP2040_ZERO
 #define RP2040_ZERO 1
 #endif
@@ -173,12 +175,24 @@ int main() {
             next_resync = now + RESYNC_INTERVAL_US;
         }
 
-        // ---- On-board status LED: single priority colour (white>yellow>green>red) ----
+        // ---- LED de a bordo: un color por prioridad ----------------------
+        //   magenta parpadeo = el RATON esta mandando informes (se mueve)
+        //   cian fijo        = raton MONTADO pero sin informes  <- diagnostico
+        //   blanco parpadeo  = actividad de teclado/joystick
+        //   amarillo         = gamepad montado
+        //   verde            = teclado montado
+        //   rojo             = nada montado
+        // Los dos primeros separan las DOS cosas que pueden fallar con un raton:
+        // que no llegue a montarse, o que se monte y no mande nada (que era el
+        // fallo del 03/09: el SET_PROTOCOL invalidaba la peticion de informe).
         uint32_t led;
-        if      ((uint64_t)(now - g_last_key_us) < 70000ull) led = 0x202020u;  // white: activity
-        else if (g_joy_mounted)                              led = 0x141400u;  // yellow: gamepad
-        else if (isMounted)                                  led = 0x002000u;  // green: keyboard
-        else                                                 led = 0x1A0000u;  // red: idle
+        if      ((uint64_t)(now - g_last_mouse_us) < 70000ull && g_mouse_mounted)
+                                                             led = 0x200020u;  // magenta: raton moviendose
+        else if ((uint64_t)(now - g_last_key_us) < 70000ull)  led = 0x202020u;  // blanco: actividad
+        else if (g_mouse_mounted)                            led = 0x002020u;  // cian: raton montado
+        else if (g_joy_mounted)                              led = 0x141400u;  // amarillo: gamepad
+        else if (isMounted)                                  led = 0x002000u;  // verde: teclado
+        else                                                 led = 0x1A0000u;  // rojo: nada
         if (led != led_prev) {
             status_led_rgb((uint8_t)(led >> 16), (uint8_t)(led >> 8), (uint8_t)led);
             led_prev = led;

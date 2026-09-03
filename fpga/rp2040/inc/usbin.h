@@ -95,6 +95,7 @@ void kb_report_receive(u8 modifiers, u8 const* report, u16 len);
 // Raton USB -> raton MSX (mensaje 0xD0). mouse_tick() DEBE llamarse desde el
 // super-bucle, no desde el callback USB: es quien vacia el acumulador al cable.
 extern volatile uint8_t g_mouse_mounted;
+extern volatile uint64_t g_last_mouse_us;   // ultimo informe de raton (LED)
 void mouse_report_receive(u8 const* report, u16 len);
 void mouse_tick(uint64_t now);
 
