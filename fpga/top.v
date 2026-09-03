@@ -600,9 +600,16 @@ always @(posedge clk_54m) begin
     psg_port2_q <= msx_mouse_present ? msx_mouse_data
                                      : (joy1_msx & joy1_goauld_msx);
 end
-wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? (joy0_msx & joy0_goauld_msx) :
-                              (!psg_reg15_joy_sel[1]) ? psg_port2_q :
-                              8'hFF;
+// AVISO 03/09: el puerto 2 exigia ADEMAS que el bit7 del registro 15 fuera 0. El
+// bit7 NO es el selector de puerto: en el estandar MSX el registro 15 bit6 elige
+// solo (0 = puerto 1, 1 = puerto 2). Con el software pidiendo el puerto 2
+// (bit6=1) y el bit7 a 1, esto devolvia 8'hFF y NI EL RATON NI EL JOYSTICK DEL
+// JUGADOR 2 se leian nunca. El MSXimus, donde el raton SI funciona, usa solo el
+// bit6 (psg_reg15_port2 <= cpu_dout[6]). Diagnosticado con el puerto 0x2B: daba
+// BF = protocolo del raton corriendo (el pin 8 cambia y la fase avanza) pero el
+// puerto 2 NUNCA seleccionado.
+wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? (joy0_msx & joy0_goauld_msx)
+                                                      : psg_port2_q;
 // ===== CINTA VIRTUAL: bit7 del PortA del PSG (CASIN) = dato de cas_stream =====
 // Comparte el bit7 con el joystick fusionado BL616+Pico (bits[6:0] intactos).
 // En reposo va a 1 como un MSX real sin senal de cinta; reproduciendo, KCS.
