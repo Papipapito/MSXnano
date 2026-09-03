@@ -576,8 +576,24 @@ wire       msx_mouse_present;
 wire [2:0] msx_mouse_phase;
 reg  [1:0] mo_rep_cnt = 2'd0;
 always @(posedge clk_54m) if (mo_pulse) mo_rep_cnt <= mo_rep_cnt + 1'b1;
-wire [7:0] mouse_dbg = {msx_mouse_present, ~psg_reg15_joy_sel[1], psgPB[5],
-                        msx_mouse_phase, mo_rep_cnt};
+// Los bits 6, 5 y 4 son PEGAJOSOS: se quedan marcados si el suceso ocurre ALGUNA
+// VEZ. Sin esto habia que leerlos justo mientras el programa del raton corre, y
+// desde un bucle de INP en BASIC salen siempre a 0 aunque el programa si los
+// active. Se limpian con un reset del MSX.
+reg mo_st_p2 = 1'b0;      // el software ha sondeado el PUERTO 2 alguna vez
+reg mo_st_pin8 = 1'b0;    // el pin 8 (psgPB[5]) ha cambiado alguna vez
+reg mo_st_phase = 1'b0;   // la fase del handshake ha avanzado alguna vez
+reg mo_pin8_d = 1'b0;
+reg [2:0] mo_phase_d = 3'd0;
+always @(posedge clk_54m) begin
+    mo_pin8_d  <= psgPB[5];
+    mo_phase_d <= msx_mouse_phase;
+    if (!psg_reg15_joy_sel[1])          mo_st_p2    <= 1'b1;
+    if (psgPB[5] != mo_pin8_d)          mo_st_pin8  <= 1'b1;
+    if (msx_mouse_phase != mo_phase_d)  mo_st_phase <= 1'b1;
+end
+wire [7:0] mouse_dbg = {msx_mouse_present, mo_st_p2, mo_st_pin8, mo_st_phase,
+                        msx_mouse_phase[1:0], mo_rep_cnt};
 
 reg [7:0] psg_port2_q = 8'hFF;
 always @(posedge clk_54m) begin
