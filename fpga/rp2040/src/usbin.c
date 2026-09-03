@@ -209,14 +209,16 @@ static void joy_emit(uint8_t port, uint8_t b, bool bump_led) {
 static volatile int32_t mou_acc_x = 0, mou_acc_y = 0;
 static volatile uint8_t mou_btn   = 0;
 static volatile uint8_t mou_dirty = 0;
-volatile uint8_t g_mouse_mounted  = 0;
-
-// Informe de raton en protocolo BOOT: [botones][dx][dy], dx/dy con signo.
+// Informe de raton. Se pide BOOT al montarlo -> [botones][dx][dy]. Pero si el
+// raton IGNORA el SET_PROTOCOL (algunos lo hacen, y detras de un hub pasa mas)
+// puede seguir en REPORT y colar un ID delante. Se detecta por la longitud: 3 =
+// boot; 4 o mas = hay ID en report[0] y los datos empiezan uno mas alla.
 void mouse_report_receive(u8 const* report, u16 len) {
     if(len < 3) return;
-    mou_acc_x += (int8_t)report[1];
-    mou_acc_y += (int8_t)report[2];
-    mou_btn    = (u8)(report[0] & 0x03);   // bit0 izq, bit1 der
+    u8 const *r = (len >= 4) ? report + 1 : report;
+    mou_acc_x += (int8_t)r[1];
+    mou_acc_y += (int8_t)r[2];
+    mou_btn    = (u8)(r[0] & 0x03);        // bit0 izq, bit1 der
     mou_dirty  = 1;
     g_last_key_us = time_us_64();          // parpadeo del LED de estado
 }
@@ -937,15 +939,20 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 	u8 slot = hid_slot_get(dev_addr, instance, true);
 	if(slot == 0xFF) return;   // hid_info pool full (>16 interfaces): ignore extra
 	hid_info[slot].report_count = hid_parse_report_descriptor(hid_info[slot].report_info, MAX_REPORT, desc_report, desc_len);
+	// RATON: el SET_PROTOCOL va ANTES de armar la peticion de informe. Al reves
+	// (como estaba) TinyUSB invalida la peticion ya armada al cambiar de
+	// protocolo y NADIE la vuelve a armar: el raton se monta pero no llega ni un
+	// informe. Sintoma exacto del 03/09 en el MSXnano.
+	if(hid_if_proto == HID_ITF_PROTOCOL_MOUSE) {
+	    // BOOT: informe fijo de 3 bytes, lo soportan TODOS los ratones. Evita
+	    // interpretar descriptores raros y funciona igual detras de un hub.
+	    tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
+	    mou_acc_x = 0; mou_acc_y = 0; mou_btn = 0; mou_dirty = 0;
+	    g_mouse_mounted = 1;
+	}
 	if(!tuh_hid_receive_report(dev_addr, instance)) {
 	} else {
-		if(hid_if_proto == HID_ITF_PROTOCOL_MOUSE) {
-		    // BOOT: informe fijo de 3 bytes, lo soportan TODOS los ratones. Evita
-		    // tener que interpretar descriptores raros, y funciona igual detras de
-		    // un receptor inalambrico, que expone el raton en su propia interfaz.
-		    tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
-		    mou_acc_x = 0; mou_acc_y = 0; mou_btn = 0; mou_dirty = 0;
-		    g_mouse_mounted = 1;
+		if(0) {
 		} else if(hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD) {
 			for(uint8_t i = 0; i < 8; i++) {
 				if(keyboards[i].dev_addr == 0 && keyboards[i].instance == 0) {

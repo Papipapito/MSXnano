@@ -491,6 +491,7 @@ wire [7:0] joystick1;
 
 // goauld RP2040 companion outputs (declared here, before first use at the joystick
 // remap ~L535 and the keyboard read ~L568, to avoid an implicit 1-bit net).
+wire       kbd_cmd_turbo;  // pulso de 1 ciclo del F11 del teclado USB (Pico)
 wire [7:0] vkey_row;   // active-low MSX matrix row from kbd_uart_rx (selected by keyboard_addr)
 wire [7:0] gjoy0;      // active-high USB joy port 0 from kbd_uart_rx
 wire [7:0] gjoy1;      // active-high USB joy port 1 from kbd_uart_rx
@@ -1040,14 +1041,19 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
     // reaches the FPGA, so F11 (which does reach it, verified on HW) is used instead.
     reg turbo   = 1'b0;
     assign turbo_status = turbo;   // expone el estado turbo a un pin del FPGA (para el ESP32-C6 LCD)
-    // v1.9c: F11 ELIMINADO de ambos teclados (BL616 keyboard[68] + Pico cmd_turbo_toggle).
-    // El turbo se controla SOLO por OUT &H41,n (software Panasonic, estilo T9769) y el
-    // "Boot Turbo" del menu de settings (#45, arranque en frio). Sin atajo de tecla.
+      // v1.9c quito F11 de los DOS teclados por timing; el del Pico se DEVUELVE
+      // el 03/09 (clk_54m cierra ya a 58,9 MHz, +4,9 de margen). Ademas del F11,
+      // el turbo se controla por OUT &H41,n (software Panasonic, estilo T9769) y
+      // por el "Boot Turbo" del menu de ajustes (#45, persistido en flash).
     always @ (posedge clk_54m) begin
         // v1.9: control software Panasonic — OUT &H41,n con el dispositivo 8
         // seleccionado (decode pana41_wr junto al bloque config). bit0 activo-bajo:
         // 0 = turbo 5.37 MHz, 1 = 3.58. Puesto tras el F11: si coinciden en el
         // mismo ciclo gana el software (en el T9769 real el puerto es el unico control).
+        // F11 del teclado USB del Pico: conmuta el turbo. Va ANTES del puerto
+        // Panasonic a proposito -> si coinciden en el mismo ciclo gana el software.
+        if (kbd_cmd_turbo)
+            turbo <= ~turbo;
         if (pana41_wr)
             turbo <= ~cpu_dout[0];
         // v1.9: "Boot Turbo" persistido (ajuste del menu, puerto #45). Siembra el
@@ -3000,9 +3006,11 @@ memory_ctrl mem1 (
         .cmd_scanline_toggle (),
         .cmd_reset_pulse     (),
         .cmd_osd_toggle      (),
-        // F11 del teclado Pico -> pulso turbo. Sin cablear en v1: el turbo del
-        // Nano va por el BL616 (keyboard[68]) y el menu. (Gowin poda el puerto.)
-        .cmd_turbo_toggle    (),
+          // F11 del teclado Pico -> pulso de turbo. CABLEADO el 03/09: en julio
+          // rompia el timing (clk_54m iba a 54,195 con 0,195 de margen y el mux
+          // desataba un colapso de placement hasta 46 MHz). Hoy clk_54m cierra a
+          // 58,9 -> +4,9 de margen, que es el headroom que pedia aquel commit.
+          .cmd_turbo_toggle    (kbd_cmd_turbo),
         // Raton USB (mensaje 0xD0 del Pico) -> msx_mouse.v, justo debajo.
         .mouse_dx            (mo_dx),
         .mouse_dy            (mo_dy),
