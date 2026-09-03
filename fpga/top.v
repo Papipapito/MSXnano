@@ -565,6 +565,20 @@ wire       msx_mouse_present;
 // El retardo de un ciclo (18,5 ns) es INVISIBLE aqui: el MSX sondea el raton
 // por handshake y entre el OUT del strobe y el IN siguiente pasan varios
 // T-estados de ~280 ns. Lo mismo vale para el joystick, que se lee por frame.
+// ---- Diagnostico del raton: I/O 0x2B ---------------------------------------
+//   PRINT HEX$(INP(&H2B))   (portado del 0x2E del MSXimus)
+//   bit7 = hay raton vivo (mouse_present del decodificador del UART)
+//   bit6 = el software esta sondeando el PUERTO 2  (si sale 0 -> mira el 1)
+//   bit5 = estado del pin 8 (psgPB[5]): si NO cambia, el software no habla el
+//          protocolo del raton, solo lee el joystick
+//   bits4..2 = fase del handshake (0..7): si no avanza, el protocolo no corre
+//   bits1..0 = contador de informes del USB: si esta quieto, no llega nada
+wire [2:0] msx_mouse_phase;
+reg  [1:0] mo_rep_cnt = 2'd0;
+always @(posedge clk_54m) if (mo_pulse) mo_rep_cnt <= mo_rep_cnt + 1'b1;
+wire [7:0] mouse_dbg = {msx_mouse_present, ~psg_reg15_joy_sel[1], psgPB[5],
+                        msx_mouse_phase, mo_rep_cnt};
+
 reg [7:0] psg_port2_q = 8'hFF;
 always @(posedge clk_54m) begin
     psg_port2_q <= msx_mouse_present ? msx_mouse_data
@@ -688,6 +702,7 @@ reg  [7:0] cap_buf [0:15];
 reg  [4:0] cap_widx, cap_ridx;
 reg        cas_pv_d, d_rd_2c_d;
 wire d_wr_2c = (bus_iorq_n==0 && bus_m1_n==1 && bus_wr_n==0 && bus_addr[7:0]==8'h2C);
+wire d_rd_2b = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2B);
 wire d_rd_2c = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2C);
 wire d_rd_2d = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2D);
 wire d_rd_2e = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2E);
@@ -744,6 +759,7 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
     always @ (posedge clk_54m) begin
         cpu_din <=
                 ( ver_req_r == 1 ) ? FPGA_VERSION :
+                ( d_rd_2b == 1 ) ? mouse_dbg :
                 ( d_rd_2c == 1 ) ? cap_dout :
                 ( d_rd_2d == 1 ) ? diag_status :
                 ( d_rd_2e == 1 ) ? tape_fill[10:3] :
@@ -3037,7 +3053,7 @@ memory_ctrl mem1 (
         .sens      (MOUSE_SENS),
         .strobe    (psgPB[5]),                 // pin 8 del PUERTO 2
         .data      (msx_mouse_data),
-        .dbg_phase ()
+        .dbg_phase (msx_mouse_phase)
     );
 
 endmodule
