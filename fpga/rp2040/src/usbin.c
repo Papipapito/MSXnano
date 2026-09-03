@@ -631,14 +631,33 @@ bool hid_parse_keyboard_is_nkro(hid_report_info_t* report_info_arr) {
 // held does NOT drop the MSX SHIFT.
 //   HID bits: 0 LCtrl,1 LShift,2 LAlt,3 LGUI,4 RCtrl,5 RShift,6 RAlt,7 RGUI
 //   SHIFT = bits 1|5 (0x22)   CTRL = bits 0|4 (0x11)
-//   GRAPH = bit  2   (0x04)   CODE = bit  6   (0x40)
+//   GRAPH = bits 2|3|7 (0x8C)  CODE = bit  6   (0x40)
+//   GRAPH sale del Alt izquierdo Y DE LAS DOS TECLAS WINDOWS: el Alt derecho ya
+//   es CODE y AltGr manda RAlt, asi que dejar GRAPH solo en LAlt era incomodo.
 static inline uint8_t derive_modifiers(uint8_t mods) {
     uint8_t d = 0;
     if(mods & 0x22) d |= DRV_SHIFT;
     if(mods & 0x11) d |= DRV_CTRL;
-    if(mods & 0x04) d |= DRV_GRAPH;
+    if(mods & 0x8C) d |= DRV_GRAPH;   // LAlt + las DOS teclas Windows (LGUI/RGUI)
     if(mods & 0x40) d |= DRV_CODE;
     return d;
+}
+
+// F6..F10 en un MSX son SHIFT + F1..F5: no tienen celda propia. keymaps.h las
+// mapea a la celda de F1..F5 y aqui se SINTETIZA el SHIFT alrededor.
+// shift_out = lo que la FPGA cree que vale la celda de SHIFT ahora mismo, para
+// no repetir MAKE/BREAK. Sale del OR de (SHIFT fisico) con (hay alguna F6..F10
+// pulsada): por eso soltar el Shift fisico teniendo una F6..F10 apretada NO
+// tumba el shift sintetico, ni al reves.
+static inline bool needs_shift(uint8_t k) { return k >= 0x3F && k <= 0x43; }
+static uint8_t shift_out = 0;
+
+// Deja la celda de SHIFT en el estado pedido, solo si cambia.
+static inline void sync_shift(uint8_t want) {
+    if(want != shift_out) {
+        emit_event(want ? OP_MAKE : OP_BREAK, MOD_CELL_SHIFT);
+        shift_out = want;
+    }
 }
 
 // Map a USB HID usage code to an MSX matrix cell.
@@ -657,8 +676,8 @@ void kb_report_receive(uint8_t modifiers, uint8_t const* report, u16 len) {
 	uint8_t derived = derive_modifiers(modifiers);
 	if(derived != prev_derived) {
 		uint8_t changed = derived ^ prev_derived;
-		if(changed & DRV_SHIFT)
-			emit_event((derived & DRV_SHIFT) ? OP_MAKE : OP_BREAK, MOD_CELL_SHIFT);
+		// SHIFT no se emite aqui: lo resuelve sync_shift() abajo, que combina
+		// el Shift fisico con el sintetico de F6..F10.
 		if(changed & DRV_CTRL)
 			emit_event((derived & DRV_CTRL)  ? OP_MAKE : OP_BREAK, MOD_CELL_CTRL);
 		if(changed & DRV_GRAPH)
@@ -668,6 +687,14 @@ void kb_report_receive(uint8_t modifiers, uint8_t const* report, u16 len) {
 		prev_derived = derived;
 	}
 	kb_modifiers = modifiers;
+
+	// ---- 1b. SHIFT efectivo ANTES de los MAKEs: fisico OR sintetico ----
+	//      Se cuenta sobre el informe NUEVO, asi el SHIFT ya esta puesto cuando
+	//      se emite la celda de la F6..F10 (el MSX escanea la matriz a 60 Hz, y
+	//      los dos bytes salen en la misma rafaga del UART).
+	uint8_t synth = 0;
+	for(uint8_t i = 0; i < len; i++) if(report[i] && needs_shift(report[i])) synth = 1;
+	if((derived & DRV_SHIFT) || synth) sync_shift(1);
 
 	// ---- 2. BREAKs: keys present in prev_keys but absent from report ----
 	for(uint8_t i = 0; i < sizeof(prev_keys); i++) {
@@ -697,6 +724,10 @@ void kb_report_receive(uint8_t modifiers, uint8_t const* report, u16 len) {
 			else if(cell)   emit_command(cell);          // command opcode (F6..F12)
 		}
 	}
+
+	// ---- 3b. y soltar el SHIFT si ya no lo pide nadie (despues de los BREAKs
+	//      de las teclas, para no soltarlo antes de tiempo) ----
+	if(!((derived & DRV_SHIFT) || synth)) sync_shift(0);
 
 	// ---- 4. Snapshot the new key set ----
 	memset(prev_keys, 0, sizeof(prev_keys));

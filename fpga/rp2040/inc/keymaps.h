@@ -130,20 +130,21 @@ static const uint8_t keycode_to_goauld[256] = {
     [0x3D] = 0x80 | (0 << 4) | 7, // F4 -> row7 bit0 (0x87)
     [0x3E] = 0x80 | (1 << 4) | 7, // F5 -> row7 bit1 (0x97)
 
-    // ---- F6, F7 -> MSX STOP / GRAPH matrix cells (preserves original
-    //       firmware behaviour; the FPGA has these cells via ScrollLock/End
-    //       and the GRAPH modifier, so driving them from F6/F7 is harmless). ----
-    [0x3F] = 0x80 | (4 << 4) | 7, // F6 -> row7 bit4 (0xC7) MSX STOP
-    [0x40] = 0x80 | (2 << 4) | 6, // F7 -> row6 bit2 (0xA6) MSX GRAPH
+    // ---- F6..F10 -> lo que son en un MSX de verdad: SHIFT + F1..F5 ----
+    //   Se mapean a la MISMA celda que F1..F5; el SHIFT lo SINTETIZA usbin.c
+    //   (needs_shift()), asi que aqui solo va la celda base.
+    [0x3F] = 0x80 | (5 << 4) | 6, // F6  -> F1 + SHIFT  row6 bit5
+    [0x40] = 0x80 | (6 << 4) | 6, // F7  -> F2 + SHIFT  row6 bit6
+    [0x41] = 0x80 | (7 << 4) | 6, // F8  -> F3 + SHIFT  row6 bit7
+    [0x42] = 0x80 | (0 << 4) | 7, // F9  -> F4 + SHIFT  row7 bit0
+    [0x43] = 0x80 | (1 << 4) | 7, // F10 -> F5 + SHIFT  row7 bit1
 
-    // ---- F8..F12 -> COMMAND opcodes (bit7==0), sent raw on the press edge. ----
-    //   0x01 scanline / 0x03 OSD are decoded but unconnected in the FPGA (no-op).
-    //   0x04 = TURBO toggle (F11) IS wired: flips config2_ff[4] live (v1.3).
-    [0x41] = 0x01, // F8  -> command 0x01 (scanline, no-op)
-    [0x42] = 0x03, // F9  -> command 0x03 (OSD, no-op)
-    [0x43] = 0x03, // F10 -> command 0x03 (OSD, no-op)
-    [0x44] = 0x04, // F11 -> command 0x04 (TURBO toggle, live)
-    [0x45] = 0x02, // F12 -> command 0x02 (reset, no-op)
+    // ---- F11 y F12 ----
+    //   F11 = comando 0x04 (TURBO). El firmware lo manda, pero en el MSXnano el
+    //   puerto cmd_turbo_toggle de top.v esta SIN CABLEAR -> hoy es no-op.
+    //   F12 = STOP del MSX (peticion de Albert), misma celda que ScrollLock.
+    [0x44] = 0x04,                // F11 -> comando 0x04 (TURBO; no-op hasta cablearlo)
+    [0x45] = 0x80 | (4 << 4) | 7, // F12 -> MSX STOP  row7 bit4 (0xC7)
 };
 
 #endif
