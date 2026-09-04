@@ -25,13 +25,7 @@ module top
     // ex_bus_data_reverse_n, ex_bus_mp) are now INTERNAL wires/tie-offs (see below).
 
     // interface to external FPGA companion - USB KEYBOARD and gamepads (BL616)
-    inout wire [4:0] m0s,
     // SPI to on-board BL616 (FPGA Companion)
-    input  wire spi_sclk,
-    input  wire spi_csn,
-    output wire spi_dir,
-    input  wire spi_dat,
-    output wire spi_irqn,
 
     // discrete status LEDs (active low)
     output wire [5:0] led,
@@ -485,9 +479,7 @@ end
 wire psg_req_r;
 assign psg_req_r = (bus_addr[7:0] == 8'hA2 && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0) ? 1 : 0;
 
-// USB joystick data wires (driven by fpga_companion instance below)
-wire [7:0] joystick0;
-wire [7:0] joystick1;
+// Joystick USB: ya solo el de la RP2040 (gjoy0/gjoy1 desde kbd_uart_rx).
 
 // goauld RP2040 companion outputs (declared here, before first use at the joystick
 // remap ~L535 and the keyboard read ~L568, to avoid an implicit 1-bit net).
@@ -537,15 +529,9 @@ always @(posedge clk_54m) begin
 end
 // fire = manual press OR (autofire button held AND square-wave high). If the pad
 // has no button 3/4 (bits 6/7 stay 0) this reduces to the original behaviour.
-wire af_fa0 = joystick0[4] | (joystick0[6] & af_phase);   // joy0 TrigA: manual + btn3 turbo
-wire af_fb0 = joystick0[5] | (joystick0[7] & af_phase);   // joy0 TrigB: manual + btn4 turbo
-wire af_fa1 = joystick1[4] | (joystick1[6] & af_phase);   // joy1 TrigA
-wire af_fb1 = joystick1[5] | (joystick1[7] & af_phase);   // joy1 TrigB
 
 // Companion joy byte (active-high): bit0=Right, bit1=Left, bit2=Down, bit3=Up, bit4=A, bit5=B
 // MSX PSG Port A (active-low):      bit0=Up,    bit1=Down,  bit2=Left, bit3=Right, bit4=TrigA, bit5=TrigB
-wire [7:0] joy0_msx = {2'b11, ~af_fb0, ~af_fa0, ~joystick0[0], ~joystick0[1], ~joystick0[2], ~joystick0[3]};
-wire [7:0] joy1_msx = {2'b11, ~af_fb1, ~af_fa1, ~joystick1[0], ~joystick1[1], ~joystick1[2], ~joystick1[3]};
 // goauld RP2040 joystick — SAME active-high->MSX active-low remap as joyN_msx.
 // (No autofire on this path: the RP2040 joy byte has no bits6/7. BL616 autofire preserved.)
 // Idle/absent Pico -> gjoyN=0x00 -> remap 0xFF -> AND transparent to the BL616 pad.
@@ -598,7 +584,7 @@ wire [7:0] mouse_dbg = {msx_mouse_present, mo_st_p2, mo_st_pin8, mo_st_phase,
 reg [7:0] psg_port2_q = 8'hFF;
 always @(posedge clk_54m) begin
     psg_port2_q <= msx_mouse_present ? msx_mouse_data
-                                     : (joy1_msx & joy1_goauld_msx);
+                                     : joy1_goauld_msx;
 end
 // AVISO 03/09: el puerto 2 exigia ADEMAS que el bit7 del registro 15 fuera 0. El
 // bit7 NO es el selector de puerto: en el estandar MSX el registro 15 bit6 elige
@@ -608,7 +594,7 @@ end
 // bit6 (psg_reg15_port2 <= cpu_dout[6]). Diagnosticado con el puerto 0x2B: daba
 // BF = protocolo del raton corriendo (el pin 8 cambia y la fase avanza) pero el
 // puerto 2 NUNCA seleccionado.
-wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? (joy0_msx & joy0_goauld_msx)
+wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? joy0_goauld_msx
                                                       : psg_port2_q;
 // ===== CINTA VIRTUAL: bit7 del PortA del PSG (CASIN) = dato de cas_stream =====
 // Comparte el bit7 con el joystick fusionado BL616+Pico (bits[6:0] intactos).
@@ -642,8 +628,6 @@ wire ppi_bc_rd = (bus_addr[7:2] == 6'b101010) && (bus_addr[1] ^ bus_addr[0])
                  && bus_iorq_n == 0 && bus_m1_n == 1 && bus_rd_n == 0;
 
 wire [3:0] keyboard_addr;
-reg [7:0] keyboard_data;
-wire [1:12] function_keys;
 
 // EL BIT SET/RESET SE APLICA UNA VEZ, AL TERMINAR LA ESCRITURA (no por nivel).
 // El dato de ABh elige QUE BIT se toca, asi que un valor a medio formar escribe
@@ -774,14 +758,11 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
     .dbg_st   (cas_dbg_st)
 );
 
-    // v1.9: FPGA/bitstream version readable on I/O port 0x2F. The boot menu reads it and
-    // warns if you flashed mismatched .fs/.bin (e.g. a v1.8 bitstream + a v1.7 BIOS pack).
-    // Encoding 0x1X = version 1.X. Bump FPGA_VERSION each release together with the pack.
-    localparam [7:0] FPGA_VERSION = 8'h19;
-    wire ver_req_r = (bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0 && bus_addr[7:0] == 8'h2F);
+    // El control de version del bitstream (puerto 0x2F) se quito el 03/09:
+    // dos numeros que mantener acaban con uno mintiendo. El menu ya trata
+    // el 0xFF como "n/a" y lo imprime asi, sin avisos.
     always @ (posedge clk_54m) begin
         cpu_din <=
-                ( ver_req_r == 1 ) ? FPGA_VERSION :
                 ( d_rd_2b == 1 ) ? mouse_dbg :
                 ( d_rd_2c == 1 ) ? cap_dout :
                 ( d_rd_2d == 1 ) ? diag_status :
@@ -791,7 +772,7 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
                      ( psg2_req_r == 1 ) ? psg2_dout :
                 `endif
                 // bit1=1 -> AAh (releer el latch del puerto C); bit1=0 -> A9h (teclado)
-                ( ppi_bc_rd == 1 ) ? (bus_addr[1] ? ppi_port_c : (keyboard_data & vkey_row)) :
+                ( ppi_bc_rd == 1 ) ? (bus_addr[1] ? ppi_port_c : vkey_row) :
                 `ifdef ENABLE_V9958
                      ( vdp_csr_n == 0) ? vdp_dout :
                 `endif
@@ -2956,17 +2937,23 @@ memory_ctrl mem1 (
     // LED4 tambien parpadea (~1.8Hz) mientras la cinta virtual esta cargando,
     // para ver actividad durante los minutos de carga sin feedback en pantalla.
     assign led[4] = ~(sd_busy_w | (cas_motor & cas_playing & led_heartbeat));
-    assign led[3] = ~joystick0[5];
-    assign led[2] = ~joystick0[4];
-    assign led[1] = ~(|joystick0[3:0]);
-    assign led[0] = ~(|joystick1[5:0]);
+    assign led[3] = ~gjoy0[5];
+    assign led[2] = ~gjoy0[4];
+    assign led[1] = ~(|gjoy0[3:0]);
+    assign led[0] = ~(|gjoy1[5:0]);
 
     // ===== External WS2812B status strip (8 LEDs, e.g. CJMCU-2812-8) on the case =====
     // One data pin (ws2812_led) drives the whole chain; colours from internal state.
     wire caps_on  = ~ppi_port_c[6];                       // MSX CAPS LED (PPI port C bit6, active-low)
-    wire kana_on  = keyboard[106];                        // CODE/KANA key held (Left Alt)
-    wire joy_on   = (|joystick0[5:0]) | (|joystick1[5:0]);
-    wire kbd_raw  = |keyboard;                            // any key held
+    // CODE/KANA: antes se leia del bus de 128 bits del BL616. Con la Pico solo
+    // hay la FILA que se esta escaneando, asi que se engancha al paso de la
+    // fila 6 (bit4 = CODE) y se queda registrado hasta el siguiente barrido.
+    reg kana_on_r = 1'b0;
+    always @(posedge clk_54m)
+        if (keyboard_addr == 4'd6) kana_on_r <= ~vkey_row[4];
+    wire kana_on  = kana_on_r;
+    wire joy_on   = (|gjoy0[5:0]) | (|gjoy1[5:0]);
+    wire kbd_raw  = ~&vkey_row;   // alguna tecla pulsada en la fila que se escanea
     wire wifi_raw = ~uart_tx | ~uart_rx;                  // WiFi UART active (idle = high)
 
     wire disk_act, wifi_act, kbd_act;
@@ -2992,37 +2979,12 @@ memory_ctrl mem1 (
     );
 
     // ===== STANDALONE MERGE: USB host (BL616 FPGA Companion) — from MSXnano =====
-    wire [127:0] keyboard;
-    fpga_companion fpga_companion_inst
-    (
-        .clk (clk_27m),
-        .reset (~bus_reset_n),
-
-        .m0s (m0s),
-
-        .spi_sclk (spi_sclk),
-        .spi_csn (spi_csn),
-        .spi_dir (spi_dir),
-        .spi_dat (spi_dat),
-        .spi_irqn (spi_irqn),
-
-        .keyboard (keyboard),
-        .joystick0 (joystick0),
-        .joystick0_console (),
-        .joystick1 (joystick1),
-        .ws2812_color ()    // LEDs are discrete; WS2812 not used
-    );
-
-    usb_keyboard_msx usb_keyboard_msx
-    (
-        .CLK (clk_27m),
-        .RESET (~bus_reset_n),
-
-        .keyboard (keyboard),
-        .A (keyboard_addr),
-        .DO (keyboard_data),
-        .FN (function_keys)
-    );
+    // ===== BL616 ELIMINADO (03/09): esta version usa la RP2040 al 100% =====
+    // Los BL616 de a bordo de las Tang nuevas vienen bloqueados, asi que el
+    // teclado, el joystick y el raton USB entran TODOS por el UART de la Pico
+    // (pin 31). Se quitan fpga_companion, usb_keyboard_msx y los 5 pines del SPI:
+    // eran logica muerta que ademas metia un reloj INFERIDO (aviso TA1132) y se
+    // llevaba los peores caminos de hold del informe.
 
     // ===== goauld RP2040 USB keyboard/joystick companion over UART (pin 31) =====
     // Complements the BL616. Same protocol/params as the goauld build so the RP2040
@@ -3039,9 +3001,6 @@ memory_ctrl mem1 (
         .vkey_row_out        (vkey_row),
         .joy_state0          (gjoy0),
         .joy_state1          (gjoy1),
-        // version-guard (0xC0<ver>): el Nano ya usa I/O 0x2F para la version del
-        // bitstream -> dejamos fw_version SIN conectar (Gowin lo poda).
-        .fw_version          (),
         .cmd_scanline_toggle (),
         .cmd_reset_pulse     (),
         .cmd_osd_toggle      (),

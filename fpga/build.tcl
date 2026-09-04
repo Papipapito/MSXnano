@@ -1,4 +1,4 @@
-set_device GW2AR-LV18QN88C8/I7
+set_device -name GW2AR-18C GW2AR-LV18QN88C8/I7
 
 # ----- regenerated from Z80_goauld.gprj (authoritative current file list) -----
 # Verilog
@@ -74,13 +74,8 @@ add_file src/kbd_uart_rx.v
 # arriba. Sin esta linea el modulo NO entra en la sintesis.
 add_file src/msx_mouse.v
 
-# ----- STANDALONE MERGE: USB subsystem (BL616 FPGA Companion) -----
-# NOTE: add mcu_spi_new.v ONLY (mcu_spi.v has a colliding "module mcu_spi"). ws2812.v unused.
-add_file src/usb/fpga_companion.v
-add_file src/usb/hid.v
-add_file src/usb/mcu_spi_new.v
-add_file src/usb/sys_ctrl.v
-add_file src/usb/usb_keyboard_msx.vhd
+# El subsistema USB del BL616 (src/usb/) se quito el 03/09: teclado, joystick
+# y raton entran TODOS por el UART de la RP2040 (src/kbd_uart_rx.v).
 
 # VHDL
 add_file G80A/T80s.vhd

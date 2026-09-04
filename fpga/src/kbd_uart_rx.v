@@ -74,9 +74,6 @@ module kbd_uart_rx #(
     output reg  [7:0]  joy_state0,
     output reg  [7:0]  joy_state1,
 
-    // RP2040 firmware version as announced via 0xC0 <ver>; 0x00 = never seen /
-    // link down. Read by the top-level version guard (I/O 0x2E index 0).
-    output reg  [7:0]  fw_version,
 
     // Pulse outputs. scanline/reset/osd are left open at instantiation (Gowin
     // trims them). cmd_turbo_toggle (0x04, from F11) IS wired in top.v -> toggles
@@ -228,7 +225,6 @@ module kbd_uart_rx #(
             vkey_matrix[i] = 8'hFF;
         joy_state0 = 8'h00;
         joy_state1 = 8'h00;
-        fw_version = 8'h00;
     end
 
     localparam [3:0] D_IDLE     = 4'd0,   // waiting for a command/opcode byte
@@ -287,7 +283,6 @@ module kbd_uart_rx #(
             joy_port            <= 1'b0;
             joy_state0          <= 8'h00;  // active-high: nothing pressed
             joy_state1          <= 8'h00;
-            fw_version          <= 8'h00;  // no firmware announced
             cmd_scanline_toggle <= 1'b0;
             cmd_reset_pulse     <= 1'b0;
             cmd_osd_toggle      <= 1'b0;
@@ -364,7 +359,8 @@ module kbd_uart_rx #(
                     // D_VERSION: this byte is the RP2040 firmware version.
                     //--------------------------------------------------------
                     D_VERSION: begin
-                        fw_version <= rx_byte;
+                        // se descarta: ya no hay guardia de version, pero hay
+                        // que CONSUMIR el byte o se decodificaria como comando.
                         dstate     <= D_IDLE;
                     end
 
@@ -415,7 +411,6 @@ module kbd_uart_rx #(
                     vkey_matrix[i] <= 8'hFF;
                 joy_state0   <= 8'h00;   // release USB joystick too (active-high)
                 joy_state1   <= 8'h00;
-                fw_version   <= 8'h00;   // link down -> "no firmware announced"
                 dstate       <= D_IDLE;
                 pending_make <= 1'b0;
                 load_idx     <= 4'd0;

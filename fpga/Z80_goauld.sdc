@@ -15,25 +15,7 @@ create_generated_clock -name clock_108i -source [get_nets {clk_27m}] -master_clo
 create_generated_clock -name clock_VideoDHClk -source [get_nets {clk_27m}] -master_clock clock_27m -divide_by 2 [get_nets {VideoDHClk}] -add
 create_generated_clock -name clock_VideoDLClk -source [get_nets {clk_27m}] -master_clock clock_27m -divide_by 4 [get_nets {VideoDLClk}] -add
 set_clock_groups -asynchronous -group [get_clocks {clock_108m clock_108i clock_54m clock_VideoDHClk clock_VideoDLClk clock_27m }] -group [get_clocks {clock_reset }] -group [get_clocks {clock_env_reset clock_env_reset2 }]
-// FPGA-Companion SPI CDC (mcu_spi_new.v): spi_data_in is written in the BL616 SPI-clock
-// domain and only captured into spi_target/spi_in_data after a 2-FF-synchronized ready
-// flag, so the data is stable for many clk_54m cycles around capture (handshake-safe).
-// The return path (in_byte/dout mux -> spi_io_dout) is likewise stable before the BL616
-// clocks it out. STA cannot see the handshake -> exclude these specific paths.
-// launch FFs (spi_data_in) addressed BY PIN: their clock (BL616 SPI) is not a
-// constrained system clock, so -from clock matching would never hit them.
-set_false_path -from [get_pins {fpga_companion_inst/mcu/spi_data_in?*?/?*}] -to [get_pins {fpga_companion_inst/mcu/spi_target?*?/?*}]
-set_false_path -from [get_pins {fpga_companion_inst/mcu/spi_data_in?*?/?*}] -to [get_pins {fpga_companion_inst/mcu/spi_in_data?*?/?*}]
-// async flag entering its 2-FF synchronizer (readyD) -- canonical false path
-set_false_path -from [get_pins {fpga_companion_inst/mcu/spi_data_in_ready?*?/?*}] -to [get_pins {fpga_companion_inst/mcu/spi_data_in_readyD?*?/?*}]
-// into the SPI-clock capture FFs (spi_data_in): data comes from pads muxed by the
-// quasi-static spi_ext dock selector; capture clock is the slow BL616 SPI clock.
-set_false_path -from [get_clocks {clock_54m}] -to [get_pins {fpga_companion_inst/mcu/spi_data_in?*?/?*}]
-set_false_path -from [get_clocks {clock_27m}] -to [get_pins {fpga_companion_inst/mcu/spi_data_in?*?/?*}]
-set_false_path -from [get_pins {fpga_companion_inst/spi_ext?*?/?*}] -to [get_pins {fpga_companion_inst/mcu/spi_data_in?*?/?*}]
-set_false_path -from [get_pins {fpga_companion_inst/spi_ext?*?/?*}] -to [get_pins {fpga_companion_inst/mcu/spi_sr_in?*?/?*}]
-set_false_path -from [get_clocks {clock_54m}] -to [get_pins {fpga_companion_inst/mcu/spi_io_dout?*?/?*}]
-set_false_path -from [get_clocks {clock_27m}] -to [get_pins {fpga_companion_inst/mcu/spi_io_dout?*?/?*}]
+// (Las excepciones del SPI del BL616 se fueron el 03/09 con el propio BL616.)
 
 set_multicycle_path -from [get_clocks {clock_54m}] -to [get_pins {cpu1/?*?/D}] -setup -end 2
 set_multicycle_path -from [get_clocks {clock_54m}] -to [get_pins {cpu1/u0/Regs/?*?/?*}] -setup -end 2
