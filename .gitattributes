@@ -2,3 +2,15 @@
 # no falle por CR. Regla acotada a la herramienta de simulacion para no renormalizar
 # el resto del repo.
 tools/megaram_equiv/*.sh text eol=lf
+
+# Binarios MSX: con core.autocrlf=true, git solo los respeta por HEURISTICA de
+# contenido (busca NUL en los primeros 8 KB). Un binario que no la dispare se
+# trata como texto y se le destrozan los CRLF al hacer checkout. Ya paso una vez
+# con un AUTOEXEC.BAT. Regla explicita:
+*.COM binary
+*.SYS binary
+*.ROM binary
+*.DAT binary
+*.PAK binary
+*.bin binary
+*.fs  binary

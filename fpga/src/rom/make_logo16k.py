@@ -15,21 +15,38 @@ bg = tuple(int(BG[i:i+2], 16) for i in (0, 2, 4))
 W, ROM = 256, 16384
 
 # --- rutina Z80 (ensamblada a mano). Se completa LINES/addr tras la imagen ---
-def build_code(lines, y0, nbytes):
+def build_code(y0, nbytes):
+    # Rutina v4 del MSXimus (commits c8e9b66 + d1ad807 de MSX_up, validada byte a
+    # byte en openMSX contra logo16k_msximus.bin). Limpia la VRAM antes de dibujar
+    # (la original asumia VRAM a 0; en Console/MSXimus arranca con basura) y mantiene
+    # el display apagado durante paleta+clear+copia para que el logo aparezca de golpe.
     pal_addr = 0x4002 + CODE_LEN
     img_addr = pal_addr + 32
     vaddr = y0 * 128
     c = bytearray()
     c += b'\xF3'                                  # di
+    c += b'\x3A\xE0\xF3'                          # ld a,(RG1SAV)
+    c += b'\xE6\xBF'                              # and 0BFh   (bit6=0: display off)
+    c += b'\x32\xE0\xF3'                          # ld (RG1SAV),a -> CHGMOD arranca apagado
     c += b'\x3E\x05\xCD\x5F\x00'                  # ld a,5 / call CHGMOD (SCREEN 5)
     c += b'\xF3'                                  # di
+    c += b'\x3E\x20\xD3\x99'                      # ld a,20h / out (99),a  (R1=20h:
+    c += b'\x3E\x81\xD3\x99'                      # ld a,81h / out (99),a   display off)
+    c += b'\xAF\xD3\x99'                          # xor a / out (99),a  (R7 = 0:
+    c += b'\x3E\x87\xD3\x99'                      # ld a,87h / out (99),a  borde negro)
     c += b'\xAF\xD3\x99'                          # xor a / out (99),a   (R16=0)
     c += b'\x3E\x90\xD3\x99'                      # ld a,90h / out (99),a
     c += b'\x21' + pal_addr.to_bytes(2,'little')  # ld hl,PAL
     c += b'\x01\x9A\x20'                          # ld bc,209Ah (low 9A, high 20)
     c += b'\xED\xB3'                              # otir (32 bytes de paleta)
-    c += b'\xAF\xD3\x99'                          # xor a / out (99),a  (R7 = 0:
-    c += b'\x3E\x87\xD3\x99'                      # ld a,87h / out (99),a  borde=fondo)
+    c += b'\xAF\xD3\x99'                          # xor a / out (99),a   (R14=0)
+    c += b'\x3E\x8E\xD3\x99'                      # ld a,8Eh / out (99),a
+    c += b'\xAF\xD3\x99'                          # xor a / out (99),a   (addr=0, low)
+    c += b'\x3E\x40\xD3\x99'                      # ld a,40h / out (99),a (high|write)
+    c += b'\x01\x00\x6A'                          # ld bc,6A00h (212 lineas * 128)
+    c += b'\xAF\xD3\x98\x0B\x78\xB1\x20\xF8'      # fl: xor a/out(98),a/dec bc/ld a,b/or c/jr nz,fl
+    # el fill cruza los 16KB y el contador de VRAM del V9938 autoincrementa R#14
+    # -> sin re-escribir R#14=0 la imagen aterrizaria en 0x5C00
     c += b'\xAF\xD3\x99'                          # xor a / out (99),a   (R14=0)
     c += b'\x3E\x8E\xD3\x99'                      # ld a,8Eh / out (99),a
     c += bytes([0x3E, vaddr & 0xFF, 0xD3, 0x99])  # ld a,low / out (99),a
@@ -37,15 +54,20 @@ def build_code(lines, y0, nbytes):
     c += b'\x21' + img_addr.to_bytes(2,'little')  # ld hl,IMG
     c += b'\x11' + nbytes.to_bytes(2,'little')    # ld de,NBYTES
     c += b'\x7E\xD3\x98\x23\x1B\x7A\xB3\x20\xF7'  # lp: ld a,(hl)/out(98),a/inc hl/dec de/ld a,d/or e/jr nz,lp
-    c += b'\x11\x01\x00'                          # ld de,1 (~0.5s; el resto = escaneo SD bajo el logo)
+    c += b'\x3A\xE0\xF3'                          # ld a,(RG1SAV)
+    c += b'\xF6\x40'                              # or 40h   (bit6=1: display on)
+    c += b'\x32\xE0\xF3'                          # ld (RG1SAV),a
+    c += b'\x3E\x60\xD3\x99'                      # ld a,60h / out (99),a  (R1=60h:
+    c += b'\x3E\x81\xD3\x99'                      # ld a,81h / out (99),a   logo visible)
+    c += b'\x11\x08\x00'                          # ld de,8 (~3.5s en pantalla)
     c += b'\x01\x00\x00'                          # w1: ld bc,0
     c += b'\x0B\x78\xB1\x20\xFB'                  # w2: dec bc/ld a,b/or c/jr nz,w2
-    c += b'\x1B\x7A\xB3\x20\xF6'                  # dec de/ld a,d/or e/jr nz,w1
+    c += b'\x1B\x7A\xB3\x20\xF3'                  # dec de/ld a,d/or e/jr nz,w1
     c += b'\xC9'                                  # ret
     assert len(c) == CODE_LEN, len(c)
     return c
 
-CODE_LEN = 76
+CODE_LEN = 133
 
 # --- imagen ---
 im = Image.open(SRC).convert('RGBA')
@@ -89,7 +111,7 @@ y0 = (212 - nh) // 2
 
 rom = bytearray(b'\xFF' * ROM)
 rom[0:2] = b'LG'
-rom[2:2+CODE_LEN] = build_code(nh, y0, nbytes)
+rom[2:2+CODE_LEN] = build_code(y0, nbytes)
 off = 2 + CODE_LEN
 for r, g, b2 in msxpal:
     rom[off] = (r << 4) | b2          # byte1 = R..B (formato paleta V9938)
