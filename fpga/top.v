@@ -758,11 +758,17 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
     .dbg_st   (cas_dbg_st)
 );
 
-    // El control de version del bitstream (puerto 0x2F) se quito el 03/09:
-    // dos numeros que mantener acaban con uno mintiendo. El menu ya trata
-    // el 0xFF como "n/a" y lo imprime asi, sin avisos.
+    // Version del bitstream, legible en el puerto 0x2F. El menu la PINTA en
+    // Ajustes y nada mas: el GUARDA de desajuste .fs/.bin se quito y no vuelve
+    // (dos numeros que mantener acaban con uno mintiendo). Esto es solo para
+    // saber que .fs esta corriendo, que es justo lo que se toca a menudo.
+    // Codificacion 0xMN = version M.N; 0xFF lo lee el menu como "desconocida".
+    // Subirla en cada release, junto con el pack.
+    localparam [7:0] FPGA_VERSION = 8'h19;
+    wire ver_req_r = (bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0 && bus_addr[7:0] == 8'h2F);
     always @ (posedge clk_54m) begin
         cpu_din <=
+                ( ver_req_r == 1 ) ? FPGA_VERSION :
                 ( d_rd_2b == 1 ) ? mouse_dbg :
                 ( d_rd_2c == 1 ) ? cap_dout :
                 ( d_rd_2d == 1 ) ? diag_status :
