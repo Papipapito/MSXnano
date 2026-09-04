@@ -65,8 +65,6 @@ module top
     input  wire kbd_uart_rx_pin,
 
     // cinta por STREAM: UART desde el ESP32-C6 (UART1) + flow control por nivel
-    input  wire tape_rx,       // pin 26: bytes del stream CVS1 (115200 8N1)
-    output wire tape_rtr,      // pin 32: 1 = "sigue mandando" (histeresis del FIFO)
 
     // Magic ports for SDRAM to be inferred
     output wire O_sdram_clk,
@@ -596,13 +594,10 @@ end
 // puerto 2 NUNCA seleccionado.
 wire [7:0] psg_joy_data_raw = (!psg_reg15_joy_sel[0]) ? joy0_goauld_msx
                                                       : psg_port2_q;
-// ===== CINTA VIRTUAL: bit7 del PortA del PSG (CASIN) = dato de cas_stream =====
-// Comparte el bit7 con el joystick fusionado BL616+Pico (bits[6:0] intactos).
-// En reposo va a 1 como un MSX real sin senal de cinta; reproduciendo, KCS.
-wire        cas_playing;
-wire        cas_casin;
-wire        cas_bit = cas_playing ? cas_casin : 1'b1;
-wire [7:0]  psg_joy_data = {cas_bit, psg_joy_data_raw[6:0]};
+// CASIN (bit7 del PortA del PSG) en reposo ALTO, como un MSX real sin senal de
+// cinta. La cinta virtual se retiro el 04/09/2026 con el proyecto que la
+// alimentaba (el C6 dejo de convertir TSX y el menu perdio la tecla T).
+wire [7:0]  psg_joy_data = {1'b1, psg_joy_data_raw[6:0]};
 
 // ===== STANDALONE MERGE: USB keyboard (PPI port B 0xA9 read / port C 0xAA latch) =====
 wire ppi_portc_req_w = (bus_addr[7:0] == 8'hAA && bus_iorq_n == 0 && bus_m1_n == 1 && bus_wr_n == 0);
@@ -663,100 +658,8 @@ always @(posedge clk_54m or negedge bus_reset_n) begin
 end
 assign keyboard_addr = ppi_port_c[3:0];
 
-// ============================================================================
-// CINTA VIRTUAL (KCS) — reproductor de cinta MSX desde imagen embebida (BSRAM).
-// Alimenta CASIN (PSG PortA bit7) para que la BIOS real cargue RUN"CAS:" etc.
-// Reloj clk_54m + ce=clk_enable_3m6_54 (1 T-state). Motor = PPI PC4 (activo-bajo,
-// 0=ON). Se arma un pulso tras salir de reset; el motor hace de gate.
-// ============================================================================
-// Motor de cassette: la BIOS lo controla via OUT (0xAB) (bit set/reset de PC4):
-// 0x08 = ON (PC4=0), 0x09 = OFF (PC4=1). PC4 es activo-bajo -> cas_motor
-// (activo-alto) = ~PC4.
-// Ya NO se rastrea aparte: cas_motor_on era un parche del SINTOMA -- se arreglo
-// el motor sin ver que el agujero de ABh era general. Ahora que ABh se decodifica
-// entero, PC4 vive en ppi_port_c como en el 8255 real y el motor sale de ahi.
-wire cas_motor = ~ppi_port_c[4];                  // PC4 activo-bajo: 0 = motor ON
-// Arma la cinta tras el reset y la rearma al terminar (bucle) para el siguiente
-// RUN"CAS:". El motor hace de gate real de la reproduccion.
-reg  cas_armed = 1'b0;
-reg  cas_load  = 1'b0;
-reg  cas_play_d = 1'b0;
-always @(posedge clk_54m) begin
-    if (!bus_reset_n) begin cas_armed <= 1'b0; cas_load <= 1'b0; cas_play_d <= 1'b0; end
-    else if (clk_enable_3m6_54) begin
-        cas_play_d <= cas_playing;
-        if (!cas_armed)                          cas_load <= 1'b1;
-        else if (cas_play_d && !cas_playing)     cas_load <= 1'b1;
-        else                                     cas_load <= 1'b0;
-        cas_armed <= 1'b1;
-    end
-end
-// Backend de imagen de cinta: STREAM desde el ESP32-C6 (UART1 -> pin 26).
-// El C6 baja el .tsx de la web, lo convierte a CVS1 y lo manda a 115200;
-// tape_uart lo mete en un FIFO de 2KB (~18s de cinta) con flow control por
-// nivel (tape_rtr -> pin 32, histeresis) y cas_stream lo reproduce en KCS.
-// La via FLASH (tape_flash, bloqueada en el build 9) queda en el historico;
-// cas_player (BSRAM) sigue en el arbol como referencia validada en HW.
-wire        cas_pop_req, cas_pop_valid, cas_flush;
-wire [7:0]  cas_pop_data;
-wire [3:0]  cas_dbg_st;        // estado de cas_stream
-wire [10:0] tape_fill;         // llenado del FIFO (diag)
-// DIAG de bring-up (reciclado de la captura del build 9): guarda los primeros
-// 16 bytes POPeados por cas_stream. Volcado desde BASIC:
-//   OUT&H2C,0 : FOR I=0 TO 15:PRINT HEX$(INP(&H2C));:NEXT   (espera "CVS1"...)
-//   INP(&H2D) = {rtr, playing, 2'b00, estado FSM} ; INP(&H2E) = fill/8
-reg  [7:0] cap_buf [0:15];
-reg  [4:0] cap_widx, cap_ridx;
-reg        cas_pv_d, d_rd_2c_d;
-wire d_wr_2c = (bus_iorq_n==0 && bus_m1_n==1 && bus_wr_n==0 && bus_addr[7:0]==8'h2C);
+// Diagnostico del raton (puerto 0x2B), portado del 0x2E del MSXimus.
 wire d_rd_2b = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2B);
-wire d_rd_2c = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2C);
-wire d_rd_2d = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2D);
-wire d_rd_2e = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'h2E);
-always @(posedge clk_54m) begin
-    if (!bus_reset_n) begin
-        cap_widx<=5'd0; cap_ridx<=5'd0; cas_pv_d<=1'b0; d_rd_2c_d<=1'b0;
-    end else begin
-        cas_pv_d <= cas_pop_valid;
-        // captura: flanco de subida de pop_valid = byte entregado a cas_stream
-        if (cas_pop_valid && !cas_pv_d && cap_widx < 5'd16) begin
-            cap_buf[cap_widx] <= cas_pop_data;
-            cap_widx <= cap_widx + 5'd1;
-        end
-        // lectura Z80: OUT 0x2C resetea el indice; INP 0x2C auto-incrementa
-        d_rd_2c_d <= d_rd_2c;
-        if (d_wr_2c) cap_ridx <= 5'd0;
-        else if (d_rd_2c_d && !d_rd_2c && cap_ridx < 5'd15) cap_ridx <= cap_ridx + 5'd1;
-    end
-end
-wire [7:0] cap_dout    = cap_buf[cap_ridx];
-wire [7:0] diag_status = {tape_rtr, cas_playing, 2'b00, cas_dbg_st};
-tape_uart #(.CLK_FREQ(54_000_000), .BAUD(115_200)) tape_uart_i (
-    .clk      (clk_54m),
-    .rst      (~bus_reset_n),
-    .rx       (tape_rx),
-    .flush    (cas_flush),
-    .pop_req  (cas_pop_req),
-    .pop_valid(cas_pop_valid),
-    .pop_data (cas_pop_data),
-    .rtr      (tape_rtr),
-    .fill_dbg (tape_fill)
-);
-cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
-             .PILOT_LONG(10000), .PILOT_SHORT(5000)) cas_stream_i (
-    .clk      (clk_54m),
-    .ce       (clk_enable_3m6_54),
-    .rst      (~bus_reset_n),
-    .motor    (cas_motor),
-    .load     (cas_load),
-    .pop_req  (cas_pop_req),
-    .pop_valid(cas_pop_valid),
-    .pop_data (cas_pop_data),
-    .flush    (cas_flush),
-    .casin    (cas_casin),
-    .playing  (cas_playing),
-    .dbg_st   (cas_dbg_st)
-);
 
     // Version del bitstream, legible en el puerto 0x2F. El menu la PINTA en
     // Ajustes y nada mas: el GUARDA de desajuste .fs/.bin se quito y no vuelve
@@ -764,15 +667,12 @@ cas_stream #(.PULSE_ONE(731), .PULSE_ZERO(1463),
     // saber que .fs esta corriendo, que es justo lo que se toca a menudo.
     // Codificacion 0xMN = version M.N; 0xFF lo lee el menu como "desconocida".
     // Subirla en cada release, junto con el pack.
-    localparam [7:0] FPGA_VERSION = 8'h19;
+    localparam [7:0] FPGA_VERSION = 8'h20;   // 2.0
     wire ver_req_r = (bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0 && bus_addr[7:0] == 8'h2F);
     always @ (posedge clk_54m) begin
         cpu_din <=
                 ( ver_req_r == 1 ) ? FPGA_VERSION :
                 ( d_rd_2b == 1 ) ? mouse_dbg :
-                ( d_rd_2c == 1 ) ? cap_dout :
-                ( d_rd_2d == 1 ) ? diag_status :
-                ( d_rd_2e == 1 ) ? tape_fill[10:3] :
                 ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
                 `ifdef ENABLE_SOUND
                      ( psg2_req_r == 1 ) ? psg2_dout :
@@ -2072,21 +1972,17 @@ memory_ctrl mem1 (
     wire [15:0] scc_term;
     assign scc_term = (map_sel == 2'b10) ? { scc_wav, 1'b0 } : 16'd0;  // SCC solo en modo SCC (no Konami4/ASCII)
 
-    // Monitor de cinta virtual: el soniquete de carga audible, como en un MSX
-    // real con el volumen del cassette abierto. Solo suena con motor + play.
-    wire [15:0] cas_mon = (cas_motor && cas_playing && cas_casin) ? 16'h0600 : 16'h0000;
-
     // (modo consola SG-1000/ColecoVision eliminado en v1.9 -- solo MSX)
 
     always @ (posedge clk_27m) begin
         if (clk_enable_3m6_27 == 1 ) begin
             if (config_enable_stereo == 1) begin
-                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + scc_term + jt2413_wav + cas_mon;
-                audio_sample_r <= { 2'b0 , psg2Sound3 , 6'b000000 } + { scc2x_wav, 1'b0 } + jt2413_wav + cas_mon;
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + scc_term + jt2413_wav;
+                audio_sample_r <= { 2'b0 , psg2Sound3 , 6'b000000 } + { scc2x_wav, 1'b0 } + jt2413_wav;
             end
             else begin
-                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav + cas_mon;
-                audio_sample_r <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav + cas_mon;
+                audio_sample   <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
+                audio_sample_r <= { 2'b0 , psgSound3 , 6'b000000 } + { 2'b0 , psg2Sound3 , 6'b000000 } + scc_term + { scc2x_wav, 1'b0 } + jt2413_wav;
             end
         end
     end
@@ -2940,9 +2836,7 @@ memory_ctrl mem1 (
     end
 
     assign led[5] = turbo ? 1'b0 : led_heartbeat;  // active-low: 0=solid lit (turbo ON), else heartbeat blink (real-MSX)
-    // LED4 tambien parpadea (~1.8Hz) mientras la cinta virtual esta cargando,
-    // para ver actividad durante los minutos de carga sin feedback en pantalla.
-    assign led[4] = ~(sd_busy_w | (cas_motor & cas_playing & led_heartbeat));
+    assign led[4] = ~sd_busy_w;                  // actividad de la SD
     assign led[3] = ~gjoy0[5];
     assign led[2] = ~gjoy0[4];
     assign led[1] = ~(|gjoy0[3:0]);

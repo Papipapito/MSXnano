@@ -65,8 +65,6 @@ add_file tn_vdp_v3_v9958/src/hdmi/source_product_description_info_frame.sv
 add_file tn_vdp_v3_v9958/src/hdmi/tmds_channel.sv
 add_file tn_vdp_v3_v9958/src/v9958_top.v
 add_file top.v
-add_file cas_stream.v
-add_file tape_uart.v
 
 # ----- pico-companion: goauld RP2040 USB keyboard/joystick/raton over UART (pin 31) -----
 add_file src/kbd_uart_rx.v
