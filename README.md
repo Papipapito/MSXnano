@@ -4,6 +4,12 @@
 
 > 📖 Project page, install guides and community: **[msx.barcelona](https://msx.barcelona)**
 
+> **Project status: v2.0 is the final release.** The core fills ~89 % of the GW2AR-18 and
+> the CPU clock closes with no margin to spare, so no new features fit. Everything that
+> works is documented; everything that was left out is listed, with the reasons, in
+> [docs/tecnica/09-pendientes.md](docs/tecnica/09-pendientes.md). Larger features live on
+> in [MSXimus](https://github.com/Papipapito/MSXimus) (Tang Console 60K).
+
 ## Features
 
 * Z80 with authentic MSX timing (per-M1 wait state, ~100% of real MSX speed)
@@ -121,8 +127,9 @@ Board: Waveshare **ESP32-C6-LCD-1.3**. Firmware: **[ESP32-for-FPGA](https://gith
 | **F6–F10** | F6–F10 — sent as SHIFT+F1..F5, exactly as on a real MSX |
 | F1–F5, arrows, HOME/INS/DEL, ESC/TAB/BS/RETURN | 1:1 |
 
-Turbo is not a key: it is set from **Settings** (*Boot Turbo*) or by software through the
-Panasonic ports `$40/$41`.
+**F11** toggles Turbo on the fly. It can also be set at power-on from **Settings**
+(*Boot Turbo*) or by software through the Panasonic ports `$40/$41` (software wins if
+both change it in the same cycle).
 
 ---
 
@@ -137,7 +144,23 @@ Megaram automatically; other software may need it set by hand.
 
 ## Hardware: case & bill of materials
 
+* Parts list: [`docs/BOM.md`](docs/BOM.md) (spreadsheet: [`docs/MSXnano_BOM.xlsx`](docs/MSXnano_BOM.xlsx)).
+* 3D-printable case: [`case/`](case/README.md) — a Bambu Studio project with every part,
+  plus the STLs. Two top-left lids: one with a window for the ESP32-C6 screen, one plain.
+
 > The 3D case is based on [this Thingiverse design](https://www.thingiverse.com/thing:4066021), which served as the inspiration and starting point for our improved version.
+
+---
+
+## 📚 Documentation
+
+Full documentation (in Spanish) is in [`docs/INDICE.md`](docs/INDICE.md):
+
+| | |
+|---|---|
+| [`docs/manual/`](docs/manual/01-que-es.md) | **User manual** — install, SD card, boot menu, ROMs and mappers, keyboard/mouse/joystick, WiFi and File-Hunter, audio/video/turbo, case, troubleshooting |
+| [`docs/tecnica/`](docs/tecnica/01-arquitectura.md) | **Technical reference** — architecture, I/O ports, memory maps, the BIOS pack, the RP2040 protocol, synthesis and timing (why nothing more fits), simulation, changelog, open items |
+| [`docs/historico/`](docs/historico/README.md) | Index of bug-hunt reports, design documents and retired code kept in the tree |
 
 ## Credits
 
