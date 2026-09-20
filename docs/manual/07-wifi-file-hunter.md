@@ -45,10 +45,9 @@ Con la red conectada, **F** en el navegador abre el buscador de
 eliges y se descarga a `FHUNT/` en la SD. Cada descarga se verifica por **CRC32**; si no
 cuadra, se avisa y no se guarda. Después el fichero aparece en el navegador como uno más.
 
-> ⚠️ **En el MSXnano el File-Hunter no se ha probado en la placa.** Está compilado en la
-> BIOS y funciona en el MSXimus (validado con muchas descargas), pero en esta máquina no
-> cabía en el pack hasta el 04/09/2026 y desde entonces nadie lo ha ejecutado en hardware
-> real. Trátalo como experimental. Si lo pruebas, apunta qué pasa.
+> **Estado en el MSXnano**: probado en placa el 04/09/2026 (la primera vez que cupo en el
+> pack) y funciona. Lleva menos horas de uso que en el MSXimus, donde se ha validado con
+> muchas descargas: si una descarga falla, apunta el fichero y el mensaje.
 
 ## Diagnóstico
 

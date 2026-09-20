@@ -14,8 +14,8 @@ puerto `0x2F`.
   mensaje `0xD0` del RP2040; diagnóstico en `0x2B`.
 - **Una sola BIOS**: el menú se activa/desactiva en Ajustes (*Menu al arrancar*, bit 3 de
   `config2`, guardado en flash). Antes había dos packs.
-- **Descargas** desde el menú con WiFi (File-Hunter, tecla F). No probado en placa en el
-  nano.
+- **Descargas** desde el menú con WiFi (File-Hunter, tecla F). Cupo en el pack del nano
+  al retirar la cinta web; probado en placa el 04/09.
 - **ESP32-C6 con pantalla** como companion opcional (estado, reloj, turbo, logo animado);
   el ESP-01S sigue valiendo. Pin 29 = estado del turbo.
 - **PPI**: decodificado `0xAB` (bit set/reset: CAPS, click, motor) y relectura de `0xAA`,

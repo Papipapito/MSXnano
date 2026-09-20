@@ -43,7 +43,7 @@ Por síntoma. Cada entrada dice la causa más probable primero.
 | W dice que no hay ESP | RX/TX cruzados o ESP sin alimentar | Pin 27 = entrada del ESP (RX), pin 28 = salida (TX) |
 | No conecta a la red | Red de 5 GHz | Los módulos son de 2,4 GHz |
 | El C6 se reinicia al conectar | Alimentación del C6 | Por su propio USB-C con una fuente decente |
-| File-Hunter falla | Experimental en el MSXnano (no probado en placa) | Apuntar qué pasa; ver [07](07-wifi-file-hunter.md) |
+| File-Hunter falla | Sin red, CRC que no cuadra, o SD llena | Reintentar; si se repite con un fichero concreto, apuntar el nombre; ver [07](07-wifi-file-hunter.md) |
 
 ## Vídeo y sonido
 

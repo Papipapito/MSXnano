@@ -108,7 +108,6 @@ hay hueco.
 
 ## 9. Sin probar en placa
 
-- **File-Hunter desde el menú** en el nano (probado en el MSXimus).
 - El **pack con Nextor 3 beta** en el nano (validado en el MSXimus).
 - Teclados con **hub interno** y algunos mandos XInput concretos.
 

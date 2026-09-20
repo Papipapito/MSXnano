@@ -67,10 +67,8 @@ Con WiFi conectada, busca en [file-hunter.com](https://www.file-hunter.com) por 
 descarga ROMs e imágenes de disco a la carpeta `FHUNT/` de la SD, verificando el CRC32 de
 cada descarga. Después aparecen en el navegador como cualquier otro fichero.
 
-> **Estado en el MSXnano**: el File-Hunter está compilado dentro de esta BIOS y validado
-> en placa **en el MSXimus**. En el MSXnano cabe en el pack desde el 04/09/2026, pero **no
-> se ha probado en la placa**. Si lo pruebas y funciona (o no), es información valiosa.
-> Ver [07. WiFi y File-Hunter](07-wifi-file-hunter.md).
+> **Estado en el MSXnano**: cabe en el pack desde el 04/09/2026 y ese mismo día se probó
+> en placa: funciona. Ver [07. WiFi y File-Hunter](07-wifi-file-hunter.md).
 
 ## WiFi (tecla W)
 

@@ -55,7 +55,7 @@ Lo que hay que pasar antes de dar un `.fs` por bueno, en este orden:
 | Un `.DSK` de 720 KB montado con `EMUFILE` | Nextor + `NEXTOR.EMU` |
 | Teclado + mando + ratón por un hub, desenchufar la Pico en caliente | Companion y vigilante de 1 s |
 | Turbo por F11 y por `OUT &H41` | Cadencia sin glitches (si se rompe, el Z80 se cuelga al instante) |
-| WiFi: `W` en el menú (escanea redes) y una descarga de File-Hunter | UART del ESP; File-Hunter no está probado en placa en el nano |
+| WiFi: `W` en el menú (escanea redes) y una descarga de File-Hunter | UART del ESP y el CRC32 de las descargas |
 
 **Alimentación**: probar con una fuente USB de solo corriente. El USB de un PC puede
 falsear las pruebas (arranques que fallan por corriente, o JTAG que interfiere).
