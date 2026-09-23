@@ -126,6 +126,7 @@ dirección o al *enable* de una BSRAM**.
 | Frontend gráfico de carátulas | diseño | `fpga/GRAPHICAL_FRONTEND_DESIGN.md`; pensado para el 60K |
 | Salida HDMI a 720p con escalador | evaluado | Cosmético; CLS al límite |
 | Audio por Bluetooth | evaluado | A2DP necesita BT clásico (ESP32 clásico o RP2350-W) y añade 100-200 ms de latencia |
+| **Game Master 2** en el slot 1 (como en el MSXimus v3.5f) | evaluado 23/09 | Su código de menú ocupa ~1,8 KB y al menú del nano le quedan ~0,5 KB (50 B de código + 491 B de datos; no tiene la página 1 de 32 KB del MSXimus). Además pide el mapper `gm2_slot1.v` en el RTL, con su campaña |
 
 ## 9. Mappers que no hay
 
