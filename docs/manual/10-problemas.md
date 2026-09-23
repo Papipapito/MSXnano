@@ -8,7 +8,7 @@ Por síntoma. Cada entrada dice la causa más probable primero.
 |---|---|---|
 | Pantalla negra, ningún LED de actividad | El core no está grabado, o el Programmer lo grabó en SRAM en vez de en la flash | Regrabar el `.fs` en modo *External Flash*, dirección `0x000000` |
 | Logo y luego nada, o basura | Falta el pack, o está en la dirección equivocada | Grabar el pack en `0x200000` con *exFlash C Bin Erase, Program thru GAO-Bridge* |
-| El menú avisa de versión distinta | Core y pack de versiones diferentes | Actualizar los dos; van emparejados |
+| Cosas raras tras actualizar solo una parte | Core y pack de releases distintas (el menú no lo comprueba) | Grabar el `.fs` y el pack de la misma release; Ajustes → *Version FPGA* dice qué core hay |
 | Arranca en BASIC en vez de MSX-DOS | No hay `NEXTOR.SYS` + `COMMAND2.COM` en la raíz de la SD | Copiarlos de la distribución de Nextor |
 | Arranca directo a DOS y quiero el menú | *Menu al arrancar* desmarcado | S → marcar → Save & Restart |
 | Se reinicia solo en bucle | Alimentación: el USB-C de un PC a veces no da corriente suficiente con la Pico y un hub colgando | Fuente USB de solo corriente, de 2 A |

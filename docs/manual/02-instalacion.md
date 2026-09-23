@@ -106,8 +106,8 @@ Placa: Waveshare **ESP32-C6-LCD-1.3** (240×240). Se alimenta por su propio USB-
 ## Actualizar
 
 Cada versión nueva son los mismos pasos 1 y 2. **El core y el pack van emparejados**: el
-menú comprueba la versión del `.fs` (por el puerto 0x2F) y avisa si has grabado un core de
-una versión con un pack de otra. Actualiza siempre los dos.
+menú **no** lo comprueba (solo enseña la versión del `.fs` en Ajustes, leída del puerto
+0x2F), así que graba siempre el core y el pack de la misma release.
 
 ## Resumen de pines de la Tang Nano 20K
 

@@ -128,8 +128,8 @@ int main() {
     // so this never touches uart0. Any DEBUG printf goes over USB-CDC.
     stdio_init_all();
 
-    // Dedicated keyboard link on uart0 (GPIO0 = TX -> FPGA pin 75). Must run
-    // AFTER stdio_init_all() so our explicit pin mux owns GPIO0/uart0.
+    // Dedicated keyboard link: PIO UART TX on GP15 -> FPGA pin 31 (see usbin.c).
+    // Must run AFTER stdio_init_all() so our explicit pin mux owns GP15.
     kb_uart_init();
 
     tusb_init();

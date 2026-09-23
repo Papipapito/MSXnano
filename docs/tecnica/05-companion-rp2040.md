@@ -31,7 +31,7 @@ lo tienen a 0 son órdenes de un byte.
 | `0x90 <celda>` | **MAKE**: tecla pulsada. `celda = 0x80 \| (bit << 4) \| fila`, fila 0-10, bit 0-7 |
 | `0xA0 <celda>` | **BREAK**: tecla soltada |
 | `0xFE m0 … m10 0xFF` | **Resync** de la matriz completa (11 filas, activas a nivel bajo). Cada 250 ms |
-| `0xC0 <versión>` | Anuncio de versión del firmware (con cada resync). Se guarda para el guardián de versión |
+| `0xC0 <versión>` | Anuncio de versión del firmware (con cada resync). La FPGA lo **consume y lo descarta** (el guardián de versión se quitó en la v2.0); hay que seguir leyéndolo o el byte de versión se tomaría por una orden |
 | `0xB0 <puerto> <byte>` | **Joystick**: `puerto` 0 = puerto 1 del MSX, 1 = puerto 2. `byte` activo alto: bit0 derecha, bit1 izquierda, bit2 abajo, bit3 arriba, bit4 A, bit5 B |
 | `0xD0 <dx> <dy> <btn>` | **Ratón**: deltas con signo (+ = derecha/abajo, tal cual del host), `btn` bit0 izquierdo, bit1 derecho, activo alto |
 | `0x04` | Orden: **turbo toggle** (F11). La única orden cableada en `top.v` |
@@ -44,8 +44,8 @@ Dos propiedades de diseño que conviene no romper:
   joystick sin obligar a reflashear las dos cosas a la vez.
 - **El resync cada 250 ms cura cualquier byte perdido.** Un MAKE que se pierde deja una
   tecla pulsada como mucho 250 ms. Y hay un **vigilante de ~1 s** en la FPGA: sin bytes
-  durante ese tiempo suelta toda la matriz, pone los joysticks a cero y olvida la
-  versión ("no firmware announced"). Desenchufar la Pico en caliente no deja nada colgado.
+  durante ese tiempo suelta toda la matriz y pone los joysticks a cero. Desenchufar la
+  Pico en caliente no deja nada colgado.
 
 ## Lo que hace el firmware
 

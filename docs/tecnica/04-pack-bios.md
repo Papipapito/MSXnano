@@ -1,6 +1,7 @@
 # 04. El pack de BIOS
 
-El **pack** (`goauld_rom_int.bin`, 524.294 bytes = 512 KB + 6) es todo lo que el MSX
+El **pack** (`pack_bios_msxnano.bin` en la release, `bin/goauld_rom_int.bin` en el repo;
+524.294 bytes = 512 KB + 6) es todo lo que el MSX
 necesita en ROM, concatenado en un solo fichero que se graba en la flash a `0x200000` y
 que el core copia a la SDRAM al arrancar. No tiene cabecera ni índice: **la FPGA sabe qué
 hay en cada offset porque está cableado en `top.v`**.
@@ -88,7 +89,8 @@ Consecuencia ya dicha en [03](03-mapas-memoria.md): grabar un pack nuevo restaur
 
 ## Versión del core vs versión del pack
 
-El menú lee el puerto `0x2F` y lo compara con la versión para la que se ensambló. Si no
-cuadran avisa en pantalla: el mapa de puertos y el mapa de offsets están cableados en
-los dos lados y un desajuste puede dar desde un aviso hasta un menú que no arranca. Los
-packs de cada release están construidos para el core de esa release.
+Desde la v2.0 **nadie lo comprueba**: el menú lee el puerto `0x2F` solo para enseñarlo en
+Ajustes (el guardián que avisaba en la v1.9 se quitó a propósito). Pero el mapa de puertos
+y el mapa de offsets siguen cableados en los dos lados, y un desajuste puede dar desde
+rarezas hasta un menú que no arranca. Los packs de cada release están construidos para el
+core de esa release: se graban juntos.

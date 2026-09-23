@@ -36,7 +36,7 @@ El pack lleva Nextor **dentro** (no va en la SD), y hay dos packs:
 | Pack | Nextor | Cuándo |
 |---|---|---|
 | `pack_bios_msxnano.bin` | **2.1.4** | El recomendado. Estable, es el de siempre |
-| `pack_bios_msxnano_nextor3.bin` | 3 beta | Para probar Nextor 3. Funciona, pero es beta |
+| `pack_bios_msxnano_nextor3.bin` | 3 beta | Para probar Nextor 3. Validado en el MSXimus; en el MSXnano no se ha probado en placa |
 
 La SD sirve igual para los dos. Nextor 3 trae mejoras de compatibilidad con FAT y
 ficheros largos; si no sabes cuál, el 2.1.4.

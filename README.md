@@ -4,7 +4,7 @@
 
 > 📖 Project page, install guides and community: **[msx.barcelona](https://msx.barcelona)**
 
-> **Project status: v2.0 is the final release.** The core fills ~89 % of the GW2AR-18 and
+> **Project status: v2.0 is the final release** ([`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final)). The core fills ~89 % of the GW2AR-18 and
 > the CPU clock closes with no margin to spare, so no new features fit. Everything that
 > works is documented; everything that was left out is listed, with the reasons, in
 > [docs/tecnica/09-pendientes.md](docs/tecnica/09-pendientes.md). Larger features live on
@@ -72,9 +72,10 @@ of them (you just get no keyboard, so fit the RP2040 at least).
 
 Plug the USB keyboard, gamepad or mouse into the Pico's own USB port (a hub works).
 
-Firmware: **`rp2040_keyboard.uf2`** for the Waveshare **RP2040-Zero** (the default), or
-**`rp2040_keyboard_pico.uf2`** for a plain Raspberry Pi Pico. Both are in
-[`fpga/rp2040/`](fpga/rp2040/), source included.
+Firmware: **`rp2040_keyboard_zero.uf2`** for the Waveshare **RP2040-Zero** (the default), or
+**`rp2040_keyboard_pico.uf2`** for a plain Raspberry Pi Pico — both in the release. Source
+and the same binaries are in [`fpga/rp2040/`](fpga/rp2040/) (there the Zero one is named
+`rp2040_keyboard.uf2`).
 
 ### FPGA ↔ ESP-01S (WiFi only)
 

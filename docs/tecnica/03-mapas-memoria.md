@@ -78,7 +78,7 @@ Es la flash de configuración de la Tang Nano 20K (la misma que carga el bitstre
 
 | Dirección | Tamaño | Qué | Cómo se graba |
 |---|---|---|---|
-| `0x000000` | ~1 MB | **Bitstream** (`msxnano.fs`) | Gowin Programmer, *External Flash Mode* |
+| `0x000000` | ~1 MB | **Bitstream** (`msxnano_v2.0.fs` en la release, `bin/msxnano.fs` en el repo) | Gowin Programmer, *External Flash Mode* |
 | `0x200000` | 512 KB + 6 | **Pack de BIOS** + firma + config | Gowin Programmer, *exFlash C Bin Erase, Program thru GAO-Bridge*, dirección `0x200000` |
 | `0x280000` | 6 bytes | Firma `AB` + `config1` + `config2` + turbo de arranque + `FF` | Lo escribe el core al hacer *Save & Restart* |
 

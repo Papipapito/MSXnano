@@ -53,7 +53,7 @@ arranca desde él (o desde la SD si el disco no es de arranque).
 | **Stereo Sound** | Mezcla estéreo (PSG/SCC a un lado, OPLL al otro) o mono |
 | **Sprites 8/línea** | Limita a 8 sprites por línea como un VDP real (algunos juegos cuentan con ello) |
 | **Boot Turbo** | Arrancar siempre a 5,37 MHz. **Requiere reiniciar físicamente** (apagar y encender), porque se aplica al leer la flash |
-| **Version FPGA (.fs)** | Muestra la versión del core que hay grabado (lee el puerto 0x2F). Si no cuadra con la del pack, avisa |
+| **Version FPGA (.fs)** | Muestra la versión del core que hay grabado (lee el puerto 0x2F; `2.0` en la release final). Solo informa: no la compara con la del pack |
 | **Menu al arrancar** | Si está marcado sale el navegador; si no, arranca directo |
 | **Save & Restart** | Guarda en la flash y reinicia |
 

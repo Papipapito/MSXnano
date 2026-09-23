@@ -99,8 +99,8 @@ extern volatile uint64_t g_last_mouse_us;   // ultimo informe de raton (LED)
 void mouse_report_receive(u8 const* report, u16 len);
 void mouse_tick(uint64_t now);
 
-// MSX Goa'uld keyboard UART link (uart0 @ 115200 8N1, GPIO0 = TX).
-void kb_uart_init(void);     // configure uart0 + GPIO0 for the keyboard link
+// Keyboard UART link to the FPGA (PIO UART @ 115200 8N1, GP15 = TX -> FPGA pin 31).
+void kb_uart_init(void);     // configure the PIO UART on GP15 for the keyboard link
 void kb_tx_pump(void);       // drain the TX ring into the UART FIFO (non-blocking)
 void kb_send_resync(void);   // push a full-matrix resync frame (0xFE..0xFF)
 void joy_send_resync(void);  // re-emit both MSX joystick ports (0xB0 frames)

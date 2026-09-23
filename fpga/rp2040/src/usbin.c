@@ -41,7 +41,7 @@
 // the MSX BIOS does autorepeat, so we never block and never auto-release.
 //
 // Wire protocol (FROZEN -- must match the FPGA RX side exactly):
-//   PIO UART @ 115200 8N1, GP15 = TX -> FPGA pin 75 (RX).
+//   PIO UART @ 115200 8N1, GP15 = TX -> FPGA pin 31 (RX).
 //   cell byte         = 0x80 | (bit<<4) | row     row 0..10, bit 0..7
 //   0x90 <cell>       = MAKE
 //   0xA0 <cell>       = BREAK
@@ -286,11 +286,11 @@ void joy_autofire_tick(uint64_t now_us) {
     }
 }
 
-// Initialize the dedicated keyboard UART link: uart0 @ 115200 8N1, GPIO0=TX.
-// This is the ONLY owner of uart0 -- stdio must not be routed here (see main.c).
+// Initialize the dedicated keyboard UART link: PIO UART @ 115200 8N1, GP15 = TX.
+// stdio stays on USB-CDC and never touches this pin (see main.c).
 void kb_uart_init(void) {
     memset(vmatrix, 0xFF, sizeof(vmatrix)); // all keys released at boot
-    // PIO UART TX on GP15 -> FPGA pin 75 (RX), 115200 8N1. pio1 SM0.
+    // PIO UART TX on GP15 -> FPGA pin 31 (RX), 115200 8N1. pio1 SM0.
     uint off = pio_add_program(KB_PIO, &uart_tx_program);
     uart_tx_program_init(KB_PIO, KB_SM, off, KB_UART_PIN, 115200);
 }

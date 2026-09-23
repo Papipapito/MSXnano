@@ -35,6 +35,8 @@ puerto `0x2F`.
   `tape_rom`, puertos `0x2C-0x2E`): el proyecto que la alimentaba se cayó. Pines 26 y 32
   libres. `CASIN` en reposo alto.
 - `F11` cableado al turbo (`kbd_cmd_turbo` → `turbo <= ~turbo`).
+- Fuera el guardián de versión menú ↔ core: el puerto `0x2F` vuelve solo para enseñar la
+  versión en Ajustes, y el anuncio de versión de la Pico (`0xC0`) se consume y se descarta.
 - Teclado RP2040: F6-F10 como en un MSX real, GRAPH en Alt izq./Windows, CODE en Alt
   der., STOP en F12.
 - README reducido de 405 a 152 líneas: solo lo que hay.

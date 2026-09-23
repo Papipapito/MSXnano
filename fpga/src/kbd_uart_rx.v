@@ -2,13 +2,11 @@
 // kbd_uart_rx.v
 //   Virtual MSX keyboard matrix fed over UART from a Raspberry Pi Pico (RP2040).
 //
-//   The physical MSX keyboard is still read by the real motherboard 8255 PPI;
-//   that read arrives at the FPGA on `bus_data` and is consumed passively by the
-//   FPGA-Z80. This module maintains a SECOND (virtual) keyboard matrix that the
-//   RP2040 drives over UART. In top.v the virtual row is merged with the physical
-//   read via an active-low AND on the I/O 0xA9 keyboard-column read, so BOTH the
-//   real keyboard and the USB keyboard work simultaneously. This module never
-//   drives the data bus; it only exposes the selected matrix row combinationally.
+//   (Origin: MSXgoauld, where a physical MSX keyboard is read by the real 8255
+//   PPI and this module adds a SECOND, virtual matrix AND-merged into the 0xA9
+//   read. The MSXnano has no physical keyboard: this virtual matrix IS the
+//   keyboard.) This module never drives the data bus; it only exposes the
+//   selected matrix row combinationally.
 //
 //   UART: 115200 8N1, idle-high, LSB first. The RX FSM is modelled on the clean
 //   8N1 receiver in src/ocm/uart_lite.vhd (RX_IDLE -> RX_START -> RX_DATA ->
@@ -29,15 +27,15 @@
 //         0x04 = turbo toggle (F11).
 //       0x01/0x02/0x03 decode to 1-clk cmd_* pulses left UNCONNECTED at the top
 //       level (Gowin trims them). 0x04 -> cmd_turbo_toggle IS wired in top.v to
-//       flip config2_ff[4] (turbo), alongside the boot menu (G) and Panasonic $41.
+//       toggle the `turbo` register, alongside the Panasonic port $41.
 //     - Full-matrix resync: 0xFE, then 11 row bytes m0..m10 (each = an active-low
 //       row state), then 0xFF. On 0xFE we enter a counted load (row 0..10),
 //       writing each byte to vkey_matrix[row]; the load finishes on 0xFF or after
 //       11 bytes have been consumed, whichever comes first.
 //     - Firmware version announce: 0xC0 <version> (2 bytes). The RP2040 re-sends
-//       it with every 250 ms resync. Stored in fw_version for the top-level
-//       version guard (I/O 0x2E/0x2F); cleared to 0x00 by reset and by the ~1 s
-//       link-loss watchdog ("no firmware announced"). ADDITIVE: an old FPGA
+//       it with every 250 ms resync. The MSXnano v2.0 CONSUMES AND DISCARDS it
+//       (the version guard was removed); the D_VERSION state must stay, or the
+//       version byte would decode as a command. ADDITIVE: an old FPGA
 //       ignores 0xC0 in D_IDLE and the version byte after it decodes as an
 //       unknown command, also ignored.
 //     - MOUSE state: 0xD0 <dx> <dy> <btn> (4 bytes). dx/dy son deltas CON SIGNO
@@ -63,7 +61,7 @@ module kbd_uart_rx #(
 )(
     input  wire        clk,            // single clock domain (clk_54m in top.v)
     input  wire        reset_n,        // active-low synchronous-ish reset (bus_reset_n)
-    input  wire        rx,             // raw async UART RX pin (FPGA pin 75)
+    input  wire        rx,             // raw async UART RX pin (FPGA pin 31)
 
     input  wire [3:0]  vkey_col,       // selected keyboard column (PPI port C low nibble)
     output wire [7:0]  vkey_row_out,   // active-low matrix row for vkey_col (combinational)
@@ -77,7 +75,7 @@ module kbd_uart_rx #(
 
     // Pulse outputs. scanline/reset/osd are left open at instantiation (Gowin
     // trims them). cmd_turbo_toggle (0x04, from F11) IS wired in top.v -> toggles
-    // config2_ff[4] (turbo), alongside the boot menu (G) and Panasonic $41.
+    // the `turbo` register, alongside the Panasonic port $41.
     output reg         cmd_scanline_toggle,
     output reg         cmd_reset_pulse,
     output reg         cmd_osd_toggle,

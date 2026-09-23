@@ -1,27 +1,46 @@
-# MSX Goa'uld Guardian Angel
+# RP2040 companion — USB keyboard, gamepad and mouse
 
-> **⚠️🚨 Warning 🚨⚠️**  
-> For firmware 090 check 090 branch
+The FPGA has no USB host. This RP2040 firmware is the MSXnano's USB host (TinyUSB): it reads
+a USB keyboard, gamepads and a mouse and sends everything to the FPGA over **one wire**.
+Derived from the MSXgoauld "Guardian Angel" firmware.
 
-The MSX Goa'uld Guardian Angel for hard tasks.
+## Wiring (1 wire + power, RP2040 → FPGA)
 
-## Wiring (1-wire, RP2040 -> FPGA)
+| RP2040 | Tang Nano 20K | Notes |
+|---|---|---|
+| **GP15** | **pin 31** (`kbd_uart_rx_pin`) | PIO UART TX, 115200 8N1, idle-high. Data flows RP2040 → FPGA only |
+| GND | GND | common ground |
+| VBUS | 5V | the Tang powers the RP2040; the RP2040 powers the keyboard / hub |
 
-Data is one-directional (RP2040 transmits, FPGA receives) plus a common ground.
-The RP2040 is the USB host for the keyboard and is powered from the MSX 5V rail.
+- 3.3 V LVCMOS on both ends: direct connection, no level shifter.
+- GP15 is driven by PIO because the hardware UARTs can't reach it on this board layout.
+- Plug the keyboard, gamepad or mouse into the RP2040's own USB port. A self-powered hub
+  lets you use all three at once.
 
-| Device            | Function       | Pin    | Connection Note                          |
-|-------------------|----------------|--------|------------------------------------------|
-| RP2040 UART0 TX   | UART TX (data) | GPIO 0 | -> Tang Nano 20K pin 75 (kbd_uart_rx_pin)|
-| RP2040 GND        | Ground         | GND    | -> Tang Nano 20K GND (common ground)     |
-| RP2040 VBUS/VSYS  | 5V power in    | VBUS   | -> MSX +5V                               |
-| Tang Nano 20K RX  | UART RX (data) | 75     | <- RP2040 GPIO0 (only the FPGA receives) |
+## What it does
 
-- UART **115200 8N1**, idle-high, LSB-first; data flows RP2040 -> FPGA only.
-- 3.3 V LVCMOS both ends - direct connection, no level shifter.
-- built for the [Waveshare RP2040 Zero](https://www.waveshare.com/wiki/RP2040-Zero) (builtin LED GPIO16); for a Pico add `-DRP2040_ZERO=0`.
-- both FPGA and RP2040 firmwares must be the matching pair on this branch.
-- power the RP2040 from the MSX 5V supply to its VBUS/VSYS pin.
+- **Keyboard** → MSX matrix (`inc/keymaps.h`): GRAPH on Left Alt and both Windows keys,
+  CODE/KANA on Right Alt, STOP on F12 / Scroll Lock, SELECT on End, F6–F10 as SHIFT+F1..F5.
+- **F11** → turbo toggle (command `0x04`).
+- **Gamepads**: generic HID (DirectInput) and **XInput**. All pads go to MSX joystick
+  port 1. Buttons 3 and 4 are **autofire** at 10 Hz.
+- **Mouse** → a real MSX mouse on joystick port 2 (the protocol is emulated in the FPGA,
+  `fpga/src/msx_mouse.v`). The RP2040-Zero LED turns cyan while a mouse is mounted.
+- Full-matrix **resync every 250 ms**, so a lost byte never leaves a key stuck.
+
+The wire protocol is frozen; the contract is the header of
+[`fpga/src/kbd_uart_rx.v`](../src/kbd_uart_rx.v), explained in Spanish in
+[`docs/tecnica/05-companion-rp2040.md`](../../docs/tecnica/05-companion-rp2040.md).
+
+## Firmware files
+
+| Board | In this directory | In the release |
+|---|---|---|
+| Waveshare RP2040-Zero (default, LED on GPIO16) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
+| Raspberry Pi Pico (LED on GPIO25) | `rp2040_keyboard_pico.uf2` | `rp2040_keyboard_pico.uf2` |
+
+Same binaries, two names. To flash: hold **BOOTSEL** while plugging the board into a PC and
+drag the `.uf2` onto the `RPI-RP2` drive.
 
 ## Build Instructions
 
@@ -37,27 +56,10 @@ Before build, make sure to:
   enough. On Windows, running the build from a Visual Studio *vcvars64* shell is
   enough; on Linux, `build-essential`.
 
-Both `.uf2` in this directory are built from this source: `rp2040_keyboard.uf2`
-for the Waveshare RP2040-Zero (default) and `rp2040_keyboard_pico.uf2` for a
-plain Pico (`-DRP2040_ZERO=0`). Rebuild BOTH when you change the firmware.
+Both `.uf2` in this directory are built from this source. Rebuild BOTH when you change the
+firmware.
 
 ```
 mkdir build && cd build
 cmake -G Ninja .. && ninja      # default = Waveshare RP2040-Zero; add -DRP2040_ZERO=0 for a Pico
 ```
-
-## Some ideas
-
-- [x] Scanlines toggle button
-- [x] OSD toggle button
-- [x] USB Keyboard basic functionalities
-- [x] USB Keyboard
-- [ ] Local Firmware Switching
-- [ ] Persistent Configuration Files
-- [ ] USB Gamepad
-- [ ] Reset button (needs MSX external mod in reset wire, WIP)
-- [ ] USB Floppy Drives
-- [ ] USB Mass Storage
-- [ ] Ethernet USB adapters
-- [ ] WiFi USB adapters
-- [ ] BIOS Switching
