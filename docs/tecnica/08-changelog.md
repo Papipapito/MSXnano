@@ -4,7 +4,16 @@ Resumen técnico de cada release (tags del repo). Las notas completas están en
 [GitHub → Releases](https://github.com/Papipapito/MSXnano/releases). Versión del core =
 puerto `0x2F`.
 
-## v2.0 — 4 de septiembre de 2026 · **versión final** · `FPGA_VERSION = 0x20`
+## v2.0-final — 23 de septiembre de 2026 · **la última release**
+
+- **Los mismos binarios que la v2.0**: `.fs` del par 48 (dado 999961, md5 `b0e374d8…`) y
+  los packs del 04/09 (Nextor 2.1.4 `4dc4e4f5…`, Nextor 3 beta `d6f3b2d4…`).
+- Validado en placa por Albert el 23/09: **F11 → 5,37 MHz**, mando, ratón, Space Manbow y
+  Metal Gear 2, y el guardado de cambios.
+- La documentación completa (`docs/`), la carcasa con las dos tapas y los dos packs de
+  BIOS en la release.
+
+## v2.0 — 4 de septiembre de 2026 · `FPGA_VERSION = 0x20`
 
 - **Fuera el BL616**: teclado, mando y **ratón MSX** por un **RP2040** (GP15 → pin 31, un
   cable). Las placas `3921` de 2024+ traían el BL616 con *secure boot* y muchas se

@@ -58,7 +58,7 @@ el expediente de la doble interrupción de línea.
 
 | Repositorio | Qué es |
 |---|---|
-| [bios-msxnano-msximus](https://github.com/Papipapito/bios-msxnano-msximus) | El menú de arranque y las herramientas que montan el pack de BIOS. Fuente único para las dos máquinas |
+| `bios-msxnano-msximus` (**privado**) | El menú de arranque y las herramientas que montan el pack de BIOS. Fuente único para las dos máquinas; los packs ya montados van en la release |
 | [ESP32-for-FPGA](https://github.com/Papipapito/ESP32-for-FPGA) | Firmware del ESP32-C6 (WiFi UNAPI + pantalla) |
 | [MSXimus](https://github.com/Papipapito/MSXimus) | El hermano mayor, en la Tang Console 60K |
 | [msx-turbo](https://github.com/Papipapito/msx-turbo) | `TURBO.COM`: activar y desactivar el turbo desde MSX-DOS |

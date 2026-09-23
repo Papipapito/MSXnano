@@ -47,12 +47,12 @@ por lo que:
 
 - Los ficheros sueltos están en el `.gitignore`.
 - Lo que sí es del proyecto (menú, logo, cola de config, herramientas) tiene fuente en el
-  repo [`bios-msxnano-msximus`](https://github.com/Papipapito/bios-msxnano-msximus).
-- El pack completo lo maneja Albert a mano. En este repo hay un `bin/goauld_rom_int.bin`
-  histórico y las releases llevan el pack como *asset*; eso es una decisión del autor y
-  no de esta documentación.
+  repo `bios-msxnano-msximus`, que es **privado**.
+- Los dos packs montados (Nextor 2.1.4 y Nextor 3 beta) van como *assets* de la release,
+  por decisión y bajo la responsabilidad del autor. `bin/goauld_rom_int.bin` es el mismo
+  pack de Nextor 2.1.4 de la v2.0 (md5 `4dc4e4f5…`, commit `c9f8595` del repo de BIOS).
 
-## Herramientas (en `bios-msxnano-msximus`)
+## Herramientas (en `bios-msxnano-msximus`, privado)
 
 | Herramienta | Qué hace |
 |---|---|

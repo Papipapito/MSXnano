@@ -102,16 +102,18 @@ Board: Waveshare **ESP32-C6-LCD-1.3**. Firmware: **[ESP32-for-FPGA](https://gith
 
 ## 💾 What to flash
 
+Everything is attached to the **[latest release](https://github.com/Papipapito/MSXnano/releases/latest)**.
+
 | Step | File | Address | Tool |
 |---|---|---|---|
-| 1 | `msxnano.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
-| 2 | BIOS pack | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
-| 3 | `fpga/rp2040/rp2040_keyboard.uf2` | — | Drag onto the Pico's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
-| 4 | ESP-01S or ESP32-C6 firmware | — | Only if you fit one |
+| 1 | `msxnano_v2.0.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
+| 2 | `pack_bios_msxnano.bin` (Nextor 2.1.4, recommended) **or** `pack_bios_msxnano_nextor3.bin` (Nextor 3 beta) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
+| 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero) **or** `rp2040_keyboard_pico.uf2` (Pico) | — | Drag onto the Pico's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
+| 4 | `firmware_esp32c6_v2.0_merged.bin` | `0x0` | `esptool` — only if you fit the ESP32-C6 (the ESP-01S uses the ducasp UNAPI firmware) |
 
-> **The BIOS pack contains copyrighted MSX system ROMs**, so it is not distributed here —
-> build it from your own dumps. It bundles the MSX2+ BIOS, sub-ROM, Nextor 2.1.4, the WiFi
-> ROM, the boot menu and the config block.
+> The BIOS packs bundle the MSX2+ BIOS, sub-ROM, kanji, MSX-MUSIC, Nextor, the WiFi ROM,
+> the boot menu and the config block. The system ROMs in them are copyrighted by their
+> owners. Flashing a pack resets the saved Settings.
 
 ---
 

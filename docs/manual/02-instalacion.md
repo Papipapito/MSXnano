@@ -31,11 +31,10 @@ Hay dos packs en la release: **`pack_bios_msxnano.bin`** (Nextor 2.1.4, el recom
 `pack_bios_msxnano_nextor3.bin` (Nextor 3 beta). Ver [03. La tarjeta SD](03-tarjeta-sd.md)
 para las diferencias.
 
-> Los packs contienen ROMs de sistema con derechos de autor. Si prefieres montarlo con tus
-> propios volcados, las herramientas están en
-> [bios-msxnano-msximus](https://github.com/Papipapito/bios-msxnano-msximus)
-> (`tools/hacer_packs.py`). La anatomía completa está en
-> [tecnica/04-pack-bios.md](../tecnica/04-pack-bios.md).
+> Los packs llevan ROMs de sistema con derechos de autor de sus dueños; van en la release
+> por decisión del autor. Las herramientas que los montan (`tools/hacer_packs.py`) viven en
+> su repositorio de BIOS, `bios-msxnano-msximus`, que es **privado**. La anatomía completa
+> está en [tecnica/04-pack-bios.md](../tecnica/04-pack-bios.md).
 
 ## 3. El RP2040 (teclado, joystick y ratón)
 

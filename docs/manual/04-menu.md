@@ -1,9 +1,8 @@
 # 04. El menú de arranque
 
 El menú vive **dentro del pack de BIOS** (en la ROM de MSX-MUSIC, a partir del offset
-0x760) y su fuente está en el repositorio
-[bios-msxnano-msximus](https://github.com/Papipapito/bios-msxnano-msximus), común a las
-dos máquinas. Este capítulo cuenta cómo se usa.
+0x760) y su fuente está en el repositorio de BIOS del autor, `bios-msxnano-msximus`
+(privado), común a las dos máquinas. Este capítulo cuenta cómo se usa.
 
 ## Arranque
 

@@ -82,7 +82,37 @@ El MSXimus ya guarda la SRAM en la SD (bloque 5 del plan v3.5, 06/09/2026); en e
 está **revisado y pendiente**. Hay 1 MB libre en la SDRAM (`0x600000`) para el lado FPGA
 y el menú ya sabe escribir en la SD; falta el disparador (al salir del juego o por tecla).
 
-## 7. Lo que se retiró y no vuelve
+## 7. La SD rápida del MSXimus (portable, con riesgo)
+
+El MSXnano lee la SD por la ventana de la página 1 a **~90 KB/s**, con el `sd_reader.sv`
+original de WonderTANG (reloj de la tarjeta a ~2,4 MHz, un comando por sector). El MSXimus
+pasó por cuatro pasos, medidos en placa con la tecla T del menú:
+
+| Paso | Versión del MSXimus | Velocidad |
+|---|---|---|
+| Ventana de la página 1 (lo que tiene el nano) | — | ~90 KB/s |
+| Reloj de la SD a 6,75 MHz + puertos de E/S `#47-#4F` | v3.5d | 104 KB/s |
+| Multibloque CMD18/CMD25 | v3.5d | 112 KB/s |
+| **DMA de la SD a la RAM**, con el Z80 congelado | v3.6 | **640 KB/s** |
+| DMA en modo lógico + driver de Nextor por DMA | v3.6c | DOS y `.dsk` mucho más rápidos |
+
+Solo la DMA cambia la experiencia: el cuello es el Z80 moviendo bytes, no la tarjeta.
+
+**Cómo se portaría**: `sdc_ioport.sv` y `sd_dma.sv` (~490 líneas, en el repo MSXimus), los
+`sd_reader.sv`/`sdcmd_ctrl.sv` nuevos, el camino de la DMA en `memory.v` (reusa el del
+cargador de flash, con la guarda de refresco), el congelado del Z80 en el `clk_enable` y el
+modo lógico adaptado al mapper de 4 MB del nano (el MSXimus tiene 2 MB). El driver de
+Nextor **ya es común** y busca la firma `M` por los puertos: con el RTL nuevo, el DOS iría
+por DMA sin tocar el menú. El menú no tiene sitio en el nano (comparte 16 KB con
+MSX-MUSIC), así que la carga de ROMs desde el navegador seguiría por la ventana.
+
+**El riesgo** es el de siempre ([06](06-sintesis-timing.md)): esos módulos cuelgan de
+`IORQ_n`, el nodo más cargado del diseño. En el MSXimus hicieron falta 5 campañas y 15
+dados, y al final hubo que registrar todas las entradas y salidas del módulo de puertos.
+La regla que salió de ahí: **nada que salga del bus del Z80 llega combinacionalmente a la
+dirección o al *enable* de una BSRAM**.
+
+## 8. Lo que se retiró y no vuelve
 
 | Qué | Cuándo | Por qué |
 |---|---|---|
@@ -97,7 +127,7 @@ y el menú ya sabe escribir en la SD; falta el disparador (al salir del juego o 
 | Salida HDMI a 720p con escalador | evaluado | Cosmético; CLS al límite |
 | Audio por Bluetooth | evaluado | A2DP necesita BT clásico (ESP32 clásico o RP2350-W) y añade 100-200 ms de latencia |
 
-## 8. Mappers que no hay
+## 9. Mappers que no hay
 
 Solo Konami4, Konami SCC, ASCII8 y ASCII16 (los dos ASCII con SRAM en los segmentos
 252-255). No hay mapper de R-Type (el cartucho Irem original), ni Cross Blaim, ni Harry
@@ -106,7 +136,7 @@ mappers solo van si existe una conversión de la escena a Konami SCC o ASCII. Ca
 nuevo son unas decenas de CLS en `megaram.v` más un nivel en el decodificador; hoy no
 hay hueco.
 
-## 9. Sin probar en placa
+## 10. Sin probar en placa
 
 - El **pack con Nextor 3 beta** en el nano (validado en el MSXimus).
 - Teclados con **hub interno** y algunos mandos XInput concretos.

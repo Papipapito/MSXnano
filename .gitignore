@@ -81,3 +81,6 @@ fpga/src/rom/knmsxppl.rom
 fpga/src/rom/esp8266e.rom
 fpga/src/rom/extraido_int/
 fpga/src/rom/extraido_jap/
+
+# Kit local de cada release (copia personal de Albert, no se sube)
+mi_release/
