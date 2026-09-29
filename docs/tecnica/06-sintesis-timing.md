@@ -27,19 +27,21 @@ no una casualidad de tirada. La 1.9.12 reporta además un hold `clock_audio → 
 de −1,3 ns que la 1.9.11 callaba; sale idéntico en el control, es un cruce asíncrono y
 no bloquea.
 
-## Ocupación de la v2.0
+## Ocupación de la v2.1 (dado 999917)
 
 | Recurso | Uso | |
 |---|---|---|
-| **CLS** | **9.212 / 10.368** | **89 %** ← el cuello |
-| Logic (LUT+ALU) | 15.741 / 20.736 | 76 % |
-| Registros | 8.214 / 15.915 | 52 % |
-| BSRAM | 16 / 46 | 35 % |
+| **CLS** | **9.188 / 10.368** | **89 %** ← el cuello |
+| Logic (LUT+ALU) | 15.136 / 20.736 | 73 % |
+| Registros | 7.976 / 15.915 | 51 % |
+| BSRAM | 14 / 46 | 31 % |
 | DSP | 11 % | |
 | PLL | 2 / 2 | 100 % |
 
 El **CLS** (el bloque físico que agrupa LUTs y registros) es el recurso que se agota,
-y al 89 % el rutador ya trabaja congestionado. Los dos PLL también están agotados: nada
+y al 89 % el rutador ya trabaja congestionado. (La tabla que traía la v2.0 —9.212 CLS,
+15.741 de lógica, 8.214 registros, 16 BSRAM— no sale de su propio árbol: la v2.0
+reconstruida el 29/09 con la misma herramienta y el mismo dado da 9.224 / 15.229 / 7.976 / 14.) Los dos PLL también están agotados: nada
 que necesite otro reloj cabe sin reorganizar el árbol.
 
 ## Los relojes
@@ -47,7 +49,7 @@ que necesite otro reloj cabe sin reorganizar el árbol.
 | Reloj | Periodo | Fmax v2.0 | Notas |
 |---|---|---|---|
 | `clock_27m` | 37,0 ns | ~77 MHz | VDP, holgado |
-| **`clock_54m`** | **18,5 ns** | **54,3 – 61,7 MHz según tirada** | **CPU, bus, mux de `cpu_din`, cruce a la SDRAM** |
+| **`clock_54m`** | **18,5 ns** | **v2.0: 48,9 – 61,7 según tirada (3 de 6 cierran); v2.1: 55,1 – 62,5 (6 de 6)** | **CPU, bus, mux de `cpu_din`, cruce a la SDRAM** |
 | `clock_108m` / `108i` | 9,26 ns | ~169 MHz | SDRAM |
 | `clock_audio` | 3,6 MHz | — | Cruce asíncrono |
 
@@ -59,8 +61,9 @@ la mitad de las tiradas intermedias.
 
 ### 1. El mux de `cpu_din`
 
-La lectura del Z80 es una **cadena de prioridad** larguísima (`top.v` ~línea 700): cada
-puerto, cada slot, cada periférico es un nivel más. Ya iba con 20 ns de lógica contra
+La lectura del Z80 era una **cadena de prioridad** larguísima (~31 ternarios): cada
+puerto, cada slot, cada periférico era un nivel más. Desde la v2.1 va **por grupos** (ver
+abajo) al final de `top.v`. Ya iba con 20 ns de lógica contra
 18,2 disponibles. La lección está en el commit `4cb65a4` (27/08/2026):
 
 | Build | `clock_54m` | |
@@ -81,6 +84,37 @@ OUT del strobe y el IN siguiente pasan ~280 ns.
 
 **Regla:** cualquier cosa nueva que el Z80 tenga que leer entra **registrada**, nunca como
 un nivel más del mux.
+
+**v2.1 (29/09/2026): el mux por grupos.** Idea de MSXHeroTN (terracide303, `e48a96f`).
+Las fuentes van en 5 grupos que son tramos seguidos de la lista original; cada grupo saca
+su *acierto* (el OR exacto de sus condiciones) y su valor (su minicadena, en el mismo
+orden) en paralelo, y luego los grupos se resuelven entre sí en orden. Profundidad = grupo
+más largo + número de grupos (~11) en vez de ~31. La **prioridad es idéntica** —gana la
+primera condición cierta, sin suponer que las decodificaciones se excluyan—, solo se
+juntan condiciones vecinas con el mismo valor y se quitan `slot0/slotx` (daban `FF`, que
+es el defecto). Demostrado con `fpga/tools/cpudin_equiv/verify.py`: yosys (miter + SAT)
+con los `define de la build y cinco combinaciones más, y 200.000 vectores en Icarus; tres
+mutaciones a propósito (orden, acierto incompleto, grupos permutados) las caza. El bloque
+va al final del módulo porque la cadena leía señales declaradas 2.000 líneas más abajo.
+
+Medido con la 1.9.12.03, seis dados, la misma fuente salvo el mux (la v2.0 se reproduce
+exacta: 61,655 / 60,567 / 51,366 con los dados de su campaña):
+
+| Dado | v2.0 (cadena) | v2.1 (grupos) |
+|---|---|---|
+| 999961 | 61,655 | 57,952 |
+| 999979 | 60,567 | 60,423 |
+| 999983 | **51,366 falla** | 59,722 |
+| 999953 | **48,890 falla** | 55,137 |
+| 999931 | 54,220 (+0,22) | 55,901 |
+| 999917 | **51,033 falla** | **62,494 ← entregado** |
+| | **3 de 6**, media 54,6 | **6 de 6**, media 58,6 |
+
+Los CLS no cambian (media 9.197 frente a 9.198): aquí no libera área, como sí midió
+MSXHeroTN en su árbol (−127). Lo que da es **estabilidad**: las tiradas malas de la v2.0
+caían en caminos que salen de `cpu1/WR_n` (hacia `mem1/sdram_addr`, el camino 2, y
+`state_wait`), que no se han tocado: con el mux más corto el emplazador tiene holgura
+para no romperlos.
 
 ### 2. El cruce de media fase `cpu1 → mem1`
 
@@ -111,8 +145,10 @@ comprobar que su protocolo lo admite). Los `set_multicycle_path` del `.sdc` cubr
 
 Cuando el diseño cierra "según tirada", se hacen **campañas**: la misma fuente varias
 veces cambiando una constante inerte para que el emplazador parta de otro sitio. En el
-MSXnano el dado es el tope del contador `led_cnt` (el parpadeo del LED, `top.v` ~2829;
-el repo lleva `999999`). Campaña del par 48, el entregado como v2.0:
+MSXnano el dado es el tope del contador `led_cnt` (el parpadeo del LED, `top.v` ~2778).
+Desde la v2.1 **el repo lleva el dado entregado** (`999917`) y reconstruye el bitstream:
+el `.bin` sale idéntico byte a byte y el `.fs` solo cambia en la línea de fecha de su
+cabecera (comprobado el 29/09). Campaña del par 48, el entregado como v2.0:
 
 | Dado | `clock_54m` | |
 |---|---|---|

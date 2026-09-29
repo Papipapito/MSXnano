@@ -4,7 +4,19 @@ Resumen técnico de cada release (tags del repo). Las notas completas están en
 [GitHub → Releases](https://github.com/Papipapito/MSXnano/releases). Versión del core =
 puerto `0x2F`.
 
-## v2.0-final — 23 de septiembre de 2026 · **la última release**
+## v2.1 — 29 de septiembre de 2026 · `FPGA_VERSION = 0x21` · **pendiente de validar en placa**
+
+- **Mux de lectura de la CPU (`cpu_din`) por grupos** en vez de una cadena de ~31
+  ternarios: misma prioridad (demostrado con yosys + Icarus, ver [06](06-sintesis-timing.md)).
+  `clock_54m` cierra en **6 de 6 dados** (55,1-62,5 MHz) frente a 3 de 6 con la cadena.
+  Entregado el dado **999917**: **62,494 MHz (+8,49 ns)**, CLS 9.188 (89 %), que ahora
+  va en el repo. Idea de MSXHeroTN.
+- **Navegador** (pack nuevo, repo de BIOS `ee18b2c`): **ordenado** (carpetas primero,
+  alfabético sin mayúsculas), **sin ficheros ocultos ni de sistema** (Windows y macOS) y
+  con **aviso `+`** en el contador si la carpeta tiene más de las **112** entradas que
+  caben (antes 115, sin aviso). Probado en un Z80 de openMSX en las 6 variantes.
+
+## v2.0-final — 23 de septiembre de 2026
 
 - **Los mismos binarios que la v2.0**: `.fs` del par 48 (dado 999961, md5 `b0e374d8…`) y
   los packs del 04/09 (Nextor 2.1.4 `4dc4e4f5…`, Nextor 3 beta `d6f3b2d4…`).

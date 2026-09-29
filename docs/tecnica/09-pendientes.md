@@ -142,6 +142,15 @@ hay hueco.
 - El **pack con Nextor 3 beta** en el nano (validado en el MSXimus).
 - Teclados con **hub interno** y algunos mandos XInput concretos.
 
+## Hecho después del cierre: v2.1 (29/09/2026)
+
+El **mux de `cpu_din` por grupos** (idea de MSXHeroTN, medido en
+[06](06-sintesis-timing.md)): no libera CLS, pero `clock_54m` pasa de cerrar en 3 de 6
+dados a 6 de 6. Eso reabre el punto 1: el arreglo de la interrupción de línea (+47 CLS)
+tumbaba el reloj con la cadena vieja y **no se ha vuelto a probar con el árbol**. Es lo
+primero que merece una campaña. Y el navegador del menú, ordenado y sin ocultos
+(repo de BIOS).
+
 ## Cómo retomar el proyecto
 
 1. Leer [06](06-sintesis-timing.md) entero antes de tocar nada.

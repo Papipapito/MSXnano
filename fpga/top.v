@@ -2775,7 +2775,7 @@ memory_ctrl mem1 (
             led_cnt       <= 0;
             led_heartbeat <= 1'b1;
         end else if (clk_enable_3m6_54) begin
-            if (led_cnt == 20'd999999) begin
+            if (led_cnt == 20'd999917) begin   // dado de la v2.1 (campana nano21b; ver docs/tecnica/06)
                 led_cnt       <= 0;
                 led_heartbeat <= ~led_heartbeat;
             end else begin
