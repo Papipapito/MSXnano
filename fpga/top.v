@@ -667,60 +667,9 @@ wire d_rd_2b = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'
     // saber que .fs esta corriendo, que es justo lo que se toca a menudo.
     // Codificacion 0xMN = version M.N; 0xFF lo lee el menu como "desconocida".
     // Subirla en cada release, junto con el pack.
-    localparam [7:0] FPGA_VERSION = 8'h20;   // 2.0
+    localparam [7:0] FPGA_VERSION = 8'h21;   // 2.1 (29/09: cpu_din por grupos)
     wire ver_req_r = (bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0 && bus_addr[7:0] == 8'h2F);
-    always @ (posedge clk_54m) begin
-        cpu_din <=
-                ( ver_req_r == 1 ) ? FPGA_VERSION :
-                ( d_rd_2b == 1 ) ? mouse_dbg :
-                ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
-                `ifdef ENABLE_SOUND
-                     ( psg2_req_r == 1 ) ? psg2_dout :
-                `endif
-                // bit1=1 -> AAh (releer el latch del puerto C); bit1=0 -> A9h (teclado)
-                ( ppi_bc_rd == 1 ) ? (bus_addr[1] ? ppi_port_c : vkey_row) :
-                `ifdef ENABLE_V9958
-                     ( vdp_csr_n == 0) ? vdp_dout :
-                `endif
-                `ifdef ENABLE_MAPPER
-                     ( mapper_read == 1) ? ram_dout :
-                `endif
-                `ifdef ENABLE_BIOS
-                     ( exp_slot0_req_r == 1) ? ~exp_slot0  :
-                     ( exp_slotx_req_r == 1) ? ~exp_slotx  :
-                     ( bios_req == 1) ? ram_dout : 
-                     ( subrom_logo_req == 1 ) ? ram_dout :
-                `endif
-                `ifdef ENABLE_SDCARD
-                     ( sd_busreq_w == 1) ? sd_cd_w :
-                     ( sram_busreq_w == 1) ? sram_cd_w :
-                     ( megarom_req == 1) ? ram_dout :
-                     //( slot3_req_r == 1) ? 8'hff :
-                 `endif
-                `ifdef ENABLE_SOUND
-                     ( megaram_req == 1 ) ? ram_dout:
-                     ( scc_rd_r == 1 ) ? scc_dout:
-                     ( scc2x_rd_r == 1 ) ? scc2x_dout:
-                `endif
-                `ifdef ENABLE_CONFIG
-                     ( config_req == 1 && pana_sel == 1 ) ? pana_dout :
-                     ( config_req == 1 && config_ok == 1) ? config_dout :
-                     ( config_req == 1 && config_ok == 0) ? swio_dout :
-                `endif
-                     ( kanji_driver_req == 1 ) ? ram_dout :
-                     ( kanji_data_req_r == 1 ) ? ram_dout :
-                `ifdef ENABLE_WIFI
-                     ( wifi_req == 1 ) ? ram_dout :
-                     ( logo_req == 1 ) ? ram_dout :
-                     ( f2_req_r == 1 ) ? f2_port :
-                     ( uart_req == 1 ) ? uart_dout :
-                `endif
-                     ( rtc_req_r == 1 ) ? rtc_dout :
-                     ( ppi_req_r == 1 ) ? ppi_port_a :
-                     ( slot0_req_r == 1 ) ? 8'hff :
-                     ( slotx_req_r == 1 ) ? 8'hff :
-                      8'hFF;   // STANDALONE: was bus_data (external MSX board). No bus -> FF.
-    end
+    // El mux de lectura de la CPU (cpu_din) esta al final del modulo, por grupos.
 
 
 //    wire ex_bus_rd_n_test;
@@ -2937,5 +2886,122 @@ memory_ctrl mem1 (
         .data      (msx_mouse_data),
         .dbg_phase (msx_mouse_phase)
     );
+
+    // ---- cpu_din: el mux de lectura de la CPU, POR GRUPOS (29/09/2026) ---------
+    // Era una sola cadena de ~30 ternarios (un mux en serie por fuente) y cpu_din
+    // es el final de caminos de clk_54m, el reloj que cierra por los pelos. Ahora
+    // las fuentes van en 5 grupos que se resuelven EN PARALELO (cada uno con su
+    // acierto y su valor) y luego los grupos entre si, en orden: profundidad =
+    // grupo mas largo + numero de grupos (~11) en vez del total.
+    // La PRIORIDAD es exactamente la de antes: cada grupo es un tramo seguido de
+    // la lista original, en su orden, y dentro se conserva el orden, asi que gana
+    // la primera condicion cierta, como antes. No se supone que las decodificaciones
+    // sean excluyentes. Solo se juntan condiciones VECINAS que dan el mismo valor y
+    // se quitan las dos ultimas (slot0/slotx), que daban 8'hFF = el defecto.
+    // Demostrado equivalente a la cadena vieja con yosys (miter + SAT) con los
+    // `define de esta build. Esta al final del modulo para que todo lo que lee
+    // este declarado antes (la cadena vieja estaba hacia la linea 672).
+    // Idea de MSXHeroTN (terracide303, commit e48a96f).
+    // puertos de E/S: version, raton, PSG, PPI B/C y VDP
+    wire g1_hit = (ver_req_r == 1) | (d_rd_2b == 1) | (psg_req_r == 1)
+                `ifdef ENABLE_SOUND
+                | (psg2_req_r == 1)
+                `endif
+                | (ppi_bc_rd == 1)
+                `ifdef ENABLE_V9958
+                | (vdp_csr_n == 0)
+                `endif
+                ;
+    wire [7:0] g1_val =
+                ( ver_req_r == 1 ) ? FPGA_VERSION :
+                ( d_rd_2b == 1 ) ? mouse_dbg :
+                ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
+                `ifdef ENABLE_SOUND
+                ( psg2_req_r == 1 ) ? psg2_dout :
+                `endif
+                // bit1=1 -> AAh (releer el latch del puerto C); bit1=0 -> A9h (teclado)
+                ( ppi_bc_rd == 1 ) ? (bus_addr[1] ? ppi_port_c : vkey_row) :
+                `ifdef ENABLE_V9958
+                ( vdp_csr_n == 0 ) ? vdp_dout :
+                `endif
+                8'hFF;
+    // memoria: mapper, registros de slot expandido y BIOS/sub-ROM
+    wire g2_hit = 1'b0
+                `ifdef ENABLE_MAPPER
+                | (mapper_read == 1)
+                `endif
+                `ifdef ENABLE_BIOS
+                | (exp_slot0_req_r == 1) | (exp_slotx_req_r == 1) | (bios_req == 1) | (subrom_logo_req == 1)
+                `endif
+                ;
+    wire [7:0] g2_val =
+                `ifdef ENABLE_MAPPER
+                ( mapper_read == 1 ) ? ram_dout :
+                `endif
+                `ifdef ENABLE_BIOS
+                ( exp_slot0_req_r == 1 ) ? ~exp_slot0 :
+                ( exp_slotx_req_r == 1 ) ? ~exp_slotx :
+                ( bios_req == 1 || subrom_logo_req == 1 ) ? ram_dout :
+                `endif
+                8'hFF;
+    // SD, SRAM, megaROM/megaRAM y SCC
+    wire g3_hit = 1'b0
+                `ifdef ENABLE_SDCARD
+                | (sd_busreq_w == 1) | (sram_busreq_w == 1) | (megarom_req == 1)
+                `endif
+                `ifdef ENABLE_SOUND
+                | (megaram_req == 1) | (scc_rd_r == 1) | (scc2x_rd_r == 1)
+                `endif
+                ;
+    wire [7:0] g3_val =
+                `ifdef ENABLE_SDCARD
+                ( sd_busreq_w == 1 ) ? sd_cd_w :
+                ( sram_busreq_w == 1 ) ? sram_cd_w :
+                ( megarom_req == 1 ) ? ram_dout :
+                `endif
+                `ifdef ENABLE_SOUND
+                ( megaram_req == 1 ) ? ram_dout :
+                ( scc_rd_r == 1 ) ? scc_dout :
+                ( scc2x_rd_r == 1 ) ? scc2x_dout :
+                `endif
+                8'hFF;
+    // configuracion (Panasonic, config, switched I/O) y kanji
+    wire g4_hit = 1'b0
+                `ifdef ENABLE_CONFIG
+                | (config_req == 1 && pana_sel == 1) | (config_req == 1 && config_ok == 1)
+                | (config_req == 1 && config_ok == 0)
+                `endif
+                | (kanji_driver_req == 1) | (kanji_data_req_r == 1);
+    wire [7:0] g4_val =
+                `ifdef ENABLE_CONFIG
+                ( config_req == 1 && pana_sel == 1 ) ? pana_dout :
+                ( config_req == 1 && config_ok == 1 ) ? config_dout :
+                ( config_req == 1 && config_ok == 0 ) ? swio_dout :
+                `endif
+                ( kanji_driver_req == 1 || kanji_data_req_r == 1 ) ? ram_dout :
+                8'hFF;
+    // WiFi (ROM UNAPI, logo, F2, UART), RTC y PPI A
+    wire g5_hit = 1'b0
+                `ifdef ENABLE_WIFI
+                | (wifi_req == 1) | (logo_req == 1) | (f2_req_r == 1) | (uart_req == 1)
+                `endif
+                | (rtc_req_r == 1) | (ppi_req_r == 1);
+    wire [7:0] g5_val =
+                `ifdef ENABLE_WIFI
+                ( wifi_req == 1 || logo_req == 1 ) ? ram_dout :
+                ( f2_req_r == 1 ) ? f2_port :
+                ( uart_req == 1 ) ? uart_dout :
+                `endif
+                ( rtc_req_r == 1 ) ? rtc_dout :
+                ( ppi_req_r == 1 ) ? ppi_port_a :
+                8'hFF;
+    always @ (posedge clk_54m) begin
+        cpu_din <= g1_hit ? g1_val :
+                   g2_hit ? g2_val :
+                   g3_hit ? g3_val :
+                   g4_hit ? g4_val :
+                   g5_hit ? g5_val :
+                   8'hFF;   // STANDALONE: was bus_data (external MSX board). No bus -> FF.
+    end
 
 endmodule
