@@ -15,6 +15,9 @@ puerto `0x2F`.
   alfabético sin mayúsculas), **sin ficheros ocultos ni de sistema** (Windows y macOS) y
   con **aviso `+`** en el contador si la carpeta tiene más de las **112** entradas que
   caben (antes 115, sin aviso). Probado en un Z80 de openMSX en las 6 variantes.
+- **Joystick en el menú**: solo auto-repite arriba/abajo; izquierda/derecha (saltar 18 filas)
+  cuentan una vez por pulsación. En el MSXimus 60K un mando USB con la izquierda atascada
+  devolvía 18 atrás toda selección ≥ 18 y parecía que la lista no hacía scroll.
 
 ## v2.0-final — 23 de septiembre de 2026
 
