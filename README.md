@@ -133,6 +133,13 @@ Everything is attached to the **[v2.1 release](https://github.com/Papipapito/MSX
 > the boot menu and the config block. The system ROMs in them are copyrighted by their
 > owners. Flashing a pack resets the saved Settings.
 
+### The SD card
+
+The easiest way to prepare the microSD is **[MSX SD Maker](MSXsdmaker/README.md)**, in this repository: a Windows
+program that splits the card into 2 or 4 GB FAT16 partitions the way Nextor's FDISK does, copies Nextor 2.1.4 or 3
+(to match your pack), SofaRun, Multi Mente and a set of utilities, and writes the `AUTOEXEC.BAT` that mounts the other
+partitions as C:, D:… Nextor cannot read FAT32, so MSX-DOS needs FAT16.
+
 ---
 
 ## Keyboard

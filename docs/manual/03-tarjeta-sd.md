@@ -6,12 +6,20 @@ la lee directamente para enseñarte las ROMs y los discos.
 
 ## Qué tarjeta
 
-Una **microSD** cualquiera, formateada en **FAT32**. Vale de 2 GB a 32 GB sin más;
-tarjetas mayores hay que formatearlas en FAT32 a mano (Windows no lo ofrece por encima de
-32 GB; en Linux `mkfs.vfat -F 32`).
+Una **microSD** de marca, en **FAT16**. La forma más fácil de dejarla lista es
+**[MSX SD Maker](../../MSXsdmaker/LEEME.md)**, un programa para Windows que está en este
+repositorio: parte la tarjeta en particiones FAT16 de 2 o 4 GB como lo hace el FDISK de
+Nextor, copia Nextor (la versión de tu pack), SofaRun, Multi Mente y un surtido de
+utilidades, y escribe el `AUTOEXEC.BAT` que monta las demás particiones como C:, D:…
+
+**FAT16, no FAT32.** Nextor (la 2.1.4 y la 3.0 beta 1) solo monta FAT12 y FAT16, hasta
+4 GB por partición: con una tarjeta FAT32 el menú navega y lanza ROMs y discos, pero ESC no
+llega a MSX-DOS y el File-Hunter no descarga («FH: la SD es FAT32»). Sin MSX SD Maker, una
+tarjeta de 2 GB o menos se formatea en FAT16 desde cualquier sistema; con tarjetas mayores,
+una partición de hasta 4 GB en FAT16 con una herramienta de particiones o con `CALL FDISK`
+desde el propio MSX.
 
 Nextor soporta **varias particiones** y el menú permite cambiar entre ellas con **TAB**.
-Con una sola partición FAT32 primaria no hay nada que configurar.
 
 ## Qué poner
 
@@ -25,8 +33,8 @@ las carpetas. Por costumbre:
 | `FHUNT/` | La crea el File-Hunter para sus descargas |
 | raíz | `NEXTOR.SYS`, `COMMAND2.COM`, `AUTOEXEC.BAT` si quieres arrancar en DOS con utilidades |
 
-Para arrancar en **MSX-DOS** hace falta `NEXTOR.SYS` y `COMMAND2.COM` en la raíz
-(vienen con la distribución de Nextor). Sin ellos, ESC en el menú te deja en BASIC con
+Para arrancar en **MSX-DOS** hace falta `NEXTOR.SYS` y `COMMAND2.COM` en la raíz de la
+primera partición FAT16 (vienen con la distribución de Nextor, y MSX SD Maker los copia). Sin ellos, ESC en el menú te deja en BASIC con
 la SD accesible como unidad.
 
 ## Las dos versiones de Nextor
