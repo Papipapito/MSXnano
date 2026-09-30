@@ -51,7 +51,9 @@ core y lo amplía con lo que aquí no cabe.
 
 El core ocupa el **~89 % de las celdas lógicas** del GW2AR-18. En ese régimen, cualquier
 cambio —incluso quitar lógica— reordena el emplazamiento y puede tumbar el reloj de la
-CPU; se ha comprobado varias veces. El `.fs` de la v2.0 cierra a 61,7 MHz sobre los 54
-necesarios, pero es el mejor de tres emplazamientos: uno de los tres no cerraba. Ahí se
+CPU; se ha comprobado varias veces. El `.fs` de la v2.0 cerraba a 61,7 MHz sobre los 54
+necesarios, pero era el mejor de tres emplazamientos: uno de los tres no cerraba. La v2.1,
+con el mux de lectura de la CPU en árbol, cierra en todos los emplazamientos probados
+(seis de seis) y la entregada va a 62,5 MHz. Ahí se
 queda. Lo que se sabe y no se pudo meter está
 en [pendientes y aparcado](../tecnica/09-pendientes.md).

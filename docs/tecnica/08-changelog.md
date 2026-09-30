@@ -6,6 +6,11 @@ puerto `0x2F`.
 
 ## v2.1 — 29 de septiembre de 2026 · `FPGA_VERSION = 0x21` · **pendiente de validar en placa**
 
+Publicada el 30/09 como **pre-release** [`v2.1`](https://github.com/Papipapito/MSXnano/releases/tag/v2.1): `msxnano_v2.1.fs`
+(7e5ac2d3), los cuatro packs (2.1.4 eb03b904, inglés e7fe504e, Nextor 3 a2a0c4c3, inglés con
+Nextor 3 422dd54f) y los firmwares de la RP2040 y del C6 de la v2.0, que no cambian. Pasará
+a release normal cuando se valide en placa. `bin/msxnano.fs` es ya el de la v2.1.
+
 - **Mux de lectura de la CPU (`cpu_din`) por grupos** en vez de una cadena de ~31
   ternarios: misma prioridad (demostrado con yosys + Icarus, ver [06](06-sintesis-timing.md)).
   `clock_54m` cierra en **6 de 6 dados** (55,1-62,5 MHz) frente a 3 de 6 con la cadena.

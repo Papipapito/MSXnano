@@ -12,7 +12,7 @@ Education). **No** uses openFPGALoader: no maneja bien la flash externa de esta 
 
 | Qué | Fichero | Dirección | Modo del Programmer |
 |---|---|---|---|
-| Core | `msxnano_v2.0.fs` (de la [release](https://github.com/Papipapito/MSXnano/releases)) | `0x000000` | *External Flash Mode* |
+| Core | `msxnano_v2.1.fs` (de la [release](https://github.com/Papipapito/MSXnano/releases/tag/v2.1)) | `0x000000` | *External Flash Mode* |
 
 Al terminar, la placa reinicia sola con el core cargado. Sin pack todavía no arranca nada
 útil: falta la BIOS.

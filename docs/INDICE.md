@@ -3,7 +3,7 @@
 Índice general. El [README](../README.md) del repositorio (en inglés) se queda corto a
 propósito: qué es, qué hace falta y cómo se instala. Todo lo demás vive aquí.
 
-Estado del proyecto: **v2.0, cerrado** (release [`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final), 23/09/2026). El core ocupa el ~89 % de la lógica del chip y no
+Estado del proyecto: **v2.1** (release [`v2.1`](https://github.com/Papipapito/MSXnano/releases/tag/v2.1), 30/09/2026, pre-release hasta validarla en placa; la última validada es [`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final), 23/09/2026). La v2.1 trae el navegador ordenado y el mux de lectura de la CPU en árbol ([changelog](tecnica/08-changelog.md)). El core ocupa el ~89 % de la lógica del chip y no
 queda sitio para funcionalidades nuevas. Lo que hay funciona y está validado en placa; lo
 que se quedó fuera está documentado en [pendientes y aparcado](tecnica/09-pendientes.md)
 para quien quiera retomarlo.

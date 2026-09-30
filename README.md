@@ -4,8 +4,10 @@
 
 > 📖 Project page, install guides and community: **[msx.barcelona](https://msx.barcelona)**
 
-> **Project status: v2.0 is the final release** ([`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final)). The core fills ~89 % of the GW2AR-18 and
-> the CPU clock closes with no margin to spare, so no new features fit. Everything that
+> **Project status: v2.1** ([`v2.1`](https://github.com/Papipapito/MSXnano/releases/tag/v2.1), 30/09/2026 — a **pre-release** until it is
+> validated on the board; the last validated one is [`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final)).
+> v2.1 brings a sorted SD browser and a faster CPU read path; the core still fills ~89 % of
+> the GW2AR-18, so no larger features fit. Everything that
 > works is documented; everything that was left out is listed, with the reasons, in
 > [docs/tecnica/09-pendientes.md](docs/tecnica/09-pendientes.md). Larger features live on
 > in [MSXimus](https://github.com/Papipapito/MSXimus) (Tang Console 60K).
@@ -22,6 +24,21 @@
 * Optional **WiFi** (MSX UNAPI) via ESP-01S, or an **ESP32-C6** that adds a status screen
 
 ---
+
+## What's new in v2.1
+
+- **The SD browser is sorted**: folders first, then ROMs and disks together, alphabetical and
+  case-insensitive. Hidden and system files stay out of the list (Windows' `System Volume
+  Information`, the `.Trashes` and `._name.rom` a Mac leaves behind). A folder holds up to 112
+  entries; if there are more, the counter ends in `+` (`112/112+`). On the gamepad, left and
+  right (page jumps) now count once per press.
+- **A faster CPU read path**: the read multiplexer is a tree instead of a 31-deep chain, with
+  exactly the same priority (proven with a formal equivalence check). The CPU clock now closes
+  on 6 placements out of 6, against 3 out of 6 before; this build runs at 62.5 MHz for the
+  54 MHz it needs.
+- **BIOS packs in English** as well as Spanish: four packs, English or Spanish menu, Nextor
+  2.1.4 or 3.
+- Settings shows **2.1** as the FPGA version. The RP2040 and ESP32-C6 firmwares do not change.
 
 ## What's new in v2.0
 
@@ -103,12 +120,12 @@ Board: Waveshare **ESP32-C6-LCD-1.3**. Firmware: **[ESP32-for-FPGA](https://gith
 
 ## 💾 What to flash
 
-Everything is attached to the **[latest release](https://github.com/Papipapito/MSXnano/releases/latest)**.
+Everything is attached to the **[v2.1 release](https://github.com/Papipapito/MSXnano/releases/tag/v2.1)** (the previous one, [`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final), stays available).
 
 | Step | File | Address | Tool |
 |---|---|---|---|
-| 1 | `msxnano_v2.0.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
-| 2 | `pack_bios_msxnano.bin` (Nextor 2.1.4, recommended) **or** `pack_bios_msxnano_nextor3.bin` (Nextor 3 beta) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
+| 1 | `msxnano_v2.1.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
+| 2 | **One** pack: `pack_bios_msxnano.bin` (Spanish menu, Nextor 2.1.4, recommended), `pack_bios_msxnano_en.bin` (English menu), `pack_bios_msxnano_nextor3.bin` / `pack_bios_msxnano_en_nextor3.bin` (Nextor 3 beta) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
 | 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero) **or** `rp2040_keyboard_pico.uf2` (Pico) | — | Drag onto the Pico's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
 | 4 | `firmware_esp32c6_v2.0_merged.bin` | `0x0` | `esptool` — only if you fit the ESP32-C6 (the ESP-01S uses the ducasp UNAPI firmware) |
 
