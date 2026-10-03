@@ -12,7 +12,7 @@ repositorio: parte la tarjeta en particiones FAT16 de 2 o 4 GB como lo hace el F
 Nextor, copia Nextor (la versión de tu pack), SofaRun, Multi Mente y un surtido de
 utilidades, y escribe el `AUTOEXEC.BAT` que monta las demás particiones como C:, D:…
 
-**FAT16, no FAT32.** Nextor (la 2.1.4 y la 3.0 beta 1) solo monta FAT12 y FAT16, hasta
+**FAT16, no FAT32.** Nextor (la 2.1.4 y la 3.0 beta 2) solo monta FAT12 y FAT16, hasta
 4 GB por partición: con una tarjeta FAT32 el menú navega y lanza ROMs y discos, pero ESC no
 llega a MSX-DOS y el File-Hunter no descarga («FH: la SD es FAT32»). Sin MSX SD Maker, una
 tarjeta de 2 GB o menos se formatea en FAT16 desde cualquier sistema; con tarjetas mayores,

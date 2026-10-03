@@ -68,6 +68,12 @@ Alternativas: `set_multicycle_path` **solo si se demuestra** que el dato es esta
 de media fase (no asumirlo), o que la SDRAM capture también en bajada. Detalle en
 [06](06-sintesis-timing.md). Es lo que convierte cada build en una campaña de dados.
 
+**Segunda deuda (vista en la 2.1.1): `clock_108i → clock_27m`**, de `mem1/vram_dout` (VRAM leída
+a 108 MHz) a los `CE` de los sprites del VDP (27 MHz), con 10,5 ns de relación. Negativa en 3
+de 6 dados de la v2.1 y en 9 de 10 con el puente; el `TNS` de Gowin no la cuenta, así que
+hay que mirarla en la tabla de caminos. Cura: registrar `vram_dout` en el lado de 27 MHz, o
+un multiciclo **solo si se demuestra** que el dato lleva estable más de un ciclo de 108.
+
 ## 5. La ñ (teclado español)
 
 La BIOS internacional no tiene la ñ en la fuente ni en la tabla del teclado. La vía

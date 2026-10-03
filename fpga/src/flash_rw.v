@@ -21,8 +21,14 @@ module flash
     input [7:0] write_din,
     input [23:0] write_addr,
     output write_busy,
-    output write_terminate,
-    output [7:0] write_counter
+    input wire write_terminate,
+    output [7:0] write_counter,
+    // V3.8 (flash_bridge.v, actualizar desde el MSX): programar SIN borrar el sector antes, y esperar a cada byte
+    // (write_din_ok) con /CS bajo y el reloj parado; si el dato no llega en ~0,5 s se cierra la pagina con lo que
+    // haya. Los ajustes atan write_noerase a 0 y write_din_ok a 1: su camino no cambia. idle = listo para otra orden.
+    input wire write_noerase,
+    input wire write_din_ok,
+    output idle
 );
 
 
@@ -60,6 +66,9 @@ module flash
   localparam STATE_02_3 = 8'hc3;
   localparam STATE_02_4 = 8'hc4;
   localparam STATE_02_5 = 8'hc5;
+  localparam STATE_05c_1 = 8'hd1;
+  localparam STATE_05c_2 = 8'hd2;
+  localparam STATE_05c_3 = 8'hd3;
 
   localparam CMD_READ_DATA_BYTES = 8'h03;
   localparam CMD_WRITE_ENABLE = 8'h06;
@@ -73,6 +82,12 @@ module flash
 
   localparam DELAY_SHORT = 8'd4;
   localparam DELAY_LONG = 8'd15;
+
+  // Timeout del poll de WIP (Read Status): aborta a idle si la flash nunca
+  // baja WIP. Reloj del modulo = clk_54m (54 MHz, top.v: Gowin_CLKDIV2 de
+  // clk_108m). ~500 ms = 0.5 s * 54_000_000 Hz = 27_000_000 ciclos
+  // (> tSE max ~400 ms del sector erase y >> tPP max ~3 ms del page program).
+  localparam [31:0] WIP_TIMEOUT = 32'd27_000_000;
 
   reg r_MOSI = 0;
   reg r_CS = 1;
@@ -101,6 +116,8 @@ module flash
   reg [23:0] writeAddress = 0;
   reg [7:0] status_reg = 0;
 
+  reg [31:0] wip_timeout = 0;
+
   always @(posedge clk or negedge reset_n) begin
     if (~reset_n) begin
         state <= STATE_INIT_POWER;
@@ -112,7 +129,12 @@ module flash
         r_MOSI <= 0;
         r_data_ready <= 0;
         r_write_counter <= 0;
+        wip_timeout <= 0;
     end else begin
+        // Cuenta libre; se pone a 0 al entrar en cada bucle de poll de WIP
+        // (STATE_20_3 -> STATE_05b_1 y STATE_02_5 -> STATE_05c_1) y solo se
+        // consulta en STATE_05b_3 / STATE_05c_3.
+        wip_timeout <= wip_timeout + 1;
         case (state)
 
           STATE_INIT_POWER: begin
@@ -136,7 +158,7 @@ module flash
               r_data_ready <= 0;
               if (write_enable == 1) begin
                   r_write_busy <= 1;
-                  state <= STATE_06_1;
+                  state <= write_noerase ? STATE_06b_1 : STATE_06_1;
               end else if (rd == 1) begin
                   r_CS <= 0;
                   r_busy <= 1;
@@ -356,6 +378,7 @@ module flash
             counter <= counter + 1;
             if (counter == DELAY_LONG) begin
                 counter <= 0;
+                wip_timeout <= 0;
                 state <= STATE_05b_1;
             end
             else begin
@@ -383,7 +406,14 @@ module flash
           STATE_05b_3: begin
             r_CS <= 1;
             counter <= counter + 1;
-            if (counter == DELAY_SHORT) begin
+            if (wip_timeout >= WIP_TIMEOUT) begin
+                // Timeout: la flash nunca bajo WIP tras el erase -> aborta a idle
+                r_write_busy <= 0;
+                r_write_counter <= 0;
+                counter <= 0;
+                state <= STATE_LOAD_CMD_TO_SEND;
+            end
+            else if (counter == DELAY_SHORT) begin
                 counter <= 0;
                 if (dataIn[0] == 0) begin
                     state <= STATE_06b_1;
@@ -436,6 +466,7 @@ module flash
 
           STATE_02_2: begin
             counter <= 0;
+            wip_timeout <= 0;
             dataToSend <= write_addr;
             bitsToSend <=24;
             state <= STATE_SEND_SLOW1;
@@ -444,14 +475,19 @@ module flash
 
           STATE_02_3: begin
             counter <= 0;
-            dataToSend[23-:8] <= write_din;
-            bitsToSend <=8;
-            state <= STATE_SEND_SLOW1;
-            returnState <= STATE_02_4;
+            if (write_din_ok) begin
+              dataToSend[23-:8] <= write_din;
+              bitsToSend <=8;
+              state <= STATE_SEND_SLOW1;
+              returnState <= STATE_02_4;
+            end
+            else if (wip_timeout >= WIP_TIMEOUT)
+              state <= STATE_02_5;
           end
 
           STATE_02_4: begin
             r_write_counter <= r_write_counter + 1;
+            wip_timeout <= 0;
             if (r_write_counter != 8'd255 && write_terminate == 0) begin
                 state <= STATE_02_3;
             end
@@ -465,13 +501,59 @@ module flash
             r_CS <= 1;
             counter <= counter + 1;
             if (counter == DELAY_LONG) begin
+                counter <= 0;
+                wip_timeout <= 0;
+                state <= STATE_05c_1;
+            end
+            else begin
+                state <= STATE_02_5;
+            end
+          end
+
+          // Espera WIP=0 tras el PAGE PROGRAM (mismo patron que el poll del
+          // erase, STATE_05b_*): no dar la escritura por terminada hasta que
+          // la flash acabe de programar (tPP max ~3 ms) o salte el timeout.
+          // Critico para escrituras en rafaga (auto-commit SRAM del 60K).
+          STATE_05c_1: begin
+            r_CS <= 0;
+            r_data_ready <= 0;
+            counter <= 0;
+            dataToSend[23-:8] <= CMD_READ_STATUS;
+            bitsToSend <= 8;
+            state <= STATE_SEND;
+            returnState <= STATE_05c_2;
+          end
+
+          STATE_05c_2: begin
+            counter <= 0;
+            dataIn <= 0;
+            state <= STATE_READ_DATA2;
+            returnState <= STATE_05c_3;
+          end
+
+          STATE_05c_3: begin
+            r_CS <= 1;
+            counter <= counter + 1;
+            if (wip_timeout >= WIP_TIMEOUT) begin
+                // Timeout: la flash nunca bajo WIP tras el program -> aborta a idle
                 r_write_busy <= 0;
                 r_write_counter <= 0;
                 counter <= 0;
                 state <= STATE_LOAD_CMD_TO_SEND;
             end
+            else if (counter == DELAY_SHORT) begin
+                counter <= 0;
+                if (dataIn[0] == 0) begin
+                    r_write_busy <= 0;
+                    r_write_counter <= 0;
+                    state <= STATE_LOAD_CMD_TO_SEND;
+                end
+                else begin
+                    state <= STATE_05c_1;
+                end
+            end
             else begin
-                state <= STATE_02_5;
+                state <= STATE_05c_3;
             end
           end
 
@@ -488,5 +570,6 @@ module flash
 
   assign dout = dataInBuffer;
   assign write_counter = r_write_counter;
+  assign idle = (state == STATE_LOAD_CMD_TO_SEND);
 
 endmodule

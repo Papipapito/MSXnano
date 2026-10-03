@@ -668,7 +668,11 @@ wire d_rd_2b = (bus_iorq_n==0 && bus_m1_n==1 && bus_rd_n==0 && bus_addr[7:0]==8'
     // Codificacion 0xMN = version M.N; 0xFF lo lee el menu como "desconocida".
     // Subirla en cada release, junto con el pack.
     localparam [7:0] FPGA_VERSION = 8'h21;   // 2.1 (29/09: cpu_din por grupos)
+    // 2.1.1 (02/10/2026): el tercer digito va en el puerto 0x29, como el FPGA_PATCH del MSXimus (1..15; 0 = sin
+    // arreglos). Lo ensena MXUPDATE.COM; el menu del nano solo lee el 0x2F (no le cabe mas).
+    localparam [7:0] FPGA_PATCH = 8'h01;     // 2.1.1: puente de la flash (actualizar con MXUPDATE.COM)
     wire ver_req_r = (bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0 && bus_addr[7:0] == 8'h2F);
+    wire patch_req_r = (bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0 && bus_addr[7:0] == 8'h29);
     // El mux de lectura de la CPU (cpu_din) esta al final del modulo, por grupos.
 
 
@@ -2250,6 +2254,14 @@ memory_ctrl mem1 (
                         `endif
     assign flash_write_terminate = (flash_write_counter == 8'd6) ? 1 : 0;
 
+    // 2.1.1: puente de la flash para el MSX (flash_bridge.v, como en el MSXimus V3.8). Toma el puerto de escritura
+    // del modulo cuando tiene una orden y el de lectura mientras lee; los ajustes y el cargador del pack, como siempre.
+    wire        fbr_wr_start, fbr_wr_sel, fbr_noerase, fbr_wdata_ok, fbr_wterm;
+    wire [23:0] fbr_addr;
+    wire [7:0]  fbr_wdata, fbr_dout;
+    wire        fbr_rd_sel, fbr_rd, fbr_term;
+    wire        flash_cmd_idle;
+
     flash # (
         .STARTUP_WAIT(1)
     )
@@ -2263,18 +2275,21 @@ memory_ctrl mem1 (
         .MOSI(mspi_mosi),
         // La flash vuelve a ser SOLO del streamer del pack (la cinta ya no la
         // usa: el stream viene del C6 por UART; la via tape_flash quedo en git).
-        .addr(ff_flash_addr),
-        .rd(ff_flash_rd),
+        .addr(fbr_rd_sel ? fbr_addr : ff_flash_addr),
+        .rd(fbr_rd_sel ? fbr_rd : ff_flash_rd),
         .dout(flash_dout),
         .data_ready(flash_data_ready),
         .busy(flash_busy),
-        .terminate(ff_flash_terminate),
-        .write_enable(config_flash_write_ff),
-        .write_din(flash_write_din),
+        .terminate(fbr_rd_sel ? fbr_term : ff_flash_terminate),
+        .write_enable(config_flash_write_ff | fbr_wr_start),
+        .write_din(fbr_wr_sel ? fbr_wdata : flash_write_din),
         .write_busy(flash_write_busy),
         .write_counter(flash_write_counter),
-        .write_terminate(flash_write_terminate),
-        .write_addr(24'h280000) //24'h278000)
+        .write_terminate(fbr_wr_sel ? fbr_wterm : flash_write_terminate),
+        .write_addr(fbr_wr_sel ? fbr_addr : 24'h280000),   // los ajustes: 512 KB detras del pack
+        .write_noerase(fbr_wr_sel & fbr_noerase),
+        .write_din_ok(~fbr_wr_sel | fbr_wdata_ok),
+        .idle(flash_cmd_idle)
     );
 
     reg [7:0] ff_flash_state = 8'd0;
@@ -2290,6 +2305,28 @@ memory_ctrl mem1 (
     reg [31:0] nose = 0;
     wire flash_idle;
     assign flash_idle = (ff_flash_state == STATE_IDLE ) ? 1'b1 : 1'b0;
+
+    // 2.1.1: el puente (dispositivo de E/S conmutada 4Dh en #40; ver la cabecera de flash_bridge.v). Libre cuando el
+    // pack ya esta streameado. Sin BL616, el idioma del menu (#4E) no lo lee nadie.
+`ifdef ENABLE_CONFIG
+    wire fbr_sel = (config0_ff == 8'hB2);
+`else
+    wire fbr_sel = 1'b0;
+`endif
+    flash_bridge u_fbr (
+        .clk(clk_54m), .reset_n(bus_reset_n),
+        .sel(fbr_sel), .bus_port(bus_addr[3:0]),
+        .wr_req(bus_addr[7:4] == 4'h4 && bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_wr_n == 1'b0),
+        .rd_req(bus_addr[7:4] == 4'h4 && bus_iorq_n == 1'b0 && bus_m1_n == 1'b1 && bus_rd_n == 1'b0),
+        .bus_din(cpu_dout), .dout(fbr_dout),
+        .info(), .info_ok(),
+        .libre(flash_idle),
+        .f_wr_start(fbr_wr_start), .f_wr_sel(fbr_wr_sel), .f_noerase(fbr_noerase), .f_addr(fbr_addr),
+        .f_wdata(fbr_wdata), .f_wdata_ok(fbr_wdata_ok), .f_wterm(fbr_wterm),
+        .f_write_busy(flash_write_busy), .f_write_counter(flash_write_counter),
+        .f_rd_sel(fbr_rd_sel), .f_rd(fbr_rd), .f_term(fbr_term),
+        .f_rdata(flash_dout), .f_data_ready(flash_data_ready), .f_idle(flash_cmd_idle)
+    );
     
     always @(posedge clk_54m, negedge reset3_n) begin
     if (reset3_n == 0) begin
@@ -2775,7 +2812,7 @@ memory_ctrl mem1 (
             led_cnt       <= 0;
             led_heartbeat <= 1'b1;
         end else if (clk_enable_3m6_54) begin
-            if (led_cnt == 20'd999917) begin   // dado de la v2.1 (campana nano21b; ver docs/tecnica/06)
+            if (led_cnt == 20'd999883) begin   // dado de la 2.1.1 (campana nano211b; ver docs/tecnica/06)
                 led_cnt       <= 0;
                 led_heartbeat <= ~led_heartbeat;
             end else begin
@@ -2903,7 +2940,7 @@ memory_ctrl mem1 (
     // este declarado antes (la cadena vieja estaba hacia la linea 672).
     // Idea de MSXHeroTN (terracide303, commit e48a96f).
     // puertos de E/S: version, raton, PSG, PPI B/C y VDP
-    wire g1_hit = (ver_req_r == 1) | (d_rd_2b == 1) | (psg_req_r == 1)
+    wire g1_hit = (ver_req_r == 1) | (patch_req_r == 1) | (d_rd_2b == 1) | (psg_req_r == 1)
                 `ifdef ENABLE_SOUND
                 | (psg2_req_r == 1)
                 `endif
@@ -2914,6 +2951,7 @@ memory_ctrl mem1 (
                 ;
     wire [7:0] g1_val =
                 ( ver_req_r == 1 ) ? FPGA_VERSION :
+                ( patch_req_r == 1 ) ? FPGA_PATCH :
                 ( d_rd_2b == 1 ) ? mouse_dbg :
                 ( psg_req_r == 1 ) ? ((psg_addr_latch == 4'd14) ? psg_joy_data : 8'hFF) :
                 `ifdef ENABLE_SOUND
@@ -2976,6 +3014,7 @@ memory_ctrl mem1 (
                 `ifdef ENABLE_CONFIG
                 ( config_req == 1 && pana_sel == 1 ) ? pana_dout :
                 ( config_req == 1 && config_ok == 1 ) ? config_dout :
+                ( config_req == 1 && fbr_sel == 1 ) ? fbr_dout :     // 2.1.1: puente de la flash (ID 4Dh)
                 ( config_req == 1 && config_ok == 0 ) ? swio_dout :
                 `endif
                 ( kanji_driver_req == 1 || kanji_data_req_r == 1 ) ? ram_dout :
