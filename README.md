@@ -135,8 +135,8 @@ Everything is attached to the **[v2.1 release](https://github.com/Papipapito/MSX
 
 ### The SD card
 
-The easiest way to prepare the microSD is **[MSX SD Maker](MSXsdmaker/README.md)**, in this repository: a Windows
-program that splits the card into 2 or 4 GB FAT16 partitions the way Nextor's FDISK does, copies Nextor 2.1.4 or 3
+The best way to prepare the microSD is **[MSX SD Maker](https://github.com/Papipapito/SD_Maker)**, which has its own repository (a copy with
+its guide is in [`MSXsdmaker/`](MSXsdmaker/README.md)): a Windows program that splits the card into 2 or 4 GB FAT16 partitions the way Nextor's FDISK does, copies Nextor 2.1.4 or 3
 (to match your pack), SofaRun, Multi Mente and a set of utilities, and writes the `AUTOEXEC.BAT` that mounts the other
 partitions as C:, D:… Nextor cannot read FAT32, so MSX-DOS needs FAT16.
 

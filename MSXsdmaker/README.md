@@ -1,4 +1,4 @@
-# MSX SD Maker 1.0 — preparing the SD card
+# MSX SD Maker 1.2 — preparing the SD card
 
 *[Versión en castellano](LEEME.md)*
 
@@ -43,14 +43,14 @@ Nothing to install: it is a single file, `MSXsdmaker.exe`. The program itself is
 
 ## 2. Opening the program
 
-1. Download **`MSXsdmaker.exe`** from this folder. On GitHub: click the file, then the download button (*Download raw file*).
+1. Download **`MSXsdmaker.exe`** from the [latest MSX SD Maker release](https://github.com/Papipapito/SD_Maker/releases/latest), in its own repository ([SD_Maker](https://github.com/Papipapito/SD_Maker)). The machines' repositories also carry a copy in their `MSXsdmaker` folder: click the file, then the download button (*Download raw file*).
 2. Put the card in the reader.
 3. Double-click `MSXsdmaker.exe`.
 4. Windows asks whether to allow it to make changes to the device: answer **Yes**. It needs this because it writes the whole card, partition table included.
 
 **If Windows shows "Windows protected your PC"** (SmartScreen): click **More info** and then **Run anyway**. It appears because the program is not digitally signed.
 
-**If your antivirus complains**: Python programs packed into a single `.exe` sometimes trigger false positives. The source code is in the `fuente/` folder.
+**If your antivirus complains**: Python programs packed into a single `.exe` sometimes trigger false positives. The source code is in [SD_Maker](https://github.com/Papipapito/SD_Maker) (and a copy in the `fuente/` folder).
 
 ---
 
@@ -95,7 +95,8 @@ How many fit on the most common cards (their real capacity is a bit less than th
 
 | Card | FAT16 2 GB | + leftover | FAT16 4 GB | + leftover |
 |---|---|---|---|---|
-| 4 GB | 1 | + 1 of 1.7 GB | — | — |
+| 2 GB | 1 with the whole card | — | 1 with the whole card | — |
+| 4 GB | 1 | + 1 of 1.7 GB | 1 with the whole card | — |
 | 8 GB | 3 | + 1 of 1.4 GB | 1 | + 1 of 3.4 GB |
 | 16 GB | 7 | + 1 of 0.8 GB | 3 | + 1 of 2.8 GB |
 | 32 GB | 8 | — | 7 | + 1 of 1.7 GB |
@@ -114,17 +115,31 @@ This is the operating system copied to the first, boot partition. **It must matc
 | Your machine | If you flashed… | Choose |
 |---|---|---|
 | MSXimus 60K or 138K | `pack_bios_msximus.bin` or `pack_bios_msximus_en.bin` | **Nextor 2.1.4** |
-| MSXimus 60K or 138K | `pack_bios_msximus_nextor3.bin` or `…_en_nextor3.bin` | **Nextor 3.0 beta 1** |
+| MSXimus 60K or 138K | `pack_bios_msximus_nextor3.bin` or `…_en_nextor3.bin` | **Nextor 3.0 beta 2** |
 | MSXimus Z (Zynq) | a `BOOT_…_nextor214.bin` | **Nextor 2.1.4** |
-| MSXimus Z (Zynq) | a `BOOT_…_nextor3.bin` | **Nextor 3.0 beta 1** |
+| MSXimus Z (Zynq) | a `BOOT_…_nextor3.bin` | **Nextor 3.0 beta 2** |
 | MSXnano | `pack_bios_msxnano.bin` or `pack_bios_msxnano_en.bin` | **Nextor 2.1.4** |
-| MSXnano | `pack_bios_msxnano_nextor3.bin` or `…_en_nextor3.bin` | **Nextor 3.0 beta 1** |
+| MSXnano | `pack_bios_msxnano_nextor3.bin` or `…_en_nextor3.bin` | **Nextor 3.0 beta 2** |
+| Goa'uld | `pack_bios_goauld_es.bin` or `pack_bios_goauld_en.bin` | **Nextor 2.1.4** |
 | MSX Pico or another MSX with Nextor 2.1 | — | **Nextor 2.1.4** |
 
 The other two options:
 
 - **MSX-DOS básico** (*basic MSX-DOS*): only `MSXDOS2.SYS` and `COMMAND2.COM`, plus MSX-DOS 1's `MSXDOS.SYS` and `COMMAND.COM`, without the Nextor tools. Without them the `AUTOEXEC` cannot mount C:, D:…; do it by hand with `CALL MAPDRV` from BASIC.
 - **Ninguno (solo formatear)** (*none, format only*): partitions and formats, with no system and no programs. Handy for a games-only card.
+
+If the card is smaller than a whole partition ("2 GB" cards hold a little under 2 GB), a single partition with the whole card is made.
+
+**Nextor 3 options** (*Opciones de Nextor 3*). With Nextor 3 a box with four boot options is enabled:
+
+| Option | What it does | Default |
+|---|---|---|
+| Backslash instead of ¥ (`YENSLASH ON`) | Paths show as `A:\DIR\FILE` instead of with the yen sign of Japanese MSX computers. Since beta 2, `YENSLASH` is a command of `COMMAND3.COM` itself | Ticked |
+| Insert mode (`SET BUFINSERT=ON`) | What you type at the prompt is inserted instead of overwriting. INS toggles, as always | Not ticked |
+| `AUTOEXEC.BTM` instead of `AUTOEXEC.BAT` | `COMMAND3.COM` loads it whole, so it accepts `GOTO`, `GOSUB`, `RETURN` and `END` | Not ticked |
+| Sizes in DIR | In K from 10K (Nextor 3's way) or always in bytes, like MSX-DOS 2 (`SET DIRK=0`). `DIRB` always shows bytes | In K |
+
+![Nextor 3 options](capturas/5_opciones_nextor3.png)
 
 > ℹ️ MSX-DOS 1 only boots from FAT12 partitions of 16 MB or less, which is not what this program creates. That is why any of these options boots MSX-DOS 2; the MSX-DOS 1 files are there only in case you need them.
 
@@ -143,6 +158,7 @@ They are copied to the first partition, each in its own folder. Tick the ones yo
 | HUB | `hub` | MSX Hub client, to install programs from the internet | `HUBG` or `HUB` |
 | IA | `IA` | AI chat client; your keys go in `IA\ia.cfg` | `IA` |
 | mapper e indev | `mapper`, `indev.com` | `MAPPER` disables the MSX-DOS 2 mapper routines for old software | by name |
+| Herramientas FPGA | `FPGA` | `MXUPDATE`: updates the core and the pack of the MSXimus 60K/138K and the MSXnano (2.1.1 or later) from MSX-DOS, from a `.UPD` on the card or over WiFi (`MXUPDATE /N`); over WiFi it first brings itself up to date. The MSXimus Z (Zynq) updates itself | `MXUPDATE` |
 
 Whenever a system is installed these empty folders are created too. **Do not delete them**:
 
@@ -180,6 +196,7 @@ A:\
 ├── MM\  FONTS\                    Multi Mente and its fonts
 ├── UTIL\  WIFI\  musica\          utilities, networking and music
 ├── hub\  IA\  mapper\  indev.com
+├── FPGA\                          MXUPDATE: updating the MSXimus and MSXnano core
 ├── FHUNT\                         File-Hunter downloads (do not delete)
 └── TMP\                           temporary (do not delete)
 ```
@@ -191,7 +208,7 @@ A:\
 It is generated from your choices. With everything ticked and three partitions it looks like this:
 
 ```
-PATH A:\;%1\BIN;%1\SOFARUN;%1\MM;%1\UTIL;%1\WIFI;%1\musica;%1\hub;%1\IA;%1\mapper
+PATH A:\;%1\BIN;%1\SOFARUN;%1\MM;%1\UTIL;%1\WIFI;%1\musica;%1\hub;%1\IA;%1\mapper;%1\FPGA
 SET TIMEZONE=+02:00
 mode 80
 ALIAS .BAS = "BASIC "
@@ -223,6 +240,8 @@ What each part does:
 - **`ALIAS`**: typing the name of a `.BAS` opens it in BASIC; the name of a `.ROM` or `.DSK` launches it with SofaRun.
 - **`sntp`**: sets the clock from the internet if there is a network. Without one it prints an error and carries on: that is normal.
 - **`mapdrv c: 2 1 0`**: mounts partition 2 as drive C:, partition 3 as D:, and so on.
+
+With **Nextor 3**, instead of `yenslash` come the lines of its options (`YENSLASH ON`, plus `SET BUFINSERT=ON` and `SET DIRK=0` if ticked), and the file is `AUTOEXEC.BTM` if you choose that option.
 
 You can edit `AUTOEXEC.BAT` from Windows with Notepad. Keep its name.
 
@@ -297,7 +316,9 @@ Good to know:
 - Try it in an emulator.
 - Keep a copy of a setup.
 
-If a card is selected, the image has its size. Otherwise the program asks for one (for example `8G`). The image only takes up on the PC's disk what was really written, not the whole card size.
+The program asks for the image size. An image can be written to a card of that size **or larger**, never smaller, and cards hold a little less than their label says: `1800M` fits any 2 GB card and `3500M` any 4 GB card. The image only takes up on the PC's disk what was really written, not its whole size.
+
+Every MSXimus release also ships a ready-made image with Nextor 3 (1800 MB, all programs): just write it.
 
 ---
 
@@ -345,7 +366,7 @@ No. It only writes to the card you choose, and the Windows disk never appears in
 - **Names**: it stores the 8+3 short name MSX-DOS reads and, when needed, also the long name Windows and the menu show.
 - **The partition table is written last**, once everything else is in place. Then everything is read back and every file is compared by its CRC32.
 
-The source code is in the [`fuente/`](fuente/) folder (Python 3 with tkinter; `construir_exe.bat` builds the `.exe` with PyInstaller). To run it without the `.exe` you need the card contents in an `sd/` folder next to `MSXsdmaker.py`, with `base/`, `nextor-2.1.4/`, `nextor-3.0.0-beta1/` and `extras/`. The `.exe` already carries them. From the command line it can also make images:
+The source code and the card contents are in [SD_Maker](https://github.com/Papipapito/SD_Maker); the machines' repositories carry a copy of the program in [`fuente/`](fuente/) (Python 3 with tkinter; `construir_exe.bat` builds the `.exe` with PyInstaller). To run it without the `.exe` you need the card contents in an `sd/` folder next to `MSXsdmaker.py`, with `base/`, `nextor-2.1.4/`, `nextor-3.0.0-beta2/` and `extras/`. The `.exe` already carries them. From the command line it can also make images:
 
 ```
 python MSXsdmaker.py imagen test.img --tamano 8G --esquema fat16-2g --n 3 --sistema nextor214 --programas todos

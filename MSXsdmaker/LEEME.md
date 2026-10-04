@@ -1,4 +1,4 @@
-# MSX SD Maker 1.0 — preparar la tarjeta SD
+# MSX SD Maker 1.2 — preparar la tarjeta SD
 
 *[English version](README.md)*
 
@@ -43,14 +43,14 @@ No hay nada que instalar: es un solo fichero, `MSXsdmaker.exe`.
 
 ## 2. Abrir el programa
 
-1. Descarga **`MSXsdmaker.exe`** de esta carpeta. En GitHub: pulsa el fichero y luego el botón de descarga (*Download raw file*).
+1. Descarga **`MSXsdmaker.exe`** de la [última versión de MSX SD Maker](https://github.com/Papipapito/SD_Maker/releases/latest), en su repositorio ([SD_Maker](https://github.com/Papipapito/SD_Maker)). En los repositorios de las máquinas también hay una copia en la carpeta `MSXsdmaker`: pulsa el fichero y luego el botón de descarga (*Download raw file*).
 2. Mete la tarjeta en el lector.
 3. Haz doble clic en `MSXsdmaker.exe`.
 4. Windows pregunta si permites que haga cambios en el equipo: responde **Sí**. Hace falta porque el programa escribe la tarjeta entera, tabla de particiones incluida.
 
 **Si Windows muestra «Windows protegió su PC»** (SmartScreen): pulsa **Más información** y después **Ejecutar de todas formas**. Sale porque el programa no está firmado digitalmente.
 
-**Si el antivirus se queja**: los programas hechos en Python y empaquetados en un solo `.exe` dan a veces falsos positivos. El código fuente está en la carpeta `fuente/`.
+**Si el antivirus se queja**: los programas hechos en Python y empaquetados en un solo `.exe` dan a veces falsos positivos. El código fuente está en [SD_Maker](https://github.com/Papipapito/SD_Maker) (y una copia en la carpeta `fuente/`).
 
 ---
 
@@ -78,7 +78,7 @@ Una **partición** es un trozo de la tarjeta que el MSX ve como una unidad de di
 | **FAT16 de 4 GB** | 4 GB, el máximo de Nextor | Menos particiones y más grandes. Cada fichero ocupa como mínimo 64 KB. |
 | **Una FAT32** | Toda la tarjeta | Solo para el menú del MSXimus (ROM y DSK) y la MSX Pico. **MSX-DOS no la ve** (ver el aviso de abajo). |
 
-**Cantidad.** El programa te dice cuántas particiones caben en tu tarjeta y no te deja pasar de ahí. El máximo es 8, que son las que recorre el menú del MSXimus.
+**Cantidad.** El programa te dice cuántas particiones caben en tu tarjeta y no te deja pasar de ahí. El máximo es 8, que son las que recorre el menú del MSXimus. Si la tarjeta es más pequeña que una partición entera (las de «2 GB» tienen menos de 2 GB de verdad), se hace una sola partición con toda la tarjeta.
 
 **«Usar lo que sobre en una última partición FAT16».** Márcalo para no desperdiciar el trozo final de la tarjeta: se crea una partición más, más pequeña, con lo que quede (hasta 4 GB). Si no lo marcas, ese espacio queda libre y ni Windows ni el MSX lo ven.
 
@@ -95,7 +95,8 @@ Cuántas caben en las tarjetas más habituales (su capacidad real es algo menor 
 
 | Tarjeta | FAT16 de 2 GB | + lo que sobra | FAT16 de 4 GB | + lo que sobra |
 |---|---|---|---|---|
-| 4 GB | 1 | + 1 de 1,7 GB | — | — |
+| 2 GB | 1 con toda la tarjeta | — | 1 con toda la tarjeta | — |
+| 4 GB | 1 | + 1 de 1,7 GB | 1 con toda la tarjeta | — |
 | 8 GB | 3 | + 1 de 1,4 GB | 1 | + 1 de 3,4 GB |
 | 16 GB | 7 | + 1 de 0,8 GB | 3 | + 1 de 2,8 GB |
 | 32 GB | 8 | — | 7 | + 1 de 1,7 GB |
@@ -114,17 +115,29 @@ Es el sistema operativo que se copia en la primera partición, la de arranque. *
 | Tu máquina | Si grabaste… | Elige |
 |---|---|---|
 | MSXimus 60K o 138K | `pack_bios_msximus.bin` o `pack_bios_msximus_en.bin` | **Nextor 2.1.4** |
-| MSXimus 60K o 138K | `pack_bios_msximus_nextor3.bin` o `…_en_nextor3.bin` | **Nextor 3.0 beta 1** |
+| MSXimus 60K o 138K | `pack_bios_msximus_nextor3.bin` o `…_en_nextor3.bin` | **Nextor 3.0 beta 2** |
 | MSXimus Z (Zynq) | un `BOOT_…_nextor214.bin` | **Nextor 2.1.4** |
-| MSXimus Z (Zynq) | un `BOOT_…_nextor3.bin` | **Nextor 3.0 beta 1** |
+| MSXimus Z (Zynq) | un `BOOT_…_nextor3.bin` | **Nextor 3.0 beta 2** |
 | MSXnano | `pack_bios_msxnano.bin` o `pack_bios_msxnano_en.bin` | **Nextor 2.1.4** |
-| MSXnano | `pack_bios_msxnano_nextor3.bin` o `…_en_nextor3.bin` | **Nextor 3.0 beta 1** |
+| MSXnano | `pack_bios_msxnano_nextor3.bin` o `…_en_nextor3.bin` | **Nextor 3.0 beta 2** |
+| Goa'uld | `pack_bios_goauld_es.bin` o `pack_bios_goauld_en.bin` | **Nextor 2.1.4** |
 | MSX Pico u otro MSX con Nextor 2.1 | — | **Nextor 2.1.4** |
 
 Las otras dos opciones:
 
 - **MSX-DOS básico**: solo `MSXDOS2.SYS` y `COMMAND2.COM`, más `MSXDOS.SYS` y `COMMAND.COM` de MSX-DOS 1, sin las herramientas de Nextor. Sin ellas el `AUTOEXEC` no puede montar C:, D:…; se hace a mano con `CALL MAPDRV` desde BASIC.
 - **Ninguno (solo formatear)**: particiona y formatea, sin sistema ni programas. Útil para una tarjeta solo de juegos.
+
+**Opciones de Nextor 3.** Con Nextor 3 se activa un recuadro con cuatro opciones del arranque:
+
+| Opción | Qué hace | Por defecto |
+|---|---|---|
+| Barra invertida en vez de ¥ (`YENSLASH ON`) | Las rutas se ven `A:\DIR\FICHERO` y no con el yen de los MSX japoneses. Desde la beta 2, `YENSLASH` es una orden del propio `COMMAND3.COM` | Marcada |
+| Modo inserción (`SET BUFINSERT=ON`) | Al escribir una orden, lo que tecleas se inserta en vez de sobrescribir. INS cambia de modo, como siempre | Sin marcar |
+| `AUTOEXEC.BTM` en vez de `AUTOEXEC.BAT` | `COMMAND3.COM` lo carga entero, así que admite `GOTO`, `GOSUB`, `RETURN` y `END` | Sin marcar |
+| Tamaños en DIR | En K desde 10K (lo de Nextor 3) o siempre en bytes, como MSX-DOS 2 (`SET DIRK=0`). `DIRB` los da siempre en bytes | En K |
+
+![Opciones de Nextor 3](capturas/5_opciones_nextor3.png)
 
 > ℹ️ MSX-DOS 1 solo arranca desde particiones FAT12 de 16 MB o menos, que no son las que crea este programa. Por eso con cualquiera de estas opciones arranca MSX-DOS 2, y los ficheros de MSX-DOS 1 van solo por si los necesitas.
 
@@ -143,6 +156,7 @@ Se copian en la primera partición, cada uno en su carpeta. Marca los que quiera
 | HUB | `hub` | Cliente de MSX Hub, para instalar programas desde internet | `HUBG` o `HUB` |
 | IA | `IA` | Cliente de chat con IA; tus claves van en `IA\ia.cfg` | `IA` |
 | mapper e indev | `mapper`, `indev.com` | `MAPPER` desactiva el mapeador de MSX-DOS 2 para programas antiguos | por su nombre |
+| Herramientas FPGA | `FPGA` | `MXUPDATE`: actualiza el core y el pack del MSXimus 60K/138K y del MSXnano (2.1.1 o posterior) desde MSX-DOS, con un `.UPD` de la tarjeta o por WiFi (`MXUPDATE /N`); por WiFi se pone al día él mismo antes de nada. El MSXimus Z (Zynq) se actualiza por su cuenta | `MXUPDATE` |
 
 Siempre que haya sistema se crean también estas carpetas vacías. **No las borres**:
 
@@ -180,6 +194,7 @@ A:\
 ├── MM\  FONTS\                    Multi Mente y sus fuentes
 ├── UTIL\  WIFI\  musica\          utilidades, red y música
 ├── hub\  IA\  mapper\  indev.com
+├── FPGA\                          MXUPDATE: actualizar el core del MSXimus y del MSXnano
 ├── FHUNT\                         descargas del File-Hunter (no borrar)
 └── TMP\                           temporal (no borrar)
 ```
@@ -191,7 +206,7 @@ Las **particiones 2, 3…** quedan vacías para tus juegos y programas.
 Se genera según lo que hayas elegido. Con todo marcado y tres particiones queda así:
 
 ```
-PATH A:\;%1\BIN;%1\SOFARUN;%1\MM;%1\UTIL;%1\WIFI;%1\musica;%1\hub;%1\IA;%1\mapper
+PATH A:\;%1\BIN;%1\SOFARUN;%1\MM;%1\UTIL;%1\WIFI;%1\musica;%1\hub;%1\IA;%1\mapper;%1\FPGA
 SET TIMEZONE=+02:00
 mode 80
 ALIAS .BAS = "BASIC "
@@ -223,6 +238,8 @@ Qué hace cada parte:
 - **`ALIAS`**: escribiendo el nombre de un `.BAS` se abre en BASIC; el de un `.ROM` o un `.DSK`, se lanza con SofaRun.
 - **`sntp`**: pone el reloj en hora por internet, si hay red. Sin red da un error y sigue: es normal.
 - **`mapdrv c: 2 1 0`**: monta la partición 2 como unidad C:, la 3 como D:, y así sucesivamente.
+
+Con **Nextor 3**, en lugar de `yenslash` van las líneas de sus opciones (`YENSLASH ON`, y `SET BUFINSERT=ON` y `SET DIRK=0` si las marcas), y el fichero se llama `AUTOEXEC.BTM` si eliges esa opción.
 
 Puedes editar el `AUTOEXEC.BAT` desde Windows con el Bloc de notas. Guárdalo sin cambiarle el nombre.
 
@@ -297,7 +314,9 @@ Hay que saber:
 - Probar en un emulador.
 - Guardar una copia de una configuración.
 
-Si hay una tarjeta elegida, la imagen tiene su mismo tamaño. Si no, el programa pregunta el tamaño (por ejemplo `8G`). La imagen solo ocupa en el disco del PC lo que se ha escrito de verdad, no el tamaño entero de la tarjeta.
+El programa pregunta el tamaño de la imagen. Una imagen se puede grabar en una tarjeta de ese tamaño **o mayor**, nunca menor, y las tarjetas tienen algo menos de lo que dice la etiqueta: `1800M` cabe en cualquiera de 2 GB y `3500M` en cualquiera de 4 GB. La imagen solo ocupa en el disco del PC lo que se ha escrito de verdad, no su tamaño entero.
+
+Con cada versión del MSXimus se publica también una imagen ya hecha con Nextor 3 (1800 MB, con todos los programas): basta con grabarla.
 
 ---
 
@@ -345,11 +364,14 @@ No. Solo escribe en la tarjeta que elijas, y el disco de Windows nunca aparece e
 - **Nombres**: guarda el nombre corto de 8+3 que lee MSX-DOS y, si hace falta, también el nombre largo que ven Windows y el menú.
 - **La tabla de particiones se escribe al final**, cuando todo lo demás ya está en su sitio. Luego se relee y se compara cada fichero con su CRC32.
 
-El código fuente está en la carpeta [`fuente/`](fuente/) (Python 3 con tkinter; `construir_exe.bat` hace el `.exe` con PyInstaller). Para usarlo sin el `.exe` hace falta el contenido de la tarjeta en una carpeta `sd/` junto a `MSXsdmaker.py`, con `base/`, `nextor-2.1.4/`, `nextor-3.0.0-beta1/` y `extras/`. El `.exe` ya lo lleva dentro. Desde la línea de órdenes también se pueden hacer imágenes:
+El código fuente y el contenido de la tarjeta están en [SD_Maker](https://github.com/Papipapito/SD_Maker); en los repositorios de las máquinas hay una copia del programa en [`fuente/`](fuente/) (Python 3 con tkinter; `construir_exe.bat` hace el `.exe` con PyInstaller). Para usarlo sin el `.exe` hace falta el contenido de la tarjeta en una carpeta `sd/` junto a `MSXsdmaker.py`, con `base/`, `nextor-2.1.4/`, `nextor-3.0.0-beta2/` y `extras/`. El `.exe` ya lo lleva dentro. Desde la línea de órdenes también se pueden hacer imágenes:
 
 ```
 python MSXsdmaker.py imagen prueba.img --tamano 8G --esquema fat16-2g --n 3 --sistema nextor214 --programas todos
+python MSXsdmaker.py imagen n3.img --tamano 1800M --sistema nextor3 --bufinsert --dirk bytes --btm
 ```
+
+Con Nextor 3: `--sin-yenslash`, `--bufinsert`, `--dirk bytes` y `--btm` son las opciones del recuadro.
 
 ---
 
