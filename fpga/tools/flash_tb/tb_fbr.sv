@@ -2,7 +2,7 @@
 // contra un modelo de flash SPI (03/06/05/20/02). Hace lo que hara el actualizador desde el MSX (borrar un sector,
 // programar dos paginas esperando el bit 1, leer y comparar) y comprueba que guardar los ajustes sigue igual.
 // Uso (desde Windows):
-//   wsl.exe -d Ubuntu-24.04 bash -lc "cd /mnt/c/Users/alber/proyectosAI/msx/MSX_up_v3_port/tools/flash_tb && bash run.sh"
+//   wsl.exe -d Ubuntu-24.04 bash -lc "cd /mnt/c/Users/alber/proyectosAI/msx/MSXimus/tools/flash_tb && bash run.sh"
 `timescale 1ns/1ps
 
 module spi_flash_model (input sclk, input cs_n, input mosi, output reg miso = 1'b0);
