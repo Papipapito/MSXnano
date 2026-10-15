@@ -1,0 +1,8 @@
+[submodule "fpga/rp2040/lib/tinyusb"]
+	path = fpga/rp2040/lib/tinyusb
+	url = https://github.com/hathach/tinyusb.git
+	shallow = true
+[submodule "fpga/rp2040/lib/Pico-PIO-USB"]
+	path = fpga/rp2040/lib/Pico-PIO-USB
+	url = https://github.com/sekigon-gonnoc/Pico-PIO-USB.git
+	shallow = true

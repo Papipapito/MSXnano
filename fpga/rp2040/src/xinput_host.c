@@ -8,6 +8,7 @@
 #include "host/usbh.h"
 #include "host/usbh_pvt.h"
 #include "xinput_host.h"
+#include "dbg_log.h"
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-const-variable"
@@ -256,11 +257,18 @@ bool xinputh_init(void)
     return true;
 }
 
-// [MSXgoauldSD_usbkb patch] return type uint16_t -> bool for TinyUSB 0.18, whose
-// usbh_class_driver_t.open is bool. The host computes the descriptor length itself
-// and uses this only as claimed/not. "return pos" (non-zero on success) converts to
-// true; the failure paths already return 0/false.
-bool xinputh_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *desc_itf, uint16_t max_len)
+// usbh_class_driver_t.open: hasta TinyUSB 0.20 devuelve bool (el host calcula solo la longitud
+// de los descriptores y esto solo vale como reclamado / no); desde la 0.21 devuelve uint16_t con
+// los bytes de descriptores que ha consumido el driver (interfaz + todo hasta el ultimo
+// endpoint), 0 = no es mio. "return pos" vale para las dos: es distinto de 0 si el driver lo
+// reclama (0.18: se convierte en true) y es justo esa longitud (0.21); los fallos devuelven 0.
+#if TUSB_VERSION_NUMBER >= 2100
+typedef uint16_t xinputh_open_ret_t;
+#else
+typedef bool xinputh_open_ret_t;
+#endif
+
+xinputh_open_ret_t xinputh_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const *desc_itf, uint16_t max_len)
 {
     TU_VERIFY(dev_addr <= CFG_TUH_DEVICE_MAX);
 
@@ -326,7 +334,9 @@ bool xinputh_open(uint8_t rhport, uint8_t dev_addr, tusb_desc_interface_t const 
     }
 
     xinput_dev->inst_count++;
-    return pos;
+    dbg_printf("XINPUT open  addr=%u itf=%u tipo=%d in=0x%02x out=0x%02x\n",
+               dev_addr, xid_itf->itf_num, (int)type, xid_itf->ep_in, xid_itf->ep_out);
+    return (xinputh_open_ret_t)pos;
 }
 
 bool xinputh_set_config(uint8_t dev_addr, uint8_t itf_num)
@@ -350,6 +360,8 @@ bool xinputh_set_config(uint8_t dev_addr, uint8_t itf_num)
         xboxone_init(xid_itf, dev_addr, instance);
     }
 
+    dbg_printf("XINPUT mount addr=%u inst=%u tipo=%d conectado=%u\n",
+               dev_addr, instance, (int)xid_itf->type, xid_itf->connected);
     if (tuh_xinput_mount_cb)
     {
         tuh_xinput_mount_cb(dev_addr, instance, xid_itf);
@@ -428,18 +440,26 @@ bool xinputh_xfer_cb(uint8_t dev_addr, uint8_t ep_addr, xfer_result_t result, ui
         }
         else if (xid_itf->type == XBOX360_WIRELESS)
         {
-            //Connect/Disconnect packet
+            //Connect/Disconnect packet. The application is told through the report callback (with
+            //the pad data cleared) so it can add the controller when it turns on and release it
+            //when it turns off, instead of only learning about the receiver at mount time.
             if (rdata[0] & 0x08)
             {
                 if (rdata[1] != 0x00 && xid_itf->connected == false)
                 {
                     TU_LOG2("XINPUT: WIRELESS CONTROLLER CONNECTED\n");
                     xid_itf->connected = true;
+                    tu_memclr(pad, sizeof(xinput_gamepad_t));
+                    xid_itf->new_pad_data = true;
+                    dbg_printf("XINPUT wireless addr=%u inst=%u: mando conectado\n", dev_addr, instance);
                 }
                 else if (rdata[1] == 0x00 && xid_itf->connected == true)
                 {
                     TU_LOG2("XINPUT: WIRELESS CONTROLLER DISCONNECTED\n");
                     xid_itf->connected = false;
+                    tu_memclr(pad, sizeof(xinput_gamepad_t));
+                    xid_itf->new_pad_data = true;
+                    dbg_printf("XINPUT wireless addr=%u inst=%u: mando desconectado\n", dev_addr, instance);
                 }
             }
 

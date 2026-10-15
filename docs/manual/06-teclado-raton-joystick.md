@@ -62,8 +62,9 @@ la cruceta o el stick izquierdo, y los botones 1 y 2 como disparos A y B.
 **Autofire**: los botones **3 y 4** disparan en ráfaga (A y B respectivamente) a 10 Hz
 (semiperiodo de 50 ms, elegido para que cada disparo se lea también a 50 Hz).
 
-Todos los mandos van al **puerto 1**; el firmware no reparte un segundo mando al puerto 2.
-Mando y ratón sí conviven, porque el ratón usa el puerto 2.
+El primer mando que enchufas va al **puerto 1** y el segundo al **puerto 2**; del tercero en
+adelante se suman al puerto 1. Si quitas el del puerto 1, el otro pasa al puerto 1. Con un
+ratón enchufado el puerto 2 es del ratón y los mandos van todos al puerto 1.
 
 Los mandos **XInput** (tipo Xbox) también funcionan, con soporte específico. Los mandos
 que llevan interruptor XInput/DInput funcionan en cualquiera de las dos posiciones.

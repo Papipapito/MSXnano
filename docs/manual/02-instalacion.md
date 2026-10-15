@@ -63,6 +63,11 @@ El teclado, el mando o el ratón se enchufan al **USB de la propia Pico**. Un hu
 (teclado + mando a la vez está probado), y un hub **con alimentación propia** evita
 sorpresas.
 
+Con la **placa portadora** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier))
+no hay cables: la RP2040-Zero va en su zócalo y lleva **`rp2040_keyboard_carrier.uf2`**.
+Los dispositivos se enchufan a los tres USB-A de la placa (J1 y J2 detrás, J5 dentro de la
+caja), uno por toma y **sin hub**; el USB-C de la Zero ya no es host.
+
 ## 4. WiFi: ESP-01S o ESP32-C6 (opcional)
 
 Los dos hablan el mismo protocolo (MSX UNAPI, firmware de ducasp) por la misma UART a

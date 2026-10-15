@@ -26,12 +26,14 @@
  *
  */
 #include "usbin.h"
+#include "kbd_merge.h"   // varios teclados (union) y mandos -> puertos MSX; logica pura, probada en PC
 #include "pico/time.h"   // time_us_64() for the status-LED keypress flash
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
 #include "uart_tx.pio.h"  // PIO UART TX (FPGA link on GP15, a non-HW-UART pin)
 #include <string.h>
 #include "xinput_host.h"  // vendored Ryzee119 XInput host driver (MIT) -> same joystick path
+#include "dbg_log.h"      // dbg_printf(): mount/unmount log over CDC (nothing without MSXNANO_DEBUG_CDC)
 
 // ---------------------------------------------------------------------------
 // MSX Goa'uld keyboard link -- event-driven make/break model.
@@ -51,7 +53,9 @@
 
 // FPGA link = PIO UART TX on GP15. The RP2040 HW UART0/1 TX only reach
 // GP0/12/16/28 or GP4/8/20/24; the carrier redesign needs GP15, so we drive it
-// from PIO (pio1 SM0 -- pio0 SM0/SM1 are the on-board + case WS2812 strips).
+// from PIO (pio1 SM0). The classic build keeps the on-board + case WS2812 strips on
+// pio0 SM0/SM1; the carrier build gives ALL of pio0 to Pico-PIO-USB and puts the
+// on-board LED on pio1 SM1 (see main.c).
 #define KB_UART_PIN    15
 #define KB_PIO         pio1
 #define KB_SM          0u
@@ -174,11 +178,16 @@ void kb_send_resync(void) {
 // ---------------------------------------------------------------------------
 static uint8_t joy_state[2] = {0, 0};   // active-high shadow, indexed by port
 
-// ---- Autofire / turbo intent (port-indexed; only port 0 has a pad today) ----
-// The report callbacks latch two layers; the main-loop tick (joy_autofire_tick)
-// is the SOLE emitter and composes: out = joy_base | (af_phase ? af_arm : 0).
-static uint8_t  joy_base[2] = {0, 0};   // real held byte: directions + manual fire1/fire2
-static uint8_t  af_arm[2]   = {0, 0};   // fire bits (JOY_A/JOY_B) currently armed for autofire
+// ---- Pads and autofire / turbo intent ----
+// Every HID or XInput pad owns an entry in `pads` (see kbd_merge.h): the first
+// one mounted gets port 0 (MSX 1), the second port 1 (MSX 2), later ones are
+// OR'd into port 0 (and so is any pad while a mouse is mounted: the mouse owns
+// MSX port 2). When port 0 runs out of pads those on port 1 move to port 0. The
+// report callbacks latch two layers PER PAD; the main-loop tick
+// (joy_autofire_tick) is the SOLE emitter and composes each port as the OR over
+// its pads of: base | (af_phase ? af : 0).
+static jpm_t    pads;                   // base = real held byte (directions + manual fire1/fire2)
+                                        // af   = fire bits (JOY_A/JOY_B) armed for autofire
 static bool     af_phase    = false;    // shared square-wave phase (keeps both ports in sync)
 static uint64_t af_next_us  = 0;        // time_us_64() deadline of the next phase flip
 
@@ -211,6 +220,8 @@ static volatile uint8_t mou_btn   = 0;
 static volatile uint8_t mou_dirty = 0;
 volatile uint8_t  g_mouse_mounted = 0;   // 1 = hay un raton USB montado
 volatile uint64_t g_last_mouse_us = 0;   // ultimo informe recibido (LED de estado)
+static uint8_t    mou_sent_btn = 0;      // ultimo estado de botones mandado: la FPGA lo recuerda hasta el siguiente 0xD0
+static mim_t      mice;                  // interfaces de raton montadas: el ultimo en irse suelta el puerto 2
 // Informe de raton. Se pide BOOT al montarlo -> [botones][dx][dy]. Pero si el
 // raton IGNORA el SET_PROTOCOL (algunos lo hacen, y detras de un hub pasa mas)
 // puede seguir en REPORT y colar un ID delante. Se detecta por la longitud: 3 =
@@ -233,12 +244,11 @@ static inline int8_t mou_clamp(int32_t v) {
 // Vacia el acumulador. Se llama desde el super-bucle, NO desde el callback USB.
 void mouse_tick(uint64_t now) {
     static uint64_t next_tx = 0;
-    static uint8_t  last_btn = 0;
     if(!g_mouse_mounted) return;
     if((int64_t)(now - next_tx) < 0) return;
     next_tx = now + MOUSE_TX_PERIOD_US;
     // Nada que contar y los botones igual que antes -> ni un byte al cable.
-    if(!mou_dirty && mou_btn == last_btn) return;
+    if(!mou_dirty && mou_btn == mou_sent_btn) return;
     int8_t dx = mou_clamp(mou_acc_x);
     int8_t dy = mou_clamp(mou_acc_y);
     // Se resta LO ENTREGADO, no se pone a cero: si el movimiento saturo, el
@@ -246,11 +256,34 @@ void mouse_tick(uint64_t now) {
     mou_acc_x -= dx;
     mou_acc_y -= dy;
     if(mou_acc_x == 0 && mou_acc_y == 0) mou_dirty = 0;
-    last_btn = mou_btn;
+    mou_sent_btn = mou_btn;
     tx_push(OP_MOUSE);
     tx_push((u8)dx);
     tx_push((u8)dy);
     tx_push(mou_btn);
+}
+
+// Con raton montado, repite en cada resync de 250 ms el estado de botones que la FPGA ya
+// debe tener (0xD0 sin movimiento): un 0xD0 perdido no deja un boton atascado, y la FPGA
+// puede saber que el raton sigue vivo aunque este quieto. Sin raton no manda nada.
+void mouse_send_resync(void) {
+    if(!g_mouse_mounted) return;
+    tx_push(OP_MOUSE);
+    tx_push(0);
+    tx_push(0);
+    tx_push(mou_sent_btn);
+}
+
+// El ultimo raton se ha ido: se descarta lo pendiente y se manda UN 0xD0 en reposo, o la FPGA
+// seguiria con el boton pulsado que le dejo el raton al desenchufarse (el disparo del puerto 2).
+static void mouse_gone(void) {
+    g_mouse_mounted = 0;
+    mou_acc_x = 0; mou_acc_y = 0; mou_btn = 0; mou_dirty = 0;
+    mou_sent_btn = 0;
+    tx_push(OP_MOUSE);
+    tx_push(0);
+    tx_push(0);
+    tx_push(0);
 }
 
 // Send-on-change: update the shadow and emit 0xB0 <port> <byte> when it changes.
@@ -271,19 +304,76 @@ void joy_send_resync(void) {
 // Autofire square-wave tick. MUST run from the main super-loop (NOT the
 // event-driven report callbacks): a held-but-motionless pad sends no new USB
 // reports, so a callback-driven autofire would freeze the bit. Composes each
-// port as joy_base | (af_phase ? af_arm : 0) and emits via send-on-change with
-// NO LED bump, so autofire keeps the status LED yellow ("gamepad connected").
+// port from its pads (base | (af_phase ? af : 0), OR'd) and emits via
+// send-on-change with NO LED bump, so autofire keeps the status LED yellow
+// ("gamepad connected").
 void joy_autofire_tick(uint64_t now_us) {
     if(af_next_us == 0) af_next_us = now_us + AF_HALF_PERIOD_US;   // lazy init
     if((int64_t)(now_us - af_next_us) >= 0) {
         af_phase   = !af_phase;
         af_next_us = now_us + AF_HALF_PERIOD_US;   // = now+HALF (not +=): no catch-up bursts
     }
-    for(uint8_t p = 0; p < 2; p++) {
-        uint8_t out = joy_base[p];
-        if(af_phase) out |= af_arm[p];             // assert armed fire bits this phase
-        joy_emit(p, out, false);                   // no LED bump: autofire stays yellow
+    for(uint8_t p = 0; p < JPM_PORTS; p++)
+        joy_emit(p, jpm_port_out(&pads, p, af_phase), false);   // no LED bump: autofire stays yellow
+}
+
+// A HID interface can carry several Joystick/Gamepad collections (dual adapters: one
+// Report ID per player); each collection is a pad of its own. Its key in `pads` is the
+// interface with the collection index in the high nibble (a single-collection pad and every
+// XInput pad: the interface as is).
+#define PAD_KEY(instance, coll) ((u8)((instance) | ((coll) << 4)))
+#define PAD_COLL_TAG(coll)      ((coll) == 0 ? "" : (coll) == 1 ? "+c1" : (coll) == 2 ? "+c2" : "+c3")
+_Static_assert(CFG_TUH_HID <= 16, "PAD_KEY: the interface index must fit in the low nibble");
+_Static_assert(MAX_REPORT <= 16, "PAD_KEY: the collection index must fit in the high nibble");
+
+// A pad appears: it takes the lowest free MSX port (none free, or a mouse owns
+// MSX port 2 -> port 0, OR'd with whoever is there) and the port is refreshed with a
+// clean baseline.
+static void pad_mount(uint8_t kind, uint8_t dev_addr, uint8_t key) {
+    int i = jpm_add(&pads, kind, dev_addr, key, g_mouse_mounted);
+    if(i < 0) {                                             // pad pool full: ignore the extra one
+        dbg_printf("PAD   mount   %s addr=%u inst=%u%s: sin hueco, ignorado\n",
+                   kind == JPM_XINPUT ? "XInput" : "HID", dev_addr, key & 0x0F, PAD_COLL_TAG(key >> 4));
+        return;
     }
+    g_joy_mounted = 1;                                      // status LED: a USB gamepad is connected
+    dbg_printf("PAD   mount   %s addr=%u inst=%u%s -> puerto MSX %u (%d mandos)\n",
+               kind == JPM_XINPUT ? "XInput" : "HID", dev_addr, key & 0x0F, PAD_COLL_TAG(key >> 4),
+               pads.pad[i].port + 1, jpm_count(&pads));
+    joy_set_state(pads.pad[i].port, jpm_port_out(&pads, pads.pad[i].port, af_phase));
+}
+
+// A pad leaves the registry (nothing goes to the wire yet). Returns the MSX port it had,
+// or -1 if it was not registered.
+static int pad_remove(uint8_t kind, uint8_t dev_addr, uint8_t key) {
+    int port = jpm_remove(&pads, kind, dev_addr, key);
+    if(port < 0) return -1;
+    g_joy_mounted = jpm_count(&pads) ? 1 : 0;
+    dbg_printf("PAD   umount  %s addr=%u inst=%u%s, suelta el puerto MSX %d (%d mandos)\n",
+               kind == JPM_XINPUT ? "XInput" : "HID", dev_addr, key & 0x0F, PAD_COLL_TAG(key >> 4),
+               port + 1, jpm_count(&pads));
+    return port;
+}
+
+// Ports whose pads left (bit per port) go back to rest (byte 0, send-on-change) unless
+// another pad shares them. The remaining pads keep their ports, except that if MSX port 1
+// is left without pads those of port 2 move to it (one-player games read port 1): port 2
+// is released first, then port 1 takes their state.
+static void pad_settle(uint8_t ports) {
+    if(jpm_compact(&pads)) {
+        dbg_printf("PAD   los mandos del puerto MSX 2 pasan al puerto MSX 1\n");
+        joy_set_state(1, jpm_port_out(&pads, 1, af_phase));
+        joy_set_state(0, jpm_port_out(&pads, 0, af_phase));
+        return;
+    }
+    for(uint8_t p = 0; p < JPM_PORTS; p++)
+        if(ports & (1u << p)) joy_set_state(p, jpm_port_out(&pads, p, af_phase));
+}
+
+// A pad disappears.
+static void pad_umount(uint8_t kind, uint8_t dev_addr, uint8_t key) {
+    int port = pad_remove(kind, dev_addr, key);
+    if(port >= 0) pad_settle((uint8_t)(1u << port));
 }
 
 // Initialize the dedicated keyboard UART link: PIO UART @ 115200 8N1, GP15 = TX.
@@ -356,13 +446,14 @@ struct {
   u8 instance;
 } keyboards[8];
 
-// Generic HID gamepads/joysticks. Mirrors keyboards[]: a registered (addr,inst)
-// is one whose parsed top-level collection is Generic Desktop / Game Pad (0x05)
-// or Joystick (0x04). Used to route reports to gamepad_report_receive().
-struct {
-  u8 dev_addr;
-  u8 instance;
-} gamepads[8];
+// Keyboard report state, one entry per (dev_addr, instance): its own modifiers
+// and keys. The UNION of all of them feeds kb_report_receive() (see kb_dev_report).
+static kbm_t kbd_tab;
+
+// Generic HID gamepads/joysticks live in `pads` (see joy_autofire_tick), next to
+// the XInput ones: a registered (addr,inst) is one whose parsed top-level
+// collection is Generic Desktop / Game Pad (0x05) or Joystick (0x04). Used to
+// route reports to gamepad_report_receive().
 
 // Status-LED aid: nonzero while at least one USB gamepad is registered.
 volatile uint8_t g_joy_mounted = 0;
@@ -375,14 +466,10 @@ static inline bool is_gamepad_usage(const hid_report_info_t *info) {
           info->usage == HID_USAGE_DESKTOP_JOYSTICK);
 }
 
-// True if instance `inst` of `dev_addr` is registered as a gamepad.
+// True if instance `inst` of `dev_addr` is registered as a gamepad (any of its collections).
 static bool is_registered_gamepad(u8 dev_addr, u8 instance) {
-  for(u8 i = 0; i < 8; i++) {
-    if(gamepads[i].dev_addr == dev_addr && gamepads[i].instance == instance &&
-       (gamepads[i].dev_addr != 0 || gamepads[i].instance != 0)) {
-      return true;
-    }
-  }
+  for(u8 r = 0; r < MAX_REPORT; r++)
+    if(jpm_find(&pads, JPM_HID, dev_addr, PAD_KEY(instance, r)) >= 0) return true;
   return false;
 }
 
@@ -739,6 +826,24 @@ void kb_report_receive(uint8_t modifiers, uint8_t const* report, u16 len) {
 	memcpy(prev_keys, report, len);
 }
 
+// Several keyboards at once (internal + external): each keeps its OWN state in
+// kbd_tab and the engine above only ever sees the UNION, so it stays the single
+// MAKE/BREAK emitter. Feeding it one keyboard's report straight would make two
+// keyboards alternating reports break each other's keys.
+_Static_assert(KBM_UNION_MAX <= sizeof(prev_keys), "kbm_merge() can output more keys than prev_keys holds");
+static void kb_merged_receive(void) {
+	uint8_t mods;
+	uint8_t keys[KBM_UNION_MAX];
+	uint8_t n = kbm_merge(&kbd_tab, &mods, keys);
+	kb_report_receive(mods, keys, n);
+}
+
+// One keyboard's report, already flattened to HID usage codes (NKRO expanded).
+static void kb_dev_report(u8 dev_addr, u8 instance, u8 modifiers, u8 const* keys, u16 len) {
+	if(!kbm_set(&kbd_tab, dev_addr, instance, modifiers, keys, len)) return;   // table full: ignore the extra keyboard
+	kb_merged_receive();
+}
+
 // Digital threshold on the SCALED axis value. to_signed_value() centers the
 // axis at 0 and left-justifies it into a signed 16-bit range (+-32767),
 // independent of the axis' native bit width, so a fixed scaled threshold ==
@@ -833,12 +938,13 @@ void gamepad_report_receive(uint8_t dev_addr, uint8_t instance, uint8_t const* r
     if(to_bit_value(item, report, len)) af |= JOY_B;
   }
 
-  (void)dev_addr;
-  // Latch intent for the autofire tick (the sole emitter). Flash the LED here on
-  // real activity so the white flash survives; the tick's autofire edges do not.
-  if(byte != joy_base[0] || af != af_arm[0]) g_last_key_us = time_us_64();
-  joy_base[0] = byte;   // base layer: directions + manual fire
-  af_arm[0]   = af;     // arm layer: which fires autofire (re-derived each report)
+  // Latch intent in THIS pad's entry for the autofire tick (the sole emitter,
+  // which ORs the pads sharing a port). Flash the LED here on real activity so
+  // the white flash survives; the tick's autofire edges do not.
+  int pi = jpm_find(&pads, JPM_HID, dev_addr, PAD_KEY(instance, rpt_info - rpt_info_arr));
+  if(pi < 0) return;
+  if(byte != pads.pad[pi].base || af != pads.pad[pi].af) g_last_key_us = time_us_64();
+  jpm_set(&pads, pi, byte, af);   // base: directions + manual fire; af: which fires autofire (re-derived each report)
 }
 
 void tuh_kb_set_leds(uint8_t leds) {
@@ -866,7 +972,6 @@ usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count) {
 }
 
 void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_interface_t* xinput_itf) {
-    (void)xinput_itf;
     // NOTE (RP2040 native host + hub): do NOT send LED/rumble here. Those are
     // BLOCKING interrupt-OUT transfers; behind a hub they arm a second hub-split
     // interrupt endpoint that the RP2040's single SIE cannot poll concurrently
@@ -878,24 +983,34 @@ void tuh_xinput_mount_cb(uint8_t dev_addr, uint8_t instance, const xinputh_inter
     //   tuh_xinput_set_led(dev_addr, instance, 0, true);   // removed (OUT xfer)
     //   tuh_xinput_set_led(dev_addr, instance, 1, true);   // removed (OUT xfer)
     //   tuh_xinput_set_rumble(dev_addr, instance, 0, 0, true); // removed (OUT xfer)
-    g_joy_mounted = 1;                              // status LED -> yellow
-    joy_set_state(0, 0);                            // clean baseline (no dir/fire)
-    joy_base[0] = 0; af_arm[0] = 0;                 // clear autofire intent on connect
+    // A wired pad is connected as soon as it is configured. A wireless 360 receiver is configured
+    // with no controller turned on (connected = 0): it takes an MSX port only when the controller
+    // shows up (report callback below), so an empty receiver does not steal a port from a real pad.
+    if (xinput_itf->connected)
+        pad_mount(JPM_XINPUT, dev_addr, instance);  // status LED -> yellow; clean baseline; takes its MSX port
     tuh_xinput_receive_report(dev_addr, instance);  // start polling (interrupt-IN only)
 }
 
 void tuh_xinput_umount_cb(uint8_t dev_addr, uint8_t instance) {
-    (void)dev_addr; (void)instance;
-    g_joy_mounted = 0;
-    joy_set_state(0, 0);                            // release direction/fire
-    joy_base[0] = 0; af_arm[0] = 0;                 // clear autofire intent on disconnect
+    pad_umount(JPM_XINPUT, dev_addr, instance);     // release direction/fire; frees its MSX port
 }
 
 void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance,
                                    xinputh_interface_t const* xid_itf, uint16_t len) {
     (void)len;
     const xinput_gamepad_t* p = &xid_itf->pad;
-    if (xid_itf->connected && xid_itf->new_pad_data) {
+    int pi = jpm_find(&pads, JPM_XINPUT, dev_addr, instance);
+    if (!xid_itf->connected) {
+        // Wireless controller switched off (the receiver stays): it leaves the registry, which
+        // frees its MSX port and releases whatever it was holding.
+        if (pi >= 0) pad_umount(JPM_XINPUT, dev_addr, instance);
+    } else if (xid_itf->new_pad_data) {
+        if (pi < 0) {                                       // wireless controller just turned on
+            pad_mount(JPM_XINPUT, dev_addr, instance);
+            pi = jpm_find(&pads, JPM_XINPUT, dev_addr, instance);
+        }
+    }
+    if (pi >= 0 && xid_itf->connected && xid_itf->new_pad_data) {
         uint8_t b = 0;
         // D-pad
         if (p->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) b |= JOY_RIGHT;
@@ -914,10 +1029,9 @@ void tuh_xinput_report_received_cb(uint8_t dev_addr, uint8_t instance,
         uint8_t af = 0;
         if (p->wButtons & XINPUT_GAMEPAD_X) af |= JOY_A;
         if (p->wButtons & XINPUT_GAMEPAD_Y) af |= JOY_B;
-        // Latch intent for the autofire tick (sole emitter); flash LED on real activity.
-        if (b != joy_base[0] || af != af_arm[0]) g_last_key_us = time_us_64();
-        joy_base[0] = b;
-        af_arm[0]   = af;
+        // Latch intent in this pad's entry for the autofire tick (sole emitter); flash LED on real activity.
+        if (b != pads.pad[pi].base || af != pads.pad[pi].af) g_last_key_us = time_us_64();
+        jpm_set(&pads, pi, b, af);
     }
     tuh_xinput_receive_report(dev_addr, instance);  // re-arm polling
 }
@@ -940,7 +1054,10 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 	// Claim this (dev_addr, instance)'s own hid_info[] slot so a second device
 	// (e.g. joystick alongside the keyboard) can't clobber the first's descriptor.
 	u8 slot = hid_slot_get(dev_addr, instance, true);
-	if(slot == 0xFF) return;   // hid_info pool full (>16 interfaces): ignore extra
+	if(slot == 0xFF) {   // hid_info pool full (>16 interfaces): ignore extra
+		dbg_printf("HID   mount   addr=%u inst=%u %04x:%04x: sin hueco en hid_info, ignorado\n", dev_addr, instance, vid, pid);
+		return;
+	}
 	hid_info[slot].report_count = hid_parse_report_descriptor(hid_info[slot].report_info, MAX_REPORT, desc_report, desc_len);
 	// RATON: el SET_PROTOCOL va ANTES de armar la peticion de informe. Al reves
 	// (como estaba) TinyUSB invalida la peticion ya armada al cambiar de
@@ -951,9 +1068,13 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 	    // interpretar descriptores raros y funciona igual detras de un hub.
 	    tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
 	    mou_acc_x = 0; mou_acc_y = 0; mou_btn = 0; mou_dirty = 0;
+	    mim_add(&mice, dev_addr, instance);
 	    g_mouse_mounted = 1;
+	    dbg_printf("MOUSE mount   addr=%u inst=%u %04x:%04x -> puerto MSX 2 (lo ocupa la FPGA)\n", dev_addr, instance, vid, pid);
 	}
 	if(!tuh_hid_receive_report(dev_addr, instance)) {
+		dbg_printf("HID   mount   addr=%u inst=%u %04x:%04x (%s): no se pudo pedir informe, no se registra\n",
+		           dev_addr, instance, vid, pid, hidprotostr);
 	} else {
 		if(0) {
 		} else if(hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD) {
@@ -965,30 +1086,25 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 				}
 			}
 			g_kbd_mounted = 1;   // case-strip: a USB keyboard is connected
-			// Establish a clean baseline on the FPGA: nothing pressed yet.
-			memset(vmatrix, 0xFF, sizeof(vmatrix));
-			memset(prev_keys, 0, sizeof(prev_keys));
-			prev_derived = 0;
+			// Nothing pressed on THIS keyboard yet. The engine state is left alone:
+			// another keyboard may be holding keys right now.
+			if(kbm_add(&kbd_tab, dev_addr, instance) < 0)
+				dbg_printf("KBD   mount   addr=%u inst=%u: tabla de teclados llena, sus teclas se ignoran\n", dev_addr, instance);
+			else
+				dbg_printf("KBD   mount   addr=%u inst=%u %04x:%04x (%d teclados)\n", dev_addr, instance, vid, pid, kbm_count(&kbd_tab));
 			kb_send_resync();
 		} else {
 			// Generic HID: detect a gamepad/joystick by its parsed top-level
 			// collection (Generic Desktop / Game Pad 0x05 or Joystick 0x04).
 			// Such devices enumerate with interface protocol NONE, so we key off
-			// the report descriptor already parsed into hid_info[slot].
+			// the report descriptor already parsed into hid_info[slot]. Each such
+			// collection is a pad of its own (dual adapters: one Report ID per player).
 			bool is_pad = false;
 			for(uint8_t r = 0; r < hid_info[slot].report_count; r++) {
-				if(is_gamepad_usage(&hid_info[slot].report_info[r])) { is_pad = true; break; }
-			}
-			if(is_pad) {
-				for(uint8_t i = 0; i < 8; i++) {
-					if(gamepads[i].dev_addr == 0 && gamepads[i].instance == 0) {
-						gamepads[i].dev_addr = dev_addr;
-						gamepads[i].instance = instance;
-						break;
-					}
-				}
-				joy_set_state(0, 0); joy_base[0] = 0; af_arm[0] = 0; // clean baseline; clear autofire
-					g_joy_mounted = 1;   // status LED: a USB gamepad is connected
+				if(!is_gamepad_usage(&hid_info[slot].report_info[r])) continue;
+				if(!is_pad) dbg_printf("PAD   HID      addr=%u inst=%u %04x:%04x\n", dev_addr, instance, vid, pid);
+				is_pad = true;
+				pad_mount(JPM_HID, dev_addr, PAD_KEY(instance, r));   // takes its MSX port; clean baseline; status LED
 			}
 		}
 		isMounted = 1; board_led_write(1);
@@ -996,7 +1112,9 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 }
 
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
-	isMounted = 0; board_led_write(0);
+	dbg_printf("HID   umount  addr=%u inst=%u (%s)\n", dev_addr, instance,
+	           tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_KEYBOARD ? "teclado" :
+	           tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_MOUSE    ? "raton" : "otro");
 	hid_slot_free(dev_addr, instance);   // release this device's hid_info[] slot
 
 	for(uint8_t i = 0; i < 8; i++) {
@@ -1008,25 +1126,30 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 	}
 	g_kbd_mounted = 0;
 	for(uint8_t i = 0; i < 8; i++) if(keyboards[i].dev_addr) { g_kbd_mounted = 1; break; }
-	// Keyboard gone: release everything on the FPGA so no key stays stuck.
-	memset(vmatrix, 0xFF, sizeof(vmatrix));
-	memset(prev_keys, 0, sizeof(prev_keys));
-	prev_derived = 0;
-	kb_send_resync();
-
-	// If a gamepad unmounted, drop its slot and release the joystick so no
-	// direction/fire stays stuck on the MSX side.
-	for(uint8_t i = 0; i < 8; i++) {
-		if(gamepads[i].dev_addr == dev_addr && gamepads[i].instance == instance &&
-		   (gamepads[i].dev_addr != 0 || gamepads[i].instance != 0)) {
-			gamepads[i].dev_addr = 0;
-			gamepads[i].instance = 0;
-			joy_set_state(0, 0);
-			joy_base[0] = 0; af_arm[0] = 0; // clear autofire intent on disconnect
-			g_joy_mounted = 0;
-			break;
-		}
+	// Keyboard gone: drop ITS entry and merge again, so the keys only it was
+	// holding are released right now (BREAKs) and no key stays stuck. The other
+	// keyboards keep what they hold.
+	if(kbm_remove(&kbd_tab, dev_addr, instance)) {
+		kb_merged_receive();
+		kb_send_resync();
+		dbg_printf("KBD   umount  addr=%u inst=%u (%d teclados)\n", dev_addr, instance, kbm_count(&kbd_tab));
 	}
+
+	// The last mouse gone: the FPGA would keep the button it held (fire of MSX port 2).
+	if(mim_remove(&mice, dev_addr, instance) && mim_count(&mice) == 0) mouse_gone();
+
+	// If a gamepad unmounted, drop its entries (one per collection) and release its joystick
+	// port so no direction/fire stays stuck on the MSX side; the other pad keeps its port.
+	uint8_t freed = 0;
+	for(u8 r = 0; r < MAX_REPORT; r++) {
+		int port = pad_remove(JPM_HID, dev_addr, PAD_KEY(instance, r));
+		if(port >= 0) freed |= (uint8_t)(1u << port);
+	}
+	if(freed) pad_settle(freed);   // once for all its collections: no transient state on the wire
+
+	// Another keyboard or pad may still be there: the status LED must not go red.
+	isMounted = (g_kbd_mounted || g_joy_mounted) ? 1 : 0;
+	board_led_write(isMounted);
 }
 
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, u16 len) {
@@ -1071,7 +1194,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 	if(tuh_hid_get_protocol(dev_addr, instance) == HID_PROTOCOL_BOOT) {
 	  u8 modifiers = report[0];
 	  report++; report++;
-	  kb_report_receive(modifiers, report, 6);
+	  kb_dev_report(dev_addr, instance, modifiers, report, 6);
 	} else if(rpt_info->usage_page == HID_USAGE_PAGE_DESKTOP && rpt_info->usage == HID_USAGE_DESKTOP_KEYBOARD) {
 	  u8 modifiers = hid_parse_keyboard_modifiers(rpt_info, report, len);
 	  if(hid_parse_keyboard_is_nkro(rpt_info)) {
@@ -1087,14 +1210,14 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 			current_key++;
 		  }
 		}
-		kb_report_receive(modifiers, newreport, sizeof(kb_keys));
+		kb_dev_report(dev_addr, instance, modifiers, newreport, sizeof(kb_keys));
 	  } else if(len == 7) {
 		report++;
-		kb_report_receive(modifiers, report, 6);
+		kb_dev_report(dev_addr, instance, modifiers, report, 6);
 
 	  } else if(len == 8 || len == 9) {
 		report++; report++;
-		kb_report_receive(modifiers, report, 6);
+		kb_dev_report(dev_addr, instance, modifiers, report, 6);
 	  }
 	}
   tuh_hid_receive_report(dev_addr, instance);
