@@ -249,6 +249,25 @@ static void __noinline carrier_port_watch(uint64_t now) {
         if (release) dbg_printf("PIO-USB %s: linea en SE0 sin enumerar, puerto liberado\n", carrier_port_name((uint8_t)(i + 1)));
     }
 }
+#if MSXNANO_DEBUG_CDC
+// Estado del enlace con el Tang (GP15 -> pin 31), una linea por segundo: bytes entregados al
+// PIO, nivel de su FIFO, PC de la SM, funcion del pad (7 = PIO1) y cuantos flancos se han visto
+// en el pad al muestrearlo desde el bucle. Si los bytes suben y la linea se mueve, el RP2040
+// esta transmitiendo y el problema esta entre el pad y el pin 31 del Tang.
+static void link_diag(uint64_t now) {
+    static uint64_t next = 0;
+    static uint32_t edges = 0;
+    static bool     last = true;
+    bool lvl = gpio_get(15);
+    if (lvl != last) { edges++; last = lvl; }
+    if ((int64_t)(now - next) < 0) return;
+    next = now + 1000000ull;
+    uint32_t funcsel = (io_bank0_hw->io[15].ctrl & IO_BANK0_GPIO0_CTRL_FUNCSEL_BITS) >> IO_BANK0_GPIO0_CTRL_FUNCSEL_LSB;
+    dbg_printf("enlace GP15: %lu bytes, fifo=%u, pc=%u, func=%lu, nivel=%d, flancos=%lu\n",
+               (unsigned long)g_link_tx_bytes, (unsigned)pio_sm_get_tx_fifo_level(pio1, 0),
+               (unsigned)pio_sm_get_pc(pio1, 0), (unsigned long)funcsel, (int)lvl, (unsigned long)edges);
+}
+#endif
 #else
 // ============== Core 1 ==============
 
@@ -322,6 +341,9 @@ int main() {
 
 #if MSXNANO_CARRIER
         carrier_port_watch(now);  // suelta un puerto raiz que se ha quedado colgado (J1/J2/J5)
+#if MSXNANO_DEBUG_CDC
+        link_diag(now);
+#endif
 #endif
 
         joy_autofire_tick(now);   // advance autofire square wave + emit composed joy byte

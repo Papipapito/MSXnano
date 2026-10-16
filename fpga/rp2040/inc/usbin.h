@@ -105,6 +105,7 @@ void mouse_send_resync(void);   // repite el estado de botones del raton (0xD0 s
 // Keyboard UART link to the FPGA (PIO UART @ 115200 8N1, GP15 = TX -> FPGA pin 31).
 void kb_uart_init(void);     // configure the PIO UART on GP15 for the keyboard link
 void kb_tx_pump(void);       // drain the TX ring into the UART FIFO (non-blocking)
+extern volatile uint32_t g_link_tx_bytes;  // bytes handed to the PIO UART so far (debug log)
 void kb_send_resync(void);   // push a full-matrix resync frame (0xFE..0xFF)
 void joy_send_resync(void);  // re-emit both MSX joystick ports (0xB0 frames)
 void joy_autofire_tick(uint64_t now_us);  // main-loop autofire square-wave tick (10 Hz)

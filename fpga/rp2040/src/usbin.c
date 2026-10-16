@@ -136,9 +136,11 @@ static inline void tx_push(uint8_t b) {
 }
 
 // Drain the TX ring into the PIO UART's TX FIFO without blocking. From main loop.
+volatile uint32_t g_link_tx_bytes = 0;   // bytes handed to the PIO UART (debug log)
 void kb_tx_pump(void) {
     while(tx_tail != tx_head && !pio_sm_is_tx_fifo_full(KB_PIO, KB_SM)) {
         pio_sm_put(KB_PIO, KB_SM, (uint32_t)txbuf[tx_tail++]);
+        g_link_tx_bytes++;
     }
 }
 
