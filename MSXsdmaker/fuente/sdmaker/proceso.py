@@ -17,9 +17,11 @@ def etiqueta_particion(etiqueta, numero):
     return (etiqueta[:8].rstrip() + " %d" % numero)[:11]
 
 
-def crear(dev, plan, sistema, grupos, etiqueta="MSX", aviso=None, raiz_sd=None, opciones=None):
+def crear(dev, plan, sistema, grupos, etiqueta="MSX", aviso=None, raiz_sd=None, opciones=None, ocm=None):
     """plan = lista de particiones.Particion. aviso(texto, fraccion) informa del avance. opciones = las de Nextor 3
-    (contenido.OPCIONES_N3). Devuelve un informe."""
+    (contenido.OPCIONES_N3). ocm = {"pack", "bios"} para un MSXBOOK/1chipMSX (contenido.arbol). Devuelve un informe."""
+    if ocm and plan[0].tipo != particiones.TIPO_FAT16:
+        raise ValueError("la IPL del OCM solo lee FAT16 en la primera particion")
     aviso = aviso or (lambda texto, fraccion=None: None)
     t0 = time.time()
     rnd = random.Random()
@@ -33,7 +35,9 @@ def crear(dev, plan, sistema, grupos, etiqueta="MSX", aviso=None, raiz_sd=None, 
 
     arbol = None
     if sistema != "ninguno" or grupos:
-        arbol = contenido.arbol(sistema, grupos, len(plan), raiz_sd, opciones)
+        if ocm:
+            aviso("Montando las BIOS con el %s..." % ocm["pack"].texto(), 0.03)
+        arbol = contenido.arbol(sistema, grupos, len(plan), raiz_sd, opciones, ocm)
         informe["ficheros"], informe["bytes"] = contenido.resumen(arbol)
     total_ficheros = max(1, informe["ficheros"])
     hechos = [0]

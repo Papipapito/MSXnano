@@ -24,6 +24,8 @@ referencia() {   # $1 = sistema, $2 = destino: el arbol esperado de la particion
     mkdir -p "$d/SAVES" "$d/SETTINGS" "$d/FHUNT" "$d/TMP"
     find "$d" \( -iname 'ruvector.db' -o -iname '*.bak' -o -iname '*.tmp' -o -name '.*' -o -iname 'thumbs.db' \
         -o -iname 'desktop.ini' -o -iname 'nextor.emu' \) -exec rm -rf {} + 2>/dev/null
+    # MMRET.DAT va sin las asociaciones cuyo programa no esta en la tarjeta: sin bin\ (MSX-DOS) no hay EMUFILE
+    [ "$1" = msxdos ] && LC_ALL=C sed -i '/^\.EMU\t/d' "$d/MM/MMRET.DAT"
 }
 
 caso() {   # nombre tamano_imagen sistema opciones...

@@ -1,8 +1,8 @@
-# MSX SD Maker 1.3 — preparing the SD card
+# MSX SD Maker 1.4 — preparing the SD card
 
 *[Versión en castellano](LEEME.md)*
 
-**MSX SD Maker** gets an SD card ready for an **MSXimus** (Tang Console 60K, Tang Mega 138K or the Zynq version), an **MSXnano** or an **MSX Pico**. In a few seconds it does all this:
+**MSX SD Maker** gets an SD card ready for an **MSXimus** (Tang Console 60K, Tang Mega 138K or the Zynq version), an **MSXnano** or an **MSX Pico**, and also for an **MSXBOOK**, **OneChipBook** or **1chipMSX** (see [section 11](#11-msxbook-onechipbook-and-1chipmsx)). In a few seconds it does all this:
 
 1. Wipes the card and splits it into partitions that MSX-DOS understands.
 2. Formats each partition.
@@ -27,6 +27,7 @@ Nothing to install: it is a single file, `MSXsdmaker.exe`. The program itself is
 8. [Troubleshooting](#8-troubleshooting)
 9. [For the curious: how it works](#9-for-the-curious-how-it-works)
 10. [Licenses and credits](#10-licenses-and-credits)
+11. [MSXBOOK, OneChipBook and 1chipMSX](#11-msxbook-onechipbook-and-1chipmsx)
 
 ---
 
@@ -43,7 +44,7 @@ Nothing to install: it is a single file, `MSXsdmaker.exe`. The program itself is
 
 ## 2. Opening the program
 
-1. Download the ZIP from the [latest MSX SD Maker release](https://github.com/Papipapito/SD_Maker/releases/latest) (`MSX_SD_Maker_<version>.zip`), in its own repository ([SD_Maker](https://github.com/Papipapito/SD_Maker)), and **unzip it** anywhere: inside there is `MSXsdmaker.exe` with this guide. The machines' repositories also carry a copy in their `MSXsdmaker` folder.
+1. Download the ZIP from the [latest MSX SD Maker release](https://github.com/Papipapito/SD_Maker/releases/latest) (`MSX_SD_Maker_<version>.zip`), in its own repository ([SD_Maker](https://github.com/Papipapito/SD_Maker)), and **unzip it** anywhere: inside there is `MSXsdmaker.exe` with this guide and the `sd` folder, with everything that is copied to the card (systems and programs). If you change or add a file in one of its folders, yours is copied; if you delete it, the program uses the copy it carries inside. The machines' repositories also carry a copy of the program in their `MSXsdmaker` folder.
 2. Put the card in the reader.
 3. Double-click `MSXsdmaker.exe`.
 4. Windows asks whether to allow it to make changes to the device: answer **Yes**. It needs this because it writes the whole card, partition table included.
@@ -60,7 +61,7 @@ Nothing to install: it is a single file, `MSXsdmaker.exe`. The program itself is
 
 ![The MSX SD Maker window](capturas/1_ventana.png)
 
-The window has four blocks, top to bottom. Fill them in order and press **Preparar la tarjeta** (*Prepare the card*).
+At the top, in **Máquina** (*Machine*), leave the first option ticked (MSXimus, MSXnano, Goa'uld or MSX Pico); for the MSXBOOK, OneChipBook or 1chipMSX see [section 11](#11-msxbook-onechipbook-and-1chipmsx). Below there are four blocks, top to bottom. Fill them in order and press **Preparar la tarjeta** (*Prepare the card*).
 
 ### 3.1 The card — *1. Tarjeta SD*
 
@@ -152,15 +153,15 @@ They are copied to the first partition, each in its own folder. Tick the ones yo
 | Checkbox | Folder | What it is | How to start it |
 |---|---|---|---|
 | SofaRun | `SOFARUN` | ROM, DSK and CAS tape launcher with a menu, by Louthrax | `SR` |
-| Multi Mente | `MM` | Two-pane file manager | `MM` |
+| Multi Mente | `MM` | Two-pane file manager. RETURN opens each file with its program: VGM and VGZ, ROM, DSK, ZIP, MWM and MFM (MoonBlaster Wave and FM), MID, PC AdLib music (RAD, DRO, SOP…), MOD, PT3, pictures…; files with no program open in the viewer | `MM` |
 | Utilidades | `UTIL` | About 120 tools: `DI` (DIR with long names), `LOGIN`, players, copying… | by name |
 | Red WiFi / UNAPI | `WIFI` | TCP/IP networking: `HGET`, `FTP`, `TELNET`, `SNTP`, `FH` (File-Hunter)… | by name |
 | Fuentes de pantalla | `FONTS` | Fonts for Multi Mente (ISO Latin-1, Japanese, Russian…) | used by MM |
-| Música | `musica` | MoonBlaster Wave, VGM and other players | by name |
+| Música | `musica` | The MoonBlaster Wave 1.17 (`mbwave\`) and MoonBlaster FM 1.03A (`mbfm\`) editors, both for the OPL4/MoonSound and needing more than 128 KB of memory; RoboPlay 2.1 (`roboplay\`, by ToriHino), which plays MoonBlaster FM and Wave songs on the OPL4 (it loads the wavekit by itself) and many more formats (MBM, MID, RAD, DRO, PRO, SBM…); `MUSPLAY` (ours), which plays a `.MUS` with the right player: an MGS one (text) with MGSC and a FAC SoundTracker one (binary) with RoboPlay; and the MWM and VGM players | `ROBOPLAY song`, `MUSPLAY song.MUS`, `MWMPLAY`, `VGMPLAY`; the editors by their path: `\musica\mbwave\mbwave`, `\musica\mbfm\mbfm` |
 | HUB | `hub` | MSX Hub client, to install programs from the internet | `HUBG` or `HUB` |
 | IA | `IA` | AI chat client; your keys go in `IA\ia.cfg` | `IA` |
 | mapper e indev | `mapper`, `indev.com` | `MAPPER` disables the MSX-DOS 2 mapper routines for old software | by name |
-| Herramientas FPGA | `FPGA` | `MXUPDATE`: updates the core and the pack of the MSXimus 60K/138K and the MSXnano (2.1.1 or later) from MSX-DOS, from a `.UPD` on the card or over WiFi (`MXUPDATE /N`); over WiFi it first brings itself up to date. `MXUPDATE /?` shows the commands. The MSXimus Z (Zynq) updates itself | `MXUPDATE` |
+| Herramientas FPGA | `FPGA` | `MXUPDATE`: updates the core and the pack of the MSXimus 60K/138K and the MSXnano (2.1.1 or later) from MSX-DOS, from a `.UPD` on the card or over WiFi (`MXUPDATE /N`); over WiFi it first brings itself up to date. `MXUPDATE /?` shows the commands. The MSXimus Z (Zynq) updates itself. `MTVOL`: OPL4 FM and Wave volume (MSXimus and MoonTANG): `MTVOL FM 9`, `MTVOL WAVE 6`, `MTVOL FM M` (mute); the number goes from 0 to 18 in steps of 3 (18 = maximum, 0 dB; each step is 3 dB); with no arguments it shows the levels | `MXUPDATE`, `MTVOL` |
 
 Whenever a system is installed these empty folders are created too. **Do not delete them**:
 
@@ -198,7 +199,7 @@ A:\
 ├── MM\  FONTS\                    Multi Mente and its fonts
 ├── UTIL\  WIFI\  musica\          utilities, networking and music
 ├── hub\  IA\  mapper\  indev.com
-├── FPGA\                          MXUPDATE: updating the MSXimus and MSXnano core
+├── FPGA\                          MXUPDATE: updating the MSXimus and MSXnano core; MTVOL: OPL4 volume
 ├── FHUNT\                         File-Hunter downloads (do not delete)
 └── TMP\                           temporary (do not delete)
 ```
@@ -210,7 +211,7 @@ A:\
 It is generated from your choices. With everything ticked and three partitions it looks like this:
 
 ```
-PATH A:\;%1\BIN;%1\SOFARUN;%1\MM;%1\UTIL;%1\WIFI;%1\musica;%1\hub;%1\IA;%1\mapper;%1\FPGA
+PATH A:\;%1\BIN;%1\musica;%1\musica\roboplay;%1\SOFARUN;%1\MM;%1\UTIL;%1\WIFI;%1\hub;%1\IA;%1\mapper;%1\FPGA
 SET TIMEZONE=+02:00
 mode 80
 ALIAS .BAS = "BASIC "
@@ -218,6 +219,7 @@ ALIAS .ASC = "BASIC "
 sntp pool.ntp.org /v
 set temp %1\TMP
 set MM=%1\MM
+set MGSDRV=%1\UTIL\MGSDRV.COM
 alias .ROM srom
 alias .DSK sri
 yenslash
@@ -236,12 +238,13 @@ mapdrv d: 3 1 0
 
 What each part does:
 
-- **`PATH`**: you can type any program's name from any folder, without its path. `%1` is the boot drive.
+- **`PATH`**: you can type any program's name from any folder, without its path. `%1` is the boot drive. `musica` comes before `SOFARUN` because both hold a `VGMPLAY` and the good one is in `musica` (SofaRun runs its own by its path). `musica\roboplay` is there so that you can type plain `ROBOPLAY`: RoboPlay looks for its players (`.PLY`) next to `ROBOPLAY.COM`.
+- **`set MM`** and **`set MGSDRV`**: where Multi Mente and the MGSDRV driver are; MGSC, the player of MGS `.MUS` songs, loads it from there.
 - **`SET TIMEZONE`**: the time zone (+02:00, Central European summer time). Change it if needed.
 - **`mode 80`**: 80-column screen.
 - **`ALIAS`**: typing the name of a `.BAS` opens it in BASIC; the name of a `.ROM` or `.DSK` launches it with SofaRun.
 - **`sntp`**: sets the clock from the internet if there is a network. Without one it prints an error and carries on: that is normal.
-- **`mapdrv c: 2 1 0`**: mounts partition 2 as drive C:, partition 3 as D:, and so on.
+- **`mapdrv c: 2 1 0`**: mounts partition 2 as drive C:, partition 3 as D:, and so on up to partition 7 on H:. MSX-DOS only has drives A: to H:, so with 8 partitions partition 8 goes on **B:** (`Maped Units C,D,E,F,G,H,B`). On the MSXimus and the MSXnano B: is free. On an MSX with a floppy drive, B: stops being the floppy drive until you reboot or type `mapdrv b: d`.
 
 With **Nextor 3**, instead of `yenslash` come the lines of its options (`YENSLASH ON`, plus `SET BUFINSERT=ON` and `SET DIRK=0` if ticked), and the file is `AUTOEXEC.BTM` if you choose that option.
 
@@ -280,7 +283,7 @@ Useful commands to start with:
 | Type | To |
 |---|---|
 | `SR` | SofaRun: pick and launch ROM, DSK and tapes |
-| `MM` | Multi Mente: copy, move and delete files |
+| `MM` | Multi Mente: copy, move and delete files, and open them with RETURN |
 | `DI` | List the folder with long names |
 | `DIR C:` | See what is on partition 2 |
 | `LOGIN` | System information |
@@ -303,7 +306,7 @@ A convenient way to organise it:
 
 Good to know:
 
-- **Long names.** The MSXimus menu and Windows show them in full, like "Aleste 2 (1988).rom". MSX-DOS and SofaRun see the 8+3 short name Windows generates, like `ALESTE~1.ROM`.
+- **Long names.** The MSXimus menu and Windows show them in full, like "Aleste 2 (1988).rom". MSX-DOS and SofaRun see the 8+3 short name Windows generates, like `ALESTE~1.ROM`. Multi Mente shows the first 12 characters of the long name in its file list, and the whole name of the file under the cursor in its "File info" box (with Nextor 2.1 or 3.0).
 - **The MSXimus menu** walks every partition with TAB and launches ROM and DSK files without going through MSX-DOS.
 - **Do not format the partitions from Windows.** Windows would change their format or cluster size. To start over, run the card through MSX SD Maker again.
 - **Do not delete `FHUNT` or `TMP`** from partition 1.
@@ -350,7 +353,7 @@ That is `SNTP` trying to set the clock from the internet with no network. It doe
 The card or the reader may be failing. Try again and, if it happens again, with another reader or another card.
 
 **Can I have more than 8 partitions?**
-No. The MSXimus menu sees 8, and Nextor only looks at the first 9 at boot.
+No. The MSXimus menu sees 8, and Nextor only looks at the first 9 at boot. Besides, MSX-DOS only has eight drives (A: to H:); with 8 partitions they are all in use and partition 8 goes on B:.
 
 **Windows says the card is smaller than its label.**
 That is normal: manufacturers count 1 GB as 1,000 million bytes and Windows as 1,073 million.
@@ -381,3 +384,47 @@ python MSXsdmaker.py imagen test.img --tamano 8G --esquema fat16-2g --n 3 --sist
 MSX SD Maker is part of the MSXimus / MSXnano project, by Albert (Papipapito), under GPL v3 like the rest of the project.
 
 The programs it copies to the card belong to their authors: Nextor and MSX-DOS, SofaRun, Multi Mente, the UNAPI tools, HUB and more. See [LICENCIAS.md](LICENCIAS.md): it has the list and the Nextor license notice, which must accompany its files.
+
+
+---
+
+## 11. MSXBOOK, OneChipBook and 1chipMSX
+
+These machines run KdL's **OCM-PLD** firmware and load their BIOS from the card itself: a 512 KB `OCM-BIOS.DAT` file. MSX SD Maker builds that file, with the same options as KdL's `make-sdb.cmd`, and lays out the card like his `sdcreate.cmd`: system, `HELP` and `UTILS`, plus the programs you choose.
+
+### What else you need
+
+**KdL's OCM-SDBIOS Pack**, which you ask the author for. MSX SD Maker does not include it because its BIOS images hold third-party system ROMs. Leave it **as it comes** (the `.7z`, or the unpacked folder) in the `OCM-SDBIOS` folder next to `MSXsdmaker.exe`, or pick it with **Buscar el pack...**. Pack 3.8.3 has Nextor 2.1.4 and Nextor 3.0 beta 2; 3.8.1 only Nextor 2.1.4.
+
+### Step by step
+
+1. In **Máquina**, choose **MSXBOOK, OneChipBook o 1chipMSX**. If it is greyed out, the program has not found the pack: it says so in red underneath.
+2. **Partitions**: FAT16 only. The machine's IPL, which loads the BIOS, cannot read FAT32. The first partition holds the BIOS images and the system; the others are mounted as C:, D:… by `MAPDRV` in `AUTOEXEC.BAT`.
+3. **Opciones de las BIOS...** opens the menu of the card's BIOS images. The main one, `OCM-BIOS.DAT`, is the one that boots. **Añadir otra** adds spare ones, `ALT-BIOS.DA0` to `.DA9`. For each one you choose:
+   - **Machine type**: MSX2+ (the usual one), turboR (experimental: the OCM has no R800), MSX2, MSX1, MSX2+ for OCM-PLD 3.0-3.3.3, or empty. The empty one is not a BIOS: the machine rejects it and boots the one in its flash.
+   - **Disk**: Nextor 2.1.4, Nextor 3.0 beta 2, or MegaSDHC (MSX-DOS 2, no Nextor) with one or two SD slots.
+   - **Keyboard**: `\` backslash, `¥` yen or western.
+   - **Boot logo**, with a picture of it. "Propio" is the one you made with the pack's ++Logo Toolkit.
+   - **Option-ROM**: Wi-Fi (the ESP8266 BIOS, which detects the module by itself) and, on the turboR, its logo.
+   - **Extra-ROM**: BASIC'n turbo 2.1, BASIC'n plus 2.0 or none.
+
+   By default: MSX2+ with Nextor 2.1.4, Wi-Fi and the MSX++ logo, and a spare turboR.
+
+   ![The MSXBOOK BIOS images](capturas/6_bios_msxbook.png)
+4. **Programs**: the usual ones minus those that are no use on these machines. MXUPDATE, MTVOL and `indev` are left out. Music (MBWave, MBFM, RoboPlay, MWM) comes unticked: it is for the OPL4 and only plays with a MoonSound or similar cartridge. **Flasheo del FPGA** adds `PLDFLASH` and `SMXFLASH` to `UTILS`: they are separate because they rewrite the machine's firmware.
+
+### What ends up on the card
+
+- `OCM-BIOS.DAT`, the **first** file in the root. The IPL looks for it there and reads it in one go.
+- The spare `ALT-BIOS.DA?` files.
+- `BIOS.TXT`: which BIOS images there are and how to switch.
+- `NEXTOR.SYS`, `COMMAND2.COM` and `MSXDOS2.SYS`, plus `COMMAND3.COM` with Nextor 3.
+- The pack's `HELP` and `UTILS` (with Nextor 3, its tools).
+- `AUTOEXEC.BAT` and `REBOOT.BAT`.
+
+### On the machine
+
+- **First boot**: if the old BIOS shows up, the machine still has it in memory. Switch it off for a few seconds or give the reset button a **long press**.
+- **Switching BIOS**: `SDBIOS n -R` (n = the last digit of `ALT-BIOS.DAn`) switches and reboots. `SDBIOS -R` goes back to the main one. `TYPE BIOS.TXT` reminds you.
+- **Nextor 2 and Nextor 3** each need their own `NEXTOR.SYS`. If the card has BIOS images with both, the other one is kept as `N2XTOR.SYS` or `N3XTOR.SYS`. To move to a BIOS with the other Nextor: `SDBIOS n` (without `-R`), then `XSYS3` (it swaps `NEXTOR.SYS`) and then a **full restart** (long press on the reset button, or power off and on). The reboot done by `XSYS3` does not reload the BIOS: without the full restart the old one stays and `NEXTOR.SYS` complains that it needs another kernel. To go back: `SDBIOS`, `XSYS3` and a full restart.
+- **If something goes wrong**: a click on the reset button during the initial blinking boots the BIOS in the flash, without taking the card out.
