@@ -17,6 +17,8 @@ out and ready to print all at once.
 | `upper_right.stl` | Top — right | 1 |
 | `lower_left.stl` | Bottom — left, **cut for the [MSXnano carrier v2](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier)**: USB-C, HDMI and 2 × USB-A out of the back wall, 4 standoffs for the board | 1 |
 | `lower_left_interruptor.stl` | Same as `lower_left.stl` plus a hole in the left side for a KCD11-101 rocker power switch (carrier rev B) | 1 (instead of `lower_left.stl`) |
+| `lower_left_microsd.stl` | Same as `lower_left.stl` plus a rear microSD slot for a microSD extension cable | 1 (instead of `lower_left.stl`) |
+| `lower_left_microsd_interruptor.stl` | microSD slot + rocker switch hole | 1 (instead of `lower_left.stl`) |
 | `prototipo/lower_left_prototipo.stl` | Bottom — left, previous prototype (Tang + RP2040 wired by hand) | — |
 | `lower_right.stl` | Bottom — right | 1 |
 | `lower_side.stl` | Bottom side (TN20K case v4) | 1 |
@@ -43,6 +45,15 @@ four standoffs printed into the floor on the Raspberry Pi 3 hole pattern (Ø 6 m
 against the back wall; fix it with 4 × M2.5 × 6–8 screws from the top (they cut their own
 thread in the plastic; if you prefer heat-set inserts, open the holes to Ø 3.2 mm).
 `raspberry_support.stl` is not needed with the carrier. The lid and the other parts are unchanged.
+
+### Rear microSD slot (2026-10)
+
+The Tang's microSD faces the front, inside the case. `lower_left_microsd*.stl` add a 14 × 2.7 mm
+slot in the back wall, left of the USB-C, and two posts for a **microSD extension cable with a metal
+socket and two screw ears (holes 25 mm apart)**, 15 cm long (flexible cable ≥ 135 mm). The socket
+lies flat on the posts, card mouth against the wall, fixed with 2 × M2.5 self-tapping screws (≤ 8 mm).
+The cable runs on the floor under the carrier: fit the socket and the cable before the board, then
+plug the extension into the Tang's microSD slot.
 
 ### Power switch (carrier rev B, 2026-10)
 

@@ -23,6 +23,8 @@ blanco**. Sin soportes en la mayoría de piezas; las tapas van boca abajo.
 | `upper_right.stl` | Tapa superior derecha | 1 |
 | `lower_left.stl` | Base izquierda, **preparada para la [placa portadora v2](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier)**: USB-C, HDMI y 2 × USB-A salen por detrás; 4 separadores para la placa | 1 |
 | `lower_left_interruptor.stl` | Igual que `lower_left.stl` más un agujero en el lateral izquierdo para un interruptor basculante KCD11-101 (portadora rev B) | 1 (en lugar de `lower_left.stl`) |
+| `lower_left_microsd.stl` | Igual que `lower_left.stl` más una ranura trasera para un alargador de microSD | 1 (en lugar de `lower_left.stl`) |
+| `lower_left_microsd_interruptor.stl` | Ranura microSD + agujero del interruptor basculante | 1 (en lugar de `lower_left.stl`) |
 | `prototipo/lower_left_prototipo.stl` | Base izquierda del prototipo anterior (Tang y RP2040 cableados a mano) | — |
 | `lower_right.stl` | Base derecha | 1 |
 | `lower_side.stl` | Lateral de la base (encaje de la Tang Nano 20K, versión 4) | 1 |
@@ -68,6 +70,15 @@ ellos a 10,5 mm del suelo con el borde trasero contra la pared; se fija con 4 to
 M2,5 × 6–8 desde arriba (hacen rosca en el plástico; si prefieres insertos roscados, abre los
 agujeros a Ø 3,2 mm). `raspberry_support.stl` no hace falta con la portadora. La tapa y el
 resto de piezas no cambian.
+
+### Ranura microSD trasera (10/2026)
+
+La microSD del Tang queda al frente, dentro de la caja. `lower_left_microsd*.stl` añaden una ranura de
+14 × 2,7 mm en la pared trasera, a la izquierda del USB-C, y dos postes para un **alargador de microSD
+con zócalo metálico y dos orejas (agujeros a 25 mm)**, de 15 cm (cinta flexible ≥ 135 mm). El zócalo va
+tumbado sobre los postes, con la boca contra la pared, sujeto con 2 tornillos M2,5 autorroscantes (≤ 8 mm).
+La cinta va por el suelo bajo la portadora: monta el zócalo y la cinta antes que la placa y luego
+enchufa el alargador en la microSD del Tang.
 
 ### Interruptor de encendido (portadora rev B, 10/2026)
 
