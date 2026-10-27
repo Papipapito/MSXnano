@@ -18,9 +18,9 @@ Spreadsheet version: [`MSXnano_BOM.xlsx`](MSXnano_BOM.xlsx).
 
 | # | Qty | Component | Notes |
 |---|-----|-----------|-------|
-| 5 | 1 | **RP2040 board** | Waveshare **RP2040-Zero** (recommended, `rp2040_keyboard_zero.uf2` in the release) or a plain **Raspberry Pi Pico** (`rp2040_keyboard_pico.uf2`). |
-| 6 | 3 | **Jumper wires** | Pico GP15 → Tang **pin 31**, GND → GND, VBUS → 5V. |
-| 7 | 1 | **USB keyboard** | Plugged into the Pico's USB port. Plain keyboards work best (avoid ones with a built-in hub). |
+| 5 | 1 | **RP2040 board** | Waveshare **RP2040-Zero** (`rp2040_keyboard_zero.uf2` in the release). |
+| 6 | 3 | **Jumper wires** | Zero GP15 → Tang **pin 31**, GND → GND, VBUS → 5V. |
+| 7 | 1 | **USB keyboard** | Plugged into the Zero's USB-C port. Plain keyboards work best (avoid ones with a built-in hub). |
 | 8 | 1 | **USB hub** _(optional)_ | To use keyboard **and** gamepad/mouse at once. A **self-powered** hub is recommended. |
 | 9 | 1 | **USB gamepad** _(optional)_ | DirectInput (HID) or XInput. Buttons 3/4 = autofire. |
 | 10 | 1 | **USB mouse** _(optional)_ | Becomes a real MSX mouse on joystick port 2. |

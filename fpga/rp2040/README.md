@@ -9,18 +9,17 @@ Derived from the MSXgoauld "Guardian Angel" firmware. XInput host driver:
 
 | Build | Your setup | Flash | In the release |
 |---|---|---|---|
-| Carrier board | **MSXnano v2 carrier** (RP2040-Zero in its socket, 3 USB-A) | `rp2040_keyboard_carrier.uf2` | — |
-| Carrier board | Debug log on the Zero's USB-C. **Tests only, not for normal use** | `rp2040_keyboard_carrier_debug.uf2` | — |
+| MSXnano board | **MSXnano board** (RP2040-Zero in its socket, 3 USB-A) | `rp2040_keyboard_placa.uf2` | — |
+| MSXnano board | Debug log on the Zero's USB-C. **Tests only, not for normal use** | `rp2040_keyboard_placa_debug.uf2` | — |
 | Hand-wired | Waveshare RP2040-Zero wired to pin 31 (LED on GPIO16) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
-| Hand-wired | Raspberry Pi Pico wired to pin 31 (LED on GPIO25) | `rp2040_keyboard_pico.uf2` | `rp2040_keyboard_pico.uf2` |
 | Tang alone | No RP2040: the Tang's own BL616 | see [`../bl616/README.md`](../bl616/README.md) | — |
 
 The two families are not interchangeable: the hand-wired images use the board's own USB-C as
-the host, the carrier images use the carrier's three USB-A sockets and leave the USB-C free.
+the host, the MSXnano board images use the board's three USB-A sockets and leave the USB-C free.
 
 To flash: hold **BOOTSEL** (BOOT on the Zero) while plugging the board into a PC and drag the
-`.uf2` onto the `RPI-RP2` drive. On the carrier the Zero's USB-C is at the board's right edge;
-with the carrier powered, hold BOOT and press RESET instead of replugging.
+`.uf2` onto the `RPI-RP2` drive. On the MSXnano board the Zero's USB-C is at the board's right edge;
+with the board powered, hold BOOT and press RESET instead of replugging.
 
 ## What it does
 
@@ -49,9 +48,9 @@ The wire protocol is frozen; the contract is the header of
 [`fpga/src/kbd_uart_rx.v`](../src/kbd_uart_rx.v), explained in Spanish in
 [`docs/tecnica/05-companion-rp2040.md`](../../docs/tecnica/05-companion-rp2040.md).
 
-## MSXnano v2 carrier board
+## MSXnano board
 
-The RP2040-Zero sits in a socket of the carrier and its USB-C is **not** the host. The host is
+The RP2040-Zero sits in a socket of the MSXnano board and its USB-C is **not** the host. The host is
 [Pico-PIO-USB](https://github.com/sekigon-gonnoc/Pico-PIO-USB) (MIT) bit-banging three GPIO
 pairs, each with its own USB-A socket (5 V from the board's rail, not through the Zero):
 
@@ -67,7 +66,7 @@ pairs, each with its own USB-A socket (5 V from the board's rail, not through th
 - Pads take the MSX ports in the order they are mounted: plug first the one that must be
   player 1. With several devices plugged in at power-up, the order is that in which they
   finish enumerating.
-- **No hubs on the carrier**: Pico-PIO-USB does not handle them reliably. Plug the devices
+- **No hubs on the MSXnano board**: Pico-PIO-USB does not handle them reliably. Plug the devices
   straight into J1, J2 and J5. (The hand-wired build, on the board's native USB, does work
   with a self-powered hub.)
 - The link to the FPGA (GP15 → pin 31) and its protocol are the same as in the hand-wired
@@ -76,7 +75,7 @@ pairs, each with its own USB-A socket (5 V from the board's rail, not through th
 
 ### Debug build
 
-`rp2040_keyboard_carrier_debug.uf2` also makes the Zero's USB-C a USB serial port (CDC,
+`rp2040_keyboard_placa_debug.uf2` also makes the Zero's USB-C a USB serial port (CDC,
 `CAFE:4A01`, any baud rate). Plug it into a PC and open the port with any terminal (PuTTY,
 Tera Term, `screen /dev/ttyACM0`). It prints, in Spanish:
 
@@ -105,7 +104,7 @@ ship it next to the `.uf2` files.
 - GP15 is driven by PIO because the hardware UARTs can't reach it on this board layout.
 - Plug the keyboard, gamepad or mouse into the RP2040's own USB port. A self-powered hub lets
   you use all of them at once.
-- On the carrier all of this is already routed.
+- On the MSXnano board all of this is already routed.
 
 ## Build Instructions
 
@@ -121,7 +120,7 @@ Before build, make sure to:
   enough. On Windows, running the build from a Visual Studio *vcvars64* shell is
   enough; on Linux, `build-essential`.
 
-Three of the four `.uf2` in this directory are built from this source; `rp2040_keyboard_carrier.uf2`
+Two of the three `.uf2` in this directory are built from this source; `rp2040_keyboard_placa.uf2`
 is the build validated on the board, from commit `4c334aa` (before the debug-only link-status line
 of `381ebd0`). Rebuild ALL of them when you change the firmware. One build directory per variant (changing the options in an existing
 one is not reliable).
@@ -129,16 +128,15 @@ one is not reliable).
 | Variant | cmake options |
 |---|---|
 | RP2040-Zero (default) | — |
-| Raspberry Pi Pico | `-DRP2040_ZERO=0` |
-| MSXnano v2 carrier | `-DMSXNANO_CARRIER=ON` |
-| Carrier, debug log | `-DMSXNANO_CARRIER=ON -DMSXNANO_DEBUG_CDC=ON` |
+| MSXnano board | `-DMSXNANO_CARRIER=ON` |
+| MSXnano board, debug log | `-DMSXNANO_CARRIER=ON -DMSXNANO_DEBUG_CDC=ON` |
 
 ```
 mkdir build && cd build
 cmake -G Ninja .. && ninja      # plus the options of the variant
 ```
 
-The carrier variants use [TinyUSB](https://github.com/hathach/tinyusb) 0.21.0 (Ha Thach) and
+The MSXnano board variants use [TinyUSB](https://github.com/hathach/tinyusb) 0.21.0 (Ha Thach) and
 Pico-PIO-USB (sekigon-gonnoc) from submodules, both MIT, instead of the SDK's TinyUSB, so
 fetch them first, from the repository root:
 

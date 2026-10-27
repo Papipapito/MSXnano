@@ -52,7 +52,7 @@ un ratón de un trackball).
 Lo ve el software que usa ratón MSX (SymbOS, los programas de dibujo, los juegos que lo
 admiten). Aparece en el **puerto de joystick 2**. Los dos botones van a los disparos.
 
-En la placa Pico Zero, el LED de a bordo lo cuenta: **cian** = ratón montado, **magenta**
+En la RP2040-Zero, el LED de a bordo lo cuenta: **cian** = ratón montado, **magenta**
 = ratón moviéndose. Útil para saber si el hub se lo ha tragado.
 
 ## El joystick
@@ -73,7 +73,7 @@ que llevan interruptor XInput/DInput funcionan en cualquiera de las dos posicion
 ## Hubs
 
 Teclado + mando por un hub está **probado en placa**. Recomendaciones:
-- Hub **con alimentación propia** si vas a colgar más de un dispositivo: la Pico se
+- Hub **con alimentación propia** si vas a colgar más de un dispositivo: la Zero se
   alimenta del 5 V de la Tang y no le sobra corriente.
 - Teclados **sencillos**. Los que llevan hub interno (puerto USB en el lateral, teclas
   multimedia como dispositivo aparte) cuentan como varios dispositivos y pueden agotar
@@ -91,4 +91,4 @@ Un teclado con sondeo a 1 ms (los "gaming") lo baja a ~10 ms. Cifras y desglose 
 
 El FPGA lleva un **vigilante de un segundo**: si deja de recibir datos del RP2040, suelta
 todas las teclas y el joystick, para que un cable suelto no deje una tecla clavada. Si el
-teclado "muere", mira el cable del pin 31 y que la Pico tenga alimentación (su LED).
+teclado "muere", mira el cable del pin 31 y que la Zero tenga alimentación (su LED).

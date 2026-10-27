@@ -7,8 +7,8 @@ this file next to the `.uf2` files (for example in a release).
 | Component | In which images | Licence | Copyright |
 |---|---|---|---|
 | [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) 2.2 (including its boot code) and the PIO programs `ws2812.pio` and `uart_tx.pio` (from `pico-examples`) | all | BSD-3-Clause | Raspberry Pi (Trading) Ltd. |
-| [TinyUSB](https://github.com/hathach/tinyusb): 0.18.0 bundled with the SDK (classic images), 0.21.0 from `lib/tinyusb` (carrier images). `inc/tusb_config.h` and `src/usb_descriptors.c` are adapted from its examples | all | MIT | hathach (tinyusb.org), Ha Thach |
-| [Pico-PIO-USB](https://github.com/sekigon-gonnoc/Pico-PIO-USB) | carrier images | MIT | sekigon-gonnoc |
+| [TinyUSB](https://github.com/hathach/tinyusb): 0.18.0 bundled with the SDK (classic images), 0.21.0 from `lib/tinyusb` (MSXnano board images). `inc/tusb_config.h` and `src/usb_descriptors.c` are adapted from its examples | all | MIT | hathach (tinyusb.org), Ha Thach |
+| [Pico-PIO-USB](https://github.com/sekigon-gonnoc/Pico-PIO-USB) | MSXnano board images | MIT | sekigon-gonnoc |
 | [tusb_xinput](https://github.com/Ryzee119/tusb_xinput) (`src/xinput_host.c`, `inc/xinput_host.h`) | all | MIT | Ryan Wendland, usb64 |
 | `src/usbin.c` (USB HID host code) | all | MIT | No0ne, Bernd Strobel, pdaxrom; modified by Chandler Klüser for MSX Goa'uld Friend |
 

@@ -1,6 +1,6 @@
 # 05. El companion RP2040 (teclado, mando, ratón)
 
-La FPGA no tiene host USB. Un **RP2040** (Waveshare RP2040-Zero o una Pico normal) hace
+La FPGA no tiene host USB. Un **RP2040** (Waveshare RP2040-Zero) hace
 de host con TinyUSB, traduce teclado, mando y ratón a un protocolo de un solo cable y se
 lo cuenta a la FPGA por una **UART a 115200 8N1** (GP15 → pin 31 de la Tang). La FPGA
 mantiene una **matriz de teclado virtual** que el MSX lee por el PPI como si fuera un
@@ -11,23 +11,23 @@ Hay dos montajes. Comparten el protocolo, la lógica de entrada (`inc/kbd_merge.
 
 | Montaje | Host USB | Imagen |
 |---|---|---|
-| **Portadora MSXnano v2** (`MSXnano-Boards/carrier`: Tang Nano 20K + RP2040-Zero en zócalos) | Pico-PIO-USB sobre tres puertos USB-A (J1, J2, J5); el USB-C de la Zero no es host | `rp2040_keyboard_carrier.uf2` (y `_carrier_debug.uf2`) |
-| Zero o Pico cableada a mano | el USB-C del propio RP2040 (TinyUSB nativo; admite hub) | `rp2040_keyboard.uf2` (Zero), `rp2040_keyboard_pico.uf2` (Pico) |
+| **Placa MSXnano** (`MSXnano-Boards/carrier`: Tang Nano 20K + RP2040-Zero en zócalos) | Pico-PIO-USB sobre tres puertos USB-A (J1, J2, J5); el USB-C de la Zero no es host | `rp2040_keyboard_placa.uf2` (y `_placa_debug.uf2`) |
+| Zero cableada a mano | el USB-C del propio RP2040 (TinyUSB nativo; admite hub) | `rp2040_keyboard.uf2` |
 
 Fuentes: `fpga/rp2040/` (firmware, `FW_VERSION = 0x13`) y `fpga/src/kbd_uart_rx.v`
 (receptor). **La cabecera de `kbd_uart_rx.v` es el contrato**; si alguien cambia el
 protocolo tiene que cambiar los dos lados a la vez.
 
-## Cableado a mano (Zero o Pico)
+## Cableado a mano (Zero)
 
-| Pico | Tang Nano 20K | Notas |
+| RP2040-Zero | Tang Nano 20K | Notas |
 |---|---|---|
-| GP15 | **pin 31** | UART TX (PIO) → RX de la FPGA. `PULL_MODE=UP`: sin Pico la línea reposa alta = nada pulsado |
+| GP15 | **pin 31** | UART TX (PIO) → RX de la FPGA. `PULL_MODE=UP`: sin la Zero la línea reposa alta = nada pulsado |
 | GND | GND | Masa común, obligatoria |
-| VBUS (5 V) | 5 V | La Pico se alimenta de la Tang; el teclado y el hub, de la Pico |
+| VBUS (5 V) | 5 V | La Zero se alimenta de la Tang; el teclado y el hub, de la Zero |
 
-Un solo sentido (la FPGA nunca habla con la Pico). Los pines 27/28/29 del mismo header
-son de la WiFi y el turbo ([BOM](../BOM.md)). En la portadora todo esto ya está cableado
+Un solo sentido (la FPGA nunca habla con la Zero). Los pines 27/28/29 del mismo header
+son de la WiFi y el turbo ([BOM](../BOM.md)). En la Placa MSXnano todo esto ya está cableado
 (más abajo).
 
 ## El protocolo (congelado)
@@ -54,7 +54,7 @@ Dos propiedades de diseño que conviene no romper:
 - **El resync cada 250 ms cura cualquier byte perdido.** Un MAKE que se pierde deja una
   tecla pulsada como mucho 250 ms. Y hay un **vigilante de ~1 s** en la FPGA: sin bytes
   durante ese tiempo suelta toda la matriz y pone los joysticks a cero. Desenchufar la
-  Pico en caliente no deja nada colgado.
+  Zero en caliente no deja nada colgado.
 
 ## Lo que hace el firmware
 
@@ -94,10 +94,10 @@ Dos propiedades de diseño que conviene no romper:
   nada montado, verde = teclado, amarillo = mando, cian = ratón; destello blanco =
   actividad de tecla o mando, magenta = ratón moviéndose.
 - **Hubs**: en el montaje a mano un hub alimentado funciona (teclado + mando + ratón es
-  el montaje normal; teclados con hub interno a veces no enumeran). En la portadora no
+  el montaje normal; teclados con hub interno a veces no enumeran). En la Placa MSXnano no
   se soportan (siguiente apartado).
 
-## La portadora MSXnano v2
+## La Placa MSXnano
 
 Tang Nano 20K y RP2040-Zero van en zócalos; los tres USB-A se alimentan con los 5 V de la
 placa (no pasan por la Zero), cada uno con 22 Ω en serie en D+ y D−, 15 kΩ a GND en cada
@@ -117,26 +117,26 @@ el firmware no distingue. El enlace con la FPGA es el de siempre, GP15 → pin 3
 NeoPixel de la propia Zero; **no hay tira WS2812 externa** (GP26, que en el montaje a mano
 es su salida de datos, aquí es el D+ de J1).
 
-Lado Tang (`fpga/tang9k.cst` / `top.v` frente al zócalo J12 de la portadora). «Cabecera» es
+Lado Tang (`fpga/tang9k.cst` / `top.v` frente al zócalo J12 de la Placa MSXnano). «Cabecera» es
 el pin del zócalo: fila A = la del 5 V, fila B = la de los LED, el 1 en el extremo del USB-C,
 con los nombres del datasheet de Sipeed:
 
-| Pin Tang | Señal del bitstream | Cabecera | Red de la portadora | Destino |
+| Pin Tang | Señal del bitstream | Cabecera | Red de la Placa MSXnano | Destino |
 |---|---|---|---|---|
 | 31 | `kbd_uart_rx_pin` (entrada, pull-up) | B14 | `KBD_TX` | GP15 de la Zero |
 | 27 | `uart_tx` (salida) | B8 | `FPGA_TX` | J4.4 (TX) y J6.4 (RXD del ESP-01S) |
 | 28 | `uart_rx` (entrada, pull-up) | B9 | `FPGA_RX` | J4.5 (RX) y J6.5 (TXD del ESP-01S, por 1 kΩ) |
 | 29 | `turbo_status` (salida, pull-down) | B12 | `TURBO` | J4.6 |
 | 25 | `ws2812_led` (salida) | B10 | sin conectar | — |
-| 5V / GND | — | A1 / A2, A15, B20 | `+5V_TANG` / `GND` | LM66100 desde el USB-C de la portadora |
+| 5V / GND | — | A1 / A2, A15, B20 | `+5V_TANG` / `GND` | LM66100 desde el USB-C de la Placa MSXnano |
 
 J4 (la pantalla ESP32-C6: `5V · GND · NC · TX · RX · TURBO`) y J6 (el zócalo del ESP-01S)
 comparten los pines 27/28: se monta uno o el otro. TX y RX son los nombres de la FPGA. El
 resto de pines del bitstream (HDMI, flash, LEDs, botones) son internos de la Tang, y los
-que salen a la cabecera (microSD 80/85, LEDs 15-20) no se conectan en la portadora. El
+que salen a la cabecera (microSD 80/85, LEDs 15-20) no se conectan en la Placa MSXnano. El
 pin 25 de la Tang va, dentro de la propia Tang, al CEC del HDMI (R51 100 Ω, R40 27 kΩ a
 3,3 V) y a la señal LCD_HS del conector del LCD: `ws2812_led` sigue sacando su señal por
-ahí aunque la portadora no tenga tira.
+ahí aunque la Placa MSXnano no tenga tira.
 
 ### Host USB: Pico-PIO-USB
 
@@ -147,7 +147,7 @@ TUH_CFGID_RPI_PIO_USB_CONFIGURATION, …)` + `tusb_init()` para J1 y
 `pio_usb_host_add_port(dp, PIO_USB_PINOUT_DPDM)` para J2 y J5, **después** de `tusb_init`
 (usa el estado que este crea). Todo en el mismo núcleo, con un único `tusb_init` de host.
 
-Reparto de recursos de la Zero en la imagen de la portadora:
+Reparto de recursos de la Zero en la imagen de la Placa MSXnano:
 
 | Recurso | Quién | Por qué |
 |---|---|---|
@@ -183,7 +183,7 @@ los attach llegan a la vez.
 
 Con tres puertos raíz pueden esperar dos a la vez (el tercero enumera), así que hace falta
 `CFG_TUH_HUB ≥ 2`; `tusb_config.h` lo fija en 2 y lleva un `#error` si baja. Esto activa
-también el driver de hub, pero los hubs **no son un montaje soportado en la portadora**:
+también el driver de hub, pero los hubs **no son un montaje soportado en la Placa MSXnano**:
 sobre PIO-USB no son fiables (límites conocidos de Pico-PIO-USB y TinyUSB).
 `CFG_TUH_DEVICE_MAX` es 8 (tres puertos raíz y holgura).
 
@@ -212,7 +212,7 @@ fusionan), o teclado + ratón + mando (el ratón manda en el puerto 2, el mando 
 orden de reparto de los mandos es el de montaje; con varios dispositivos enchufados al
 arrancar es el orden en que acaban de enumerar.
 
-### Depuración (`rp2040_keyboard_carrier_debug.uf2`)
+### Depuración (`rp2040_keyboard_placa_debug.uf2`)
 
 El USB-C de la Zero es un dispositivo CDC (rhport 0, VID:PID `CAFE:4A01`, cualquier
 velocidad) por el que sale `dbg_printf()`. Escribe en un anillo de 2 KB que no bloquea nunca
@@ -291,20 +291,19 @@ mandan, el cable no.
 
 ## Compilar el firmware
 
-`fpga/rp2040/README.md` tiene el detalle. Resumen: cuatro imágenes, una por variante y
+`fpga/rp2040/README.md` tiene el detalle. Resumen: tres imágenes, una por variante y
 cada una en su directorio de build (cambiar las opciones en uno existente no es fiable):
 
 | Imagen | Opciones de cmake |
 |---|---|
 | `rp2040_keyboard.uf2` (RP2040-Zero, LED NeoPixel en GPIO16) | ninguna |
-| `rp2040_keyboard_pico.uf2` (Pico, LED en GPIO25) | `-DRP2040_ZERO=0` |
-| `rp2040_keyboard_carrier.uf2` | `-DMSXNANO_CARRIER=ON` |
-| `rp2040_keyboard_carrier_debug.uf2` | `-DMSXNANO_CARRIER=ON -DMSXNANO_DEBUG_CDC=ON` |
+| `rp2040_keyboard_placa.uf2` | `-DMSXNANO_CARRIER=ON` |
+| `rp2040_keyboard_placa_debug.uf2` | `-DMSXNANO_CARRIER=ON -DMSXNANO_DEBUG_CDC=ON` |
 
-El pin de la UART es GP15 en las cuatro. Las dos primeras usan el TinyUSB del Pico SDK; las
-de la portadora usan TinyUSB 0.21.0 y Pico-PIO-USB de los submódulos `fpga/rp2040/lib/…`
+El pin de la UART es GP15 en las tres. La primera usa el TinyUSB del Pico SDK; las
+de la Placa MSXnano usan TinyUSB 0.21.0 y Pico-PIO-USB de los submódulos `fpga/rp2040/lib/…`
 (`git submodule update --init --depth 1 fpga/rp2040/lib/tinyusb fpga/rp2040/lib/Pico-PIO-USB`,
-desde la raíz del repositorio). Si tocas el firmware, recompila las cuatro. Se graban
+desde la raíz del repositorio). Si tocas el firmware, recompila las tres. Se graban
 arrastrando el `.uf2` con la placa en modo BOOTSEL.
 
 La lógica de entrada (varios teclados, reparto de mandos, ratones, vigilante de puertos) se

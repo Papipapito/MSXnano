@@ -21,7 +21,7 @@ core y lo amplía con lo que aquí no cabe.
 | **Audio** | PSG, **OPLL** (MSX-MUSIC) y **dos SCC+**, mezclados en **estéreo** por el HDMI |
 | **Memoria** | 4 MB de mapper de RAM · **Megaram de 2 MB** con SCC en el slot 2 · reloj de tiempo real |
 | **Almacenamiento** | Tarjeta microSD con **Nextor 2.1.4** en el slot 3-2, menú de arranque y navegador de ficheros |
-| **Teclado, joystick y ratón** | USB, a través de un **RP2040** (Pico Zero); incluye un **ratón MSX** de verdad a partir de cualquier ratón USB |
+| **Teclado, joystick y ratón** | USB, a través de un **RP2040-Zero**; incluye un **ratón MSX** de verdad a partir de cualquier ratón USB |
 | **WiFi** | Opcional: MSX UNAPI con un **ESP-01S**, o un **ESP32-C6** que además pone una pantalla de estado |
 | **BIOS** | MSX2+ internacional, con el menú integrado y activable desde Ajustes |
 
@@ -29,8 +29,7 @@ core y lo amplía con lo que aquí no cabe.
 
 - Una **Tang Nano 20K**. Cualquier revisión: desde la v2.0 el companion USB es externo,
   así que da igual que la placa traiga el BL616 bloqueado (las marcadas `3921` en adelante).
-- Un **RP2040** para el teclado. Por defecto una Waveshare **RP2040-Zero**; vale también
-  una Raspberry Pi Pico normal. Tres cables.
+- Un **RP2040** para el teclado. Una Waveshare **RP2040-Zero**. Tres cables.
 - Un **teclado USB**. Y si quieres, un mando y un ratón, por un hub.
 - Una **tarjeta microSD** en FAT32.
 - Un cable **HDMI** y un televisor o monitor.

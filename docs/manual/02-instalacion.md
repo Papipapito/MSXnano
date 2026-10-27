@@ -43,8 +43,8 @@ El core es el mismo (`.fs` 2.1.1) en los tres montajes; cambia quién hace de ho
 | Montaje | Host USB | Qué grabar |
 |---|---|---|
 | **Tang sola** | el BL616 de la propia Tang | FPGA-Companion de [`fpga/bl616/`](../../fpga/bl616/README.md), con BouffaloLab DevCube y su `.ini` |
-| **A mano** | RP2040-Zero o Pico cableada al pin 31 | `rp2040_keyboard.uf2` (Zero) o `rp2040_keyboard_pico.uf2` (Pico) |
-| **Placa portadora** | RP2040-Zero en su zócalo | `rp2040_keyboard_carrier.uf2` |
+| **A mano** | RP2040-Zero cableada al pin 31 | `rp2040_keyboard.uf2` |
+| **Placa MSXnano** | RP2040-Zero en su zócalo | `rp2040_keyboard_placa.uf2` |
 
 **Tang sola (BL616)**: solo funciona si el BL616 de la Tang no está bloqueado. Las placas
 marcadas `3921` (2024 en adelante) suelen venir bloqueadas; entonces usa el RP2040 o un
@@ -57,30 +57,29 @@ USB y le cuenta al FPGA qué teclas hay pulsadas por **un solo hilo**.
 
 | Placa | Fichero en el repo | Fichero en la release |
 |---|---|---|
-| Waveshare **RP2040-Zero** cableada a mano (la recomendada) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
-| Raspberry Pi **Pico** normal, cableada a mano | `rp2040_keyboard_pico.uf2` | `rp2040_keyboard_pico.uf2` |
-| RP2040-Zero en la **placa portadora** | `rp2040_keyboard_carrier.uf2` | — |
+| Waveshare **RP2040-Zero** cableada a mano | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
+| RP2040-Zero en la **Placa MSXnano** | `rp2040_keyboard_placa.uf2` | — |
 
 Los dos firmwares de la Zero **no son intercambiables**: el de a mano usa el USB-C de la
-Zero como host; el de la portadora usa los tres USB-A de la placa.
+Zero como host; el de la Placa MSXnano usa los tres USB-A de la placa.
 
-Para grabarlo: mantén pulsado **BOOTSEL** mientras enchufas la Pico al PC, aparece una
+Para grabarlo: mantén pulsado **BOOTSEL** mientras enchufas la Zero al PC, aparece una
 unidad `RPI-RP2`, arrastra el `.uf2` encima. Se reinicia sola.
 
 **Cableado** (tres hilos):
 
-| Pico Zero | Tang Nano 20K | Qué es |
+| RP2040-Zero | Tang Nano 20K | Qué es |
 |---|---|---|
-| **GP15** | **pin 31** | datos, UART 115200 8N1 (salida del Pico) |
+| **GP15** | **pin 31** | datos, UART 115200 8N1 (salida de la Zero) |
 | GND | GND | masa común |
-| VBUS | 5V | alimentación del Pico |
+| VBUS | 5V | alimentación de la Zero |
 
-El teclado, el mando o el ratón se enchufan al **USB de la propia Pico**. Un hub funciona
+El teclado, el mando o el ratón se enchufan al **USB-C de la propia Zero**. Un hub funciona
 (teclado + mando a la vez está probado), y un hub **con alimentación propia** evita
 sorpresas.
 
-Con la **placa portadora** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier), rev B)
-no hay cables: la RP2040-Zero va en su zócalo y lleva **`rp2040_keyboard_carrier.uf2`**.
+Con la **Placa MSXnano** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier), rev B)
+no hay cables: la RP2040-Zero va en su zócalo y lleva **`rp2040_keyboard_placa.uf2`**.
 Los dispositivos se enchufan a los tres USB-A de la placa (J1 y J2 detrás, J5 dentro de la
 caja), uno por toma y **sin hub**; el USB-C de la Zero ya no es host. El WiFi va en el
 conector J4 (ESP32-C6) o en J6 (ESP-01S).
@@ -120,7 +119,7 @@ Placa: Waveshare **ESP32-C6-LCD-1.3** (240×240). Se alimenta por su propio USB-
 
 ## 5. Primer arranque
 
-1. HDMI al televisor, Pico con teclado, SD en la ranura, alimentación por el USB-C de la Tang.
+1. HDMI al televisor, Zero con teclado, SD en la ranura, alimentación por el USB-C de la Tang.
 2. Sale el **logo de MSX Barcelona** y, según el ajuste, el menú o directamente MSX-DOS.
 3. Si sale el menú y quieres arrancar directo a MSX: **S** (Ajustes) → desmarcar *Menu al
    arrancar* → *Save & Restart*. Ver [04. El menú](04-menu.md).
@@ -138,7 +137,7 @@ menú **no** lo comprueba (solo enseña la versión del `.fs` en Ajustes, leída
 | 27 | UART TX (FPGA → ESP) | ESP-01S / C6 |
 | 28 | UART RX (ESP → FPGA) | ESP-01S / C6 |
 | 29 | turbo_status | C6 |
-| 31 | teclado/joystick/ratón (Pico → FPGA) | RP2040 |
+| 31 | teclado/joystick/ratón (Zero → FPGA) | RP2040 |
 
 Todos en la zona libre 26-32 de la placa; la 26, 30 y 32 quedan sin usar. Nivel lógico
 3,3 V en todos: conexión directa, sin adaptación.

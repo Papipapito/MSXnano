@@ -11,17 +11,17 @@ Por síntoma. Cada entrada dice la causa más probable primero.
 | Cosas raras tras actualizar solo una parte | Core y pack de releases distintas (el menú no lo comprueba) | Grabar el `.fs` y el pack de la misma release; Ajustes → *Version FPGA* dice qué core hay |
 | Arranca en BASIC en vez de MSX-DOS | No hay `NEXTOR.SYS` + `COMMAND2.COM` en la raíz de la SD | Copiarlos de la distribución de Nextor |
 | Arranca directo a DOS y quiero el menú | *Menu al arrancar* desmarcado | S → marcar → Save & Restart |
-| Se reinicia solo en bucle | Alimentación: el USB-C de un PC a veces no da corriente suficiente con la Pico y un hub colgando | Fuente USB de solo corriente, de 2 A |
+| Se reinicia solo en bucle | Alimentación: el USB-C de un PC a veces no da corriente suficiente con la Zero y un hub colgando | Fuente USB de solo corriente, de 2 A |
 
 ## Teclado, ratón, mando
 
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
-| Sin teclado | La Pico sin firmware, sin alimentación, o el cable del pin 31 | LED de la Pico encendido; regrabar el `.uf2`; comprobar GP15 → pin 31 |
+| Sin teclado | La Zero sin firmware, sin alimentación, o el cable del pin 31 | LED de la Zero encendido; regrabar el `.uf2`; comprobar GP15 → pin 31 |
 | Teclado va, pero se queda una tecla pulsada | No debería: el vigilante de 1 s lo suelta todo | Si pasa, cable del pin 31 con mal contacto |
 | El teclado funciona a ratos con un hub | Hub sin alimentación propia | Hub alimentado |
 | El mando no hace nada | Mando no HID o modo raro | Probar el interruptor XInput/DInput si lo tiene; otro mando |
-| El ratón no se mueve | El software no usa ratón MSX, o está en el puerto 1 | El ratón vive en el puerto 2; el LED de la Pico en cian confirma que está montado |
+| El ratón no se mueve | El software no usa ratón MSX, o está en el puerto 1 | El ratón vive en el puerto 2; el LED de la Zero en cian confirma que está montado |
 | La ñ no sale | La BIOS internacional no la tiene | Pendiente; ver [tecnica/09](../tecnica/09-pendientes.md) |
 | F11 no cambia el turbo | Estás en un software que lo fija por los puertos Panasonic | Es lo correcto: gana el software |
 

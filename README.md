@@ -57,7 +57,7 @@ images straight to the SD card, without a PC.
 ### 🕹️ RP2040 companion — better keyboards, and an MSX mouse
 
 The onboard **BL616 is no longer needed**. USB keyboard, joystick and mouse are now served
-by an **RP2040 (Pico Zero)** over a single wire (the BL616 path is still in the core; see
+by an **RP2040-Zero** over a single wire (the BL616 path is still in the core; see
 [Builds](#builds)).
 
 This removes the biggest compatibility headache of the previous versions: Tang Nano 20K
@@ -83,8 +83,8 @@ keyboard and pads changes:
 | Build | USB host | Firmware | Notes |
 |---|---|---|---|
 | **Tang alone** | the Tang's own BL616 ([`fpga/bl616/`](fpga/bl616/README.md)) | FPGA-Companion, flashed with BouffaloLab DevCube + its `.ini` | Works only if the BL616 is not locked: boards marked `3921` (2024+) often are. Alternative: an external M0S Dock |
-| **Hand-wired** | RP2040-Zero or Pico wired to pin 31 | `rp2040_keyboard.uf2` (Zero) / `rp2040_keyboard_pico.uf2` (Pico) | Keyboard, pad or mouse on its USB-C, or through a hub. Optional ESP32-C6 or ESP-01S |
-| **Carrier board** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier), rev B) | RP2040-Zero in its socket, 3 USB-A | `rp2040_keyboard_carrier.uf2` | No wiring, no hubs. ESP32-C6 on J4 or ESP-01S on J6 |
+| **Hand-wired** | RP2040-Zero wired to pin 31 | `rp2040_keyboard.uf2` | Keyboard, pad or mouse on its USB-C, or through a hub. Optional ESP32-C6 or ESP-01S |
+| **MSXnano board** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier), rev B) | RP2040-Zero in its socket, 3 USB-A | `rp2040_keyboard_placa.uf2` | No wiring, no hubs. ESP32-C6 on J4 or ESP-01S on J6 |
 
 ---
 
@@ -95,16 +95,16 @@ of them (you just get no keyboard, so fit the RP2040 at least).
 
 ### FPGA ↔ RP2040 (keyboard, joystick, mouse)
 
-| Pico Zero | Tang Nano 20K | Notes |
+| RP2040-Zero | Tang Nano 20K | Notes |
 |---|---|---|
 | **GP15** (TX) | **pin 31** | PIO-UART, 115200 8N1 |
 | GND | GND | common ground |
-| VBUS | 5V | powers the Pico |
+| VBUS | 5V | powers the Zero |
 
-Plug the USB keyboard, gamepad or mouse into the Pico's own USB port (a hub works).
+Plug the USB keyboard, gamepad or mouse into the Zero's own USB-C port (a hub works).
 
-On the carrier board this is already routed. Firmware: **`rp2040_keyboard_zero.uf2`** for the Waveshare **RP2040-Zero** (the default), or
-**`rp2040_keyboard_pico.uf2`** for a plain Raspberry Pi Pico — both in the release. Source
+On the MSXnano board this is already routed. Firmware: **`rp2040_keyboard_zero.uf2`** for the Waveshare **RP2040-Zero**
+(or **`rp2040_keyboard_placa.uf2`** on the MSXnano board) — both in the release. Source
 and the same binaries are in [`fpga/rp2040/`](fpga/rp2040/) (there the Zero one is named
 `rp2040_keyboard.uf2`).
 
@@ -140,7 +140,7 @@ Everything is attached to the **[v2.1 release](https://github.com/Papipapito/MSX
 |---|---|---|---|
 | 1 | `msxnano_v2.1.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
 | 2 | **One** pack: `pack_bios_msxnano.bin` (Spanish menu, Nextor 2.1.4, recommended), `pack_bios_msxnano_en.bin` (English menu), `pack_bios_msxnano_nextor3.bin` / `pack_bios_msxnano_en_nextor3.bin` (Nextor 3 beta) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
-| 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero) **or** `rp2040_keyboard_pico.uf2` (Pico) **or** `rp2040_keyboard_carrier.uf2` (carrier board; in [`fpga/rp2040/`](fpga/rp2040/)) | — | Drag onto the Pico's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
+| 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero) **or** `rp2040_keyboard_placa.uf2` (MSXnano board; in [`fpga/rp2040/`](fpga/rp2040/)) | — | Drag onto the Zero's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
 | 4 | `firmware_esp32c6_v2.0_merged.bin` | `0x0` | `esptool` — only if you fit the ESP32-C6 (the ESP-01S uses the ducasp UNAPI firmware) |
 
 > The BIOS packs bundle the MSX2+ BIOS, sub-ROM, kanji, MSX-MUSIC, Nextor, the WiFi ROM,
