@@ -22,6 +22,7 @@ blanco**. Sin soportes en la mayoría de piezas; las tapas van boca abajo.
 | `upper_left_sin_pantalla.stl` | Tapa superior izquierda, **sin ventana** | 1 (elige una) |
 | `upper_right.stl` | Tapa superior derecha | 1 |
 | `lower_left.stl` | Base izquierda, **preparada para la [placa portadora v2](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier)**: USB-C, HDMI y 2 × USB-A salen por detrás; 4 separadores para la placa | 1 |
+| `lower_left_interruptor.stl` | Igual que `lower_left.stl` más un agujero en el lateral izquierdo para un interruptor basculante KCD11-101 (portadora rev B) | 1 (en lugar de `lower_left.stl`) |
 | `prototipo/lower_left_prototipo.stl` | Base izquierda del prototipo anterior (Tang y RP2040 cableados a mano) | — |
 | `lower_right.stl` | Base derecha | 1 |
 | `lower_side.stl` | Lateral de la base (encaje de la Tang Nano 20K, versión 4) | 1 |
@@ -67,6 +68,15 @@ ellos a 10,5 mm del suelo con el borde trasero contra la pared; se fija con 4 to
 M2,5 × 6–8 desde arriba (hacen rosca en el plástico; si prefieres insertos roscados, abre los
 agujeros a Ø 3,2 mm). `raspberry_support.stl` no hace falta con la portadora. La tapa y el
 resto de piezas no cambian.
+
+### Interruptor de encendido (portadora rev B, 10/2026)
+
+La portadora rev B se enciende por la tira J13: con un puente queda siempre encendida (imprime
+`lower_left.stl`), o con un interruptor basculante se enciende y apaga (imprime
+`lower_left_interruptor.stl`). Interruptor: balancín mini **KCD11-101** (2 pines, ON-OFF, lengüetas
+para soldar, a presión; ventana de 9,0 × 13,9 mm en el panel rehundido del lateral izquierdo, con la
+pared rebajada a 1,5 mm alrededor). Suelda medio cable Dupont hembra-hembra a cada lengüeta (con
+termorretráctil), encaja el interruptor desde fuera y enchufa las dos hembras en J13 en lugar del puente.
 
 ## Créditos
 

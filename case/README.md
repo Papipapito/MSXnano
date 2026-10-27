@@ -16,6 +16,7 @@ out and ready to print all at once.
 | `upper_left_sin_pantalla.stl` | Top — left, **plain** (ESP-01S or no WiFi module) | 1 (pick one) |
 | `upper_right.stl` | Top — right | 1 |
 | `lower_left.stl` | Bottom — left, **cut for the [MSXnano carrier v2](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier)**: USB-C, HDMI and 2 × USB-A out of the back wall, 4 standoffs for the board | 1 |
+| `lower_left_interruptor.stl` | Same as `lower_left.stl` plus a hole in the left side for a KCD11-101 rocker power switch (carrier rev B) | 1 (instead of `lower_left.stl`) |
 | `prototipo/lower_left_prototipo.stl` | Bottom — left, previous prototype (Tang + RP2040 wired by hand) | — |
 | `lower_right.stl` | Bottom — right | 1 |
 | `lower_side.stl` | Bottom side (TN20K case v4) | 1 |
@@ -42,6 +43,14 @@ four standoffs printed into the floor on the Raspberry Pi 3 hole pattern (Ø 6 m
 against the back wall; fix it with 4 × M2.5 × 6–8 screws from the top (they cut their own
 thread in the plastic; if you prefer heat-set inserts, open the holes to Ø 3.2 mm).
 `raspberry_support.stl` is not needed with the carrier. The lid and the other parts are unchanged.
+
+### Power switch (carrier rev B, 2026-10)
+
+The carrier rev B powers up through header J13: a jumper keeps it always on (print `lower_left.stl`),
+or a rocker switch turns it on and off (print `lower_left_interruptor.stl`). Switch: mini rocker
+**KCD11-101** (2 pins, ON-OFF, solder lugs, snap-in; window 9.0 × 13.9 mm in the recessed panel of the
+left side, wall thinned to 1.5 mm around it). Solder half of a female-female Dupont lead to each lug
+(heat-shrink), snap the switch in from outside and plug the two female ends onto J13 instead of the jumper.
 
 ## Credits
 Based on [Spectravideo SVI-728 Retropie case](https://www.thingiverse.com/thing:4066021)
