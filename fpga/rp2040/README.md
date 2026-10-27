@@ -7,12 +7,13 @@ Derived from the MSXgoauld "Guardian Angel" firmware. XInput host driver:
 
 ## Which file to flash
 
-| Your setup | Flash | In the release |
-|---|---|---|
-| **MSXnano v2 carrier** (RP2040-Zero in its socket) | `rp2040_keyboard_carrier.uf2` | — |
-| Carrier, with the debug log on the Zero's USB-C | `rp2040_keyboard_carrier_debug.uf2` | — |
-| Waveshare RP2040-Zero wired by hand (LED on GPIO16) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
-| Raspberry Pi Pico wired by hand (LED on GPIO25) | `rp2040_keyboard_pico.uf2` | `rp2040_keyboard_pico.uf2` |
+| Build | Your setup | Flash | In the release |
+|---|---|---|---|
+| Carrier board | **MSXnano v2 carrier** (RP2040-Zero in its socket, 3 USB-A) | `rp2040_keyboard_carrier.uf2` | — |
+| Carrier board | Debug log on the Zero's USB-C. **Tests only, not for normal use** | `rp2040_keyboard_carrier_debug.uf2` | — |
+| Hand-wired | Waveshare RP2040-Zero wired to pin 31 (LED on GPIO16) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
+| Hand-wired | Raspberry Pi Pico wired to pin 31 (LED on GPIO25) | `rp2040_keyboard_pico.uf2` | `rp2040_keyboard_pico.uf2` |
+| Tang alone | No RP2040: the Tang's own BL616 | see [`../bl616/README.md`](../bl616/README.md) | — |
 
 The two families are not interchangeable: the hand-wired images use the board's own USB-C as
 the host, the carrier images use the carrier's three USB-A sockets and leave the USB-C free.
@@ -120,8 +121,9 @@ Before build, make sure to:
   enough. On Windows, running the build from a Visual Studio *vcvars64* shell is
   enough; on Linux, `build-essential`.
 
-All four `.uf2` in this directory are built from this source. Rebuild ALL of them when you
-change the firmware. One build directory per variant (changing the options in an existing
+Three of the four `.uf2` in this directory are built from this source; `rp2040_keyboard_carrier.uf2`
+is the build validated on the board, from commit `4c334aa` (before the debug-only link-status line
+of `381ebd0`). Rebuild ALL of them when you change the firmware. One build directory per variant (changing the options in an existing
 one is not reliable).
 
 | Variant | cmake options |

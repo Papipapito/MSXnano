@@ -5,10 +5,11 @@ si quieres los tres) y le manda al FPGA el estado por un solo hilo a 115200 baud
 FPGA mantiene una **matriz de teclado virtual** que el MSX lee exactamente igual que
 leería un teclado de membrana: para el software no hay diferencia.
 
-Desde la v2.0 es el **único** companion de entrada: el BL616 que la Tang Nano 20K trae de
-fábrica ya no se usa. Motivo: las placas fabricadas desde 2024 (las marcadas `3921`)
+Desde la v2.0 es el companion de entrada recomendado: el BL616 que la Tang Nano 20K trae de
+fábrica ya no hace falta. Motivo: las placas fabricadas desde 2024 (las marcadas `3921`)
 llevan el BL616 en un estado de arranque seguro que no admite el firmware companion, y te
-quedabas sin teclado. Con el RP2040 todas las placas se comportan igual.
+quedabas sin teclado. Con el RP2040 todas las placas se comportan igual. (El core sigue
+admitiendo el BL616 si el tuyo no está bloqueado: ver [02. Instalación](02-instalacion.md).)
 
 ## El mapa de teclas
 

@@ -36,17 +36,33 @@ para las diferencias.
 > su repositorio de BIOS, `bios-msxnano-msximus`, que es **privado**. La anatomía completa
 > está en [tecnica/04-pack-bios.md](../tecnica/04-pack-bios.md).
 
-## 3. El RP2040 (teclado, joystick y ratón)
+## 3. El host USB (teclado, joystick y ratón)
 
-Sin él no hay teclado. Es un **RP2040** con firmware propio que hace de host USB y le
-cuenta al FPGA qué teclas hay pulsadas por **un solo hilo**.
+El core es el mismo (`.fs` 2.1.1) en los tres montajes; cambia quién hace de host USB:
+
+| Montaje | Host USB | Qué grabar |
+|---|---|---|
+| **Tang sola** | el BL616 de la propia Tang | FPGA-Companion de [`fpga/bl616/`](../../fpga/bl616/README.md), con BouffaloLab DevCube y su `.ini` |
+| **A mano** | RP2040-Zero o Pico cableada al pin 31 | `rp2040_keyboard.uf2` (Zero) o `rp2040_keyboard_pico.uf2` (Pico) |
+| **Placa portadora** | RP2040-Zero en su zócalo | `rp2040_keyboard_carrier.uf2` |
+
+**Tang sola (BL616)**: solo funciona si el BL616 de la Tang no está bloqueado. Las placas
+marcadas `3921` (2024 en adelante) suelen venir bloqueadas; entonces usa el RP2040 o un
+**M0S Dock** externo. Pasos y diagnóstico en [`fpga/bl616/README.md`](../../fpga/bl616/README.md).
+
+**RP2040** (el resto de esta sección): un **RP2040** con firmware propio que hace de host
+USB y le cuenta al FPGA qué teclas hay pulsadas por **un solo hilo**.
 
 **Firmware** (en [`fpga/rp2040/`](../../fpga/rp2040/), fuente incluido):
 
 | Placa | Fichero en el repo | Fichero en la release |
 |---|---|---|
-| Waveshare **RP2040-Zero** (la recomendada) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
-| Raspberry Pi **Pico** normal | `rp2040_keyboard_pico.uf2` | `rp2040_keyboard_pico.uf2` |
+| Waveshare **RP2040-Zero** cableada a mano (la recomendada) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
+| Raspberry Pi **Pico** normal, cableada a mano | `rp2040_keyboard_pico.uf2` | `rp2040_keyboard_pico.uf2` |
+| RP2040-Zero en la **placa portadora** | `rp2040_keyboard_carrier.uf2` | — |
+
+Los dos firmwares de la Zero **no son intercambiables**: el de a mano usa el USB-C de la
+Zero como host; el de la portadora usa los tres USB-A de la placa.
 
 Para grabarlo: mantén pulsado **BOOTSEL** mientras enchufas la Pico al PC, aparece una
 unidad `RPI-RP2`, arrastra el `.uf2` encima. Se reinicia sola.
@@ -63,10 +79,11 @@ El teclado, el mando o el ratón se enchufan al **USB de la propia Pico**. Un hu
 (teclado + mando a la vez está probado), y un hub **con alimentación propia** evita
 sorpresas.
 
-Con la **placa portadora** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier))
+Con la **placa portadora** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier), rev B)
 no hay cables: la RP2040-Zero va en su zócalo y lleva **`rp2040_keyboard_carrier.uf2`**.
 Los dispositivos se enchufan a los tres USB-A de la placa (J1 y J2 detrás, J5 dentro de la
-caja), uno por toma y **sin hub**; el USB-C de la Zero ya no es host.
+caja), uno por toma y **sin hub**; el USB-C de la Zero ya no es host. El WiFi va en el
+conector J4 (ESP32-C6) o en J6 (ESP-01S).
 
 ## 4. WiFi: ESP-01S o ESP32-C6 (opcional)
 

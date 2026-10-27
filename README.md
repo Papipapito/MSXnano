@@ -56,8 +56,9 @@ images straight to the SD card, without a PC.
 
 ### 🕹️ RP2040 companion — better keyboards, and an MSX mouse
 
-The onboard **BL616 is no longer used**. USB keyboard, joystick and mouse are now served
-by an **RP2040 (Pico Zero)** over a single wire.
+The onboard **BL616 is no longer needed**. USB keyboard, joystick and mouse are now served
+by an **RP2040 (Pico Zero)** over a single wire (the BL616 path is still in the core; see
+[Builds](#builds)).
 
 This removes the biggest compatibility headache of the previous versions: Tang Nano 20K
 boards made since 2024 (marked **`3921`**) ship a BL616 in a secure-boot state that often
@@ -71,6 +72,19 @@ And it adds what the BL616 never did: a **real MSX mouse**, from any USB mouse.
 Alongside WiFi you can fit an **ESP32-C6 with a 240×240 LCD** that shows connection
 status, the clock and whether Turbo is on — plus the classic MSX boot logo. The
 **ESP-01S** is still supported if you only want WiFi.
+
+---
+
+## Builds
+
+The same core (`.fs` 2.1.1) runs in three setups. Only **who is the USB host** for the
+keyboard and pads changes:
+
+| Build | USB host | Firmware | Notes |
+|---|---|---|---|
+| **Tang alone** | the Tang's own BL616 ([`fpga/bl616/`](fpga/bl616/README.md)) | FPGA-Companion, flashed with BouffaloLab DevCube + its `.ini` | Works only if the BL616 is not locked: boards marked `3921` (2024+) often are. Alternative: an external M0S Dock |
+| **Hand-wired** | RP2040-Zero or Pico wired to pin 31 | `rp2040_keyboard.uf2` (Zero) / `rp2040_keyboard_pico.uf2` (Pico) | Keyboard, pad or mouse on its USB-C, or through a hub. Optional ESP32-C6 or ESP-01S |
+| **Carrier board** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier), rev B) | RP2040-Zero in its socket, 3 USB-A | `rp2040_keyboard_carrier.uf2` | No wiring, no hubs. ESP32-C6 on J4 or ESP-01S on J6 |
 
 ---
 
@@ -89,7 +103,7 @@ of them (you just get no keyboard, so fit the RP2040 at least).
 
 Plug the USB keyboard, gamepad or mouse into the Pico's own USB port (a hub works).
 
-Firmware: **`rp2040_keyboard_zero.uf2`** for the Waveshare **RP2040-Zero** (the default), or
+On the carrier board this is already routed. Firmware: **`rp2040_keyboard_zero.uf2`** for the Waveshare **RP2040-Zero** (the default), or
 **`rp2040_keyboard_pico.uf2`** for a plain Raspberry Pi Pico — both in the release. Source
 and the same binaries are in [`fpga/rp2040/`](fpga/rp2040/) (there the Zero one is named
 `rp2040_keyboard.uf2`).
@@ -126,7 +140,7 @@ Everything is attached to the **[v2.1 release](https://github.com/Papipapito/MSX
 |---|---|---|---|
 | 1 | `msxnano_v2.1.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
 | 2 | **One** pack: `pack_bios_msxnano.bin` (Spanish menu, Nextor 2.1.4, recommended), `pack_bios_msxnano_en.bin` (English menu), `pack_bios_msxnano_nextor3.bin` / `pack_bios_msxnano_en_nextor3.bin` (Nextor 3 beta) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
-| 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero) **or** `rp2040_keyboard_pico.uf2` (Pico) | — | Drag onto the Pico's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
+| 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero) **or** `rp2040_keyboard_pico.uf2` (Pico) **or** `rp2040_keyboard_carrier.uf2` (carrier board; in [`fpga/rp2040/`](fpga/rp2040/)) | — | Drag onto the Pico's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
 | 4 | `firmware_esp32c6_v2.0_merged.bin` | `0x0` | `esptool` — only if you fit the ESP32-C6 (the ESP-01S uses the ducasp UNAPI firmware) |
 
 > The BIOS packs bundle the MSX2+ BIOS, sub-ROM, kanji, MSX-MUSIC, Nextor, the WiFi ROM,
