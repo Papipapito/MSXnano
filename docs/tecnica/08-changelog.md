@@ -4,6 +4,21 @@ Resumen técnico de cada release (tags del repo). Las notas completas están en
 [GitHub → Releases](https://github.com/Papipapito/MSXnano/releases). Versión del core =
 puerto `0x2F`.
 
+## v2.1.1 — 2 de octubre de 2026 · `FPGA_VERSION = 0x21`, `FPGA_PATCH = 0x01` · **pendiente de validar en placa**
+
+- **Actualizar el core y el pack desde el MSX**: el **puente de la flash** del MSXimus V3.8
+  (`fpga/src/flash_bridge.v`, dispositivo de E/S conmutada `4Dh` en `#40`) y su
+  `flash_rw.v` (programar sin borrar, esperar cada byte y el WIP tras cada página, con
+  *timeout*). `MXUPDATE.COM` (el del MSXimus, reconoce la placa por el IDCODE `0000081B`)
+  graba un `.UPD` de la SD o descargado por el ESP32-C6: core en `0x000000`, pack en
+  `0x200000`; los ajustes (`0x280000`) nunca, salvo `/R`, que los borra.
+- **Tercer dígito** en el puerto `0x29` (como el `FPGA_PATCH` del MSXimus): lo enseña
+  MXUPDATE; el menú sigue leyendo solo el `0x2F`.
+- Coste: puente 39 LUT + 16 ALU + 64 registros; el módulo de la flash +214 LUT. CLS 9.208-9.318
+  (89-90 %). Dado **999883**: `clock_54m` 57,7 MHz (+3,74), todas las familias de setup
+  positivas (ver [06](06-sintesis-timing.md)).
+- Banco de Icarus del puente en `fpga/tools/flash_tb` (el mismo del MSXimus).
+
 ## v2.1 — 29 de septiembre de 2026 · `FPGA_VERSION = 0x21` · **pendiente de validar en placa**
 
 Publicada el 30/09 como **pre-release** [`v2.1`](https://github.com/Papipapito/MSXnano/releases/tag/v2.1): `msxnano_v2.1.fs`

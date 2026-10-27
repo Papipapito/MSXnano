@@ -68,7 +68,7 @@ extern uint8_t kb_modifiers;
 extern uint8_t kb_keys[120];
 extern uint8_t isMounted;
 extern volatile uint64_t g_last_key_us;  // time_us_64() of the last MAKE; for the status LED
-extern volatile uint8_t  g_joy_mounted;        // nonzero while a USB gamepad is connected (status LED)
+extern volatile uint8_t  g_joy_mounted;        // nonzero while at least one USB gamepad is connected (status LED)
 extern volatile uint64_t g_last_kbd_us;        // keyboard-only MAKE timestamp (case-strip "typing" LED)
 extern volatile uint8_t  g_kbd_mounted;        // nonzero while a USB keyboard is mounted (case-strip)
 extern volatile uint8_t  g_joy_out;            // live transmitted joystick byte, port 0 (case-strip A/B/dirs)
@@ -90,6 +90,8 @@ bool to_bit_value(const hid_report_item_t *item, const u8 *report, u16 len);
 u8 hid_parse_report_descriptor(hid_report_info_t* report_info_arr, u8 arr_count, u8 const* desc_report, u16 desc_len);
 u8 hid_parse_keyboard_modifiers(hid_report_info_t* report_info_arr, const u8 *report, u8 len);
 bool hid_parse_keyboard_is_nkro(hid_report_info_t* report_info_arr);
+// Motor de diferencias (el unico que emite MAKE/BREAK): recibe la UNION de todos los
+// teclados, no el informe de uno suelto (usbin.c los funde con kbd_merge.h).
 void kb_report_receive(u8 modifiers, u8 const* report, u16 len);
 
 // Raton USB -> raton MSX (mensaje 0xD0). mouse_tick() DEBE llamarse desde el
@@ -98,10 +100,12 @@ extern volatile uint8_t g_mouse_mounted;
 extern volatile uint64_t g_last_mouse_us;   // ultimo informe de raton (LED)
 void mouse_report_receive(u8 const* report, u16 len);
 void mouse_tick(uint64_t now);
+void mouse_send_resync(void);   // repite el estado de botones del raton (0xD0 sin movimiento); nada sin raton
 
 // Keyboard UART link to the FPGA (PIO UART @ 115200 8N1, GP15 = TX -> FPGA pin 31).
 void kb_uart_init(void);     // configure the PIO UART on GP15 for the keyboard link
 void kb_tx_pump(void);       // drain the TX ring into the UART FIFO (non-blocking)
+extern volatile uint32_t g_link_tx_bytes;  // bytes handed to the PIO UART so far (debug log)
 void kb_send_resync(void);   // push a full-matrix resync frame (0xFE..0xFF)
 void joy_send_resync(void);  // re-emit both MSX joystick ports (0xB0 frames)
 void joy_autofire_tick(uint64_t now_us);  // main-loop autofire square-wave tick (10 Hz)

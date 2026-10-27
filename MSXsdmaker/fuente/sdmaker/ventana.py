@@ -7,7 +7,7 @@ import tkinter as tk
 import webbrowser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from . import VERSION, contenido, dispositivos, novedades, particiones, proceso
+from . import VERSION, contenido, dispositivos, novedades, ocm, particiones, proceso, ventana_ocm
 from .dispositivos import formato_tamano
 
 ESQUEMAS = [("fat16-2g", "FAT16 de 2 GB"), ("fat16-4g", "FAT16 de 4 GB"), ("fat32", "Una FAT32 (toda la tarjeta)")]
@@ -18,24 +18,104 @@ AVISO_FAT32 = ("Nextor 2.1.4 y 3.0 no leen FAT32: el MSX no arrancará MSX-DOS d
 class Ventana:
     def __init__(self, raiz):
         self.raiz = raiz
-        raiz.title("MSX SD Maker %s: tarjetas para MSXimus, MSXnano y MSX Pico" % VERSION)
-        raiz.minsize(760, 640)
+        raiz.title("MSX SD Maker %s: tarjetas para MSXimus, MSXnano, MSX Pico y MSXBOOK" % VERSION)
+        raiz.minsize(760, 680)
         self.cola = queue.Queue()
         self.tarjetas = []
         self.trabajando = False
+        self.maquina = tk.StringVar(value="fpga")
         self.esquema = tk.StringVar(value="fat16-2g")
         self.cantidad = tk.IntVar(value=1)
         self.resto = tk.BooleanVar(value=False)
         self.sistema = tk.StringVar(value="nextor214")
         self.etiqueta = tk.StringVar(value="MSX")
-        self.grupos = {g[0]: tk.BooleanVar(value=True) for g in contenido.GRUPOS}
+        self.grupos = {g[0]: tk.BooleanVar(value=True) for g in contenido.GRUPOS + contenido.GRUPOS_OCM}
         d = contenido.OPCIONES_N3
         self.n3 = {k: tk.BooleanVar(value=d[k]) for k in ("yenslash", "bufinsert", "btm")}
         self.dirk = tk.StringVar(value=d["dirk"])
+        self.pack = None                    # el OCM-SDBIOS Pack de KdL (ocm.Pack), si se encuentra
+        self.bios = ocm.por_defecto()       # [(nombre, receta)] de las BIOS del OCM
         self._construir()
+        self._maquina_elegida()
         self.actualizar_tarjetas()
         self.raiz.after(100, self._leer_cola)
         threading.Thread(target=self._novedades, daemon=True).start()   # sin red no pasa nada
+        threading.Thread(target=self._buscar_pack, daemon=True).start()
+
+    # ------------------------------------------------------------------ el pack de KdL (MSXBOOK y demas OCM)
+    def _buscar_pack(self, ruta=None):
+        ruta = ruta or ocm.buscar()
+        if not ruta:
+            self.cola.put(("pack", None, None))
+            return
+        try:
+            pack = ocm.abrir(ruta)
+            problemas = pack.problemas()
+            self.cola.put(("pack", pack if not problemas else None,
+                           None if not problemas else "%s: %s" % (os.path.basename(ruta), "; ".join(problemas[:3]))))
+        except Exception as e:
+            self.cola.put(("pack", None, "%s: %s" % (os.path.basename(ruta), e)))
+
+    def _pack_listo(self, pack, error):
+        self.pack = pack
+        if pack:
+            self.pack_txt["text"] = "%s\nen %s" % (pack.texto(), pack.ruta)
+            self.pack_txt["foreground"] = "#006000"
+            self.r_ocm.state(["!disabled"])
+        else:
+            self.pack_txt["text"] = (("No vale el pack: %s\n" % error) if error else "") + (
+                "Para el MSXBOOK hace falta el OCM-SDBIOS Pack de KdL: déjalo tal cual (el .7z) en la carpeta\n"
+                "%s, junto a este programa, o búscalo con el botón." % os.path.join(ocm.carpeta_programa(), ocm.CARPETA))
+            self.pack_txt["foreground"] = "#b00000"
+            self.r_ocm.state(["disabled"])
+            if self.maquina.get() == "ocm":
+                self.maquina.set("fpga")
+        self._maquina_elegida()
+
+    def buscar_pack(self):
+        ruta = filedialog.askopenfilename(title="El OCM-SDBIOS Pack de KdL (el .7z o el .zip)",
+                                          filetypes=[("OCM-SDBIOS Pack", "*.7z *.zip"), ("Todos", "*.*")])
+        if ruta:
+            self.pack_txt["text"] = "Leyendo %s..." % os.path.basename(ruta)
+            threading.Thread(target=self._buscar_pack, args=(ruta,), daemon=True).start()
+
+    def opciones_bios(self):
+        if not self.pack:
+            return
+        nueva = ventana_ocm.elegir(self.raiz, self.pack, self.bios)
+        if nueva:
+            self.bios = nueva
+            self._maquina_elegida()
+
+    def _maquina_elegida(self):
+        ocm_ = self.maquina.get() == "ocm"
+        if ocm_:
+            self.f3_fpga.pack_forget()
+            self.f3_ocm.pack(fill="x", padx=6, pady=(4, 2), before=self.fo)
+            self.r_fat32.state(["disabled"])
+            if self.esquema.get() == "fat32":
+                self.esquema.set("fat16-2g")
+            textos = ["%-13s %s" % (n, ocm.describir(r, self.pack) if self.pack else ocm.NOMBRE_TIPO[r["tipo"]])
+                      for n, r in self.bios]
+            self.bios_txt["text"] = "\n".join(textos)
+        else:
+            self.f3_ocm.pack_forget()
+            self.f3_fpga.pack(fill="x", before=self.fo)
+            self.r_fat32.state(["!disabled"])
+        # los programas de cada maquina, con sus valores por defecto al cambiar
+        if getattr(self, "_maquina_grupos", None) != self.maquina.get():
+            self._maquina_grupos = self.maquina.get()
+            for w in self.rej.winfo_children():
+                w.destroy()
+            defecto = contenido.grupos_por_defecto(self.maquina.get())
+            for i, (clave, texto, _, _, _) in enumerate(contenido.grupos_de(self.maquina.get())):
+                self.grupos[clave].set(clave in defecto)
+                ttk.Checkbutton(self.rej, text=texto, variable=self.grupos[clave]).grid(
+                    row=i // 2, column=i % 2, sticky="w", padx=(0, 20))
+        self._recalcular()
+
+    def _sistema(self):
+        return ocm.sistema_de(self.bios) if self.maquina.get() == "ocm" else self.sistema.get()
 
     # ------------------------------------------------------------------ version nueva en GitHub
     def _novedades(self):
@@ -52,6 +132,22 @@ class Ventana:
     # ------------------------------------------------------------------ interfaz
     def _construir(self):
         p = {"padx": 8, "pady": 4}
+        f0 = ttk.LabelFrame(self.raiz, text="Máquina")
+        f0.pack(fill="x", **p)
+        fila = ttk.Frame(f0)
+        fila.pack(fill="x", padx=6, pady=(4, 0))
+        ttk.Radiobutton(fila, text=contenido.MAQUINAS["fpga"], value="fpga", variable=self.maquina,
+                        command=self._maquina_elegida).pack(side="left", padx=(0, 16))
+        self.r_ocm = ttk.Radiobutton(fila, text="MSXBOOK, OneChipBook o 1chipMSX (OCM-PLD)", value="ocm",
+                                     variable=self.maquina, command=self._maquina_elegida)
+        self.r_ocm.pack(side="left")
+        self.r_ocm.state(["disabled"])
+        fila = ttk.Frame(f0)
+        fila.pack(fill="x", padx=6, pady=(2, 6))
+        self.pack_txt = ttk.Label(fila, text="Buscando el OCM-SDBIOS Pack de KdL...", justify="left")
+        self.pack_txt.pack(side="left", fill="x", expand=True)
+        ttk.Button(fila, text="Buscar el pack...", command=self.buscar_pack).pack(side="right")
+
         f1 = ttk.LabelFrame(self.raiz, text="1. Tarjeta SD")
         f1.pack(fill="x", **p)
         fila = ttk.Frame(f1)
@@ -68,8 +164,10 @@ class Ventana:
         fila = ttk.Frame(f2)
         fila.pack(fill="x", padx=6, pady=4)
         for clave, texto in ESQUEMAS:
-            ttk.Radiobutton(fila, text=texto, value=clave, variable=self.esquema,
-                            command=self._recalcular).pack(side="left", padx=(0, 16))
+            rb = ttk.Radiobutton(fila, text=texto, value=clave, variable=self.esquema, command=self._recalcular)
+            rb.pack(side="left", padx=(0, 16))
+            if clave == "fat32":
+                self.r_fat32 = rb
         fila = ttk.Frame(f2)
         fila.pack(fill="x", padx=6)
         ttk.Label(fila, text="Cantidad:").pack(side="left")
@@ -88,11 +186,21 @@ class Ventana:
 
         f3 = ttk.LabelFrame(self.raiz, text="3. Sistema en la partición de arranque")
         f3.pack(fill="x", **p)
+        self.f3_fpga = ttk.Frame(f3)
         for clave, (texto, _, _) in contenido.SISTEMAS.items():
-            ttk.Radiobutton(f3, text=texto, value=clave, variable=self.sistema,
+            ttk.Radiobutton(self.f3_fpga, text=texto, value=clave, variable=self.sistema,
                             command=self._recalcular).pack(anchor="w", padx=6)
+        self.f3_ocm = ttk.Frame(f3)
+        fila = ttk.Frame(self.f3_ocm)
+        fila.pack(fill="x")
+        ttk.Label(fila, text="BIOS (las monta el SD Maker con el pack de KdL; el sistema va con ellas):").pack(
+            side="left")
+        ttk.Button(fila, text="Opciones de las BIOS...", command=self.opciones_bios).pack(side="right")
+        self.bios_txt = ttk.Label(self.f3_ocm, text="", justify="left", font=("Consolas", 9))
+        self.bios_txt.pack(anchor="w", pady=(2, 0))
         fo = ttk.LabelFrame(f3, text="Opciones de Nextor 3")
         fo.pack(fill="x", padx=6, pady=(2, 6))
+        self.fo = fo
         self.controles_n3 = [
             ttk.Checkbutton(fo, text="Barra invertida en vez de ¥ en las rutas (YENSLASH ON)", variable=self.n3["yenslash"]),
             ttk.Checkbutton(fo, text="Modo inserción al escribir órdenes (BUFINSERT)", variable=self.n3["bufinsert"]),
@@ -111,11 +219,8 @@ class Ventana:
 
         f4 = ttk.LabelFrame(self.raiz, text="4. Programas (en la partición de arranque)")
         f4.pack(fill="x", **p)
-        rej = ttk.Frame(f4)
-        rej.pack(fill="x", padx=6, pady=4)
-        for i, (clave, texto, _, _, _) in enumerate(contenido.GRUPOS):
-            ttk.Checkbutton(rej, text=texto, variable=self.grupos[clave]).grid(row=i // 2, column=i % 2, sticky="w",
-                                                                              padx=(0, 20))
+        self.rej = ttk.Frame(f4)          # las casillas las pone _maquina_elegida (cambian con la maquina)
+        self.rej.pack(fill="x", padx=6, pady=4)
         fila = ttk.Frame(f4)
         fila.pack(fill="x", padx=6, pady=(0, 6))
         ttk.Button(fila, text="Todos", command=lambda: self._todos(True)).pack(side="left")
@@ -211,7 +316,7 @@ class Ventana:
 
     def _recalcular(self):
         for c in getattr(self, "controles_n3", []):
-            c.state(["!disabled"] if self.sistema.get() == "nextor3" else ["disabled"])
+            c.state(["!disabled"] if self._sistema() == "nextor3" else ["disabled"])
         sectores = self._sectores()
         esquema = self.esquema.get()
         fat16 = esquema != "fat32"
@@ -227,7 +332,8 @@ class Ventana:
             tam = particiones.GB2 if esquema == "fat16-2g" else particiones.GB4
             maximo = particiones.maximo_fat16(sectores, tam)
             self.spin.configure(to=max(1, maximo))
-            self.max_txt["text"] = ("caben %d en esta tarjeta (máximo 8: el menú del MSXimus ve 8)" % maximo
+            self.max_txt["text"] = ("caben %d en esta tarjeta (máximo 8: %s)" % (
+                maximo, "C: a H: y B: con MAPDRV" if self.maquina.get() == "ocm" else "el menú del MSXimus ve 8")
                                     if maximo else "la tarjeta es más pequeña: una sola partición con toda ella")
             if maximo and int(self.cantidad.get() or 1) > maximo:
                 self.cantidad.set(maximo)
@@ -239,9 +345,9 @@ class Ventana:
         lineas = []
         for p in plan:
             if p.numero == 1:
-                uso = "arranque (A:)" if self.sistema.get() != "ninguno" else ""
+                uso = "arranque (A:)" if self._sistema() != "ninguno" else ""
             else:
-                uso = "%s: (MAPDRV en el AUTOEXEC)" % "CDEFGHI"[p.numero - 2]
+                uso = "%s: (MAPDRV en el AUTOEXEC)" % contenido.UNIDADES[p.numero - 2]
             lineas.append("  %d: %s de %-10s %s" % (p.numero, "FAT32" if p.tipo == particiones.TIPO_FAT32 else "FAT16",
                                                    formato_tamano(p.bytes), uso))
         sobra = particiones.sin_usar(sectores, plan)
@@ -251,7 +357,8 @@ class Ventana:
 
     # ------------------------------------------------------------------ acciones
     def _elegidos(self):
-        return {k for k, v in self.grupos.items() if v.get()}
+        validos = {g[0] for g in contenido.grupos_de(self.maquina.get())}
+        return {k for k, v in self.grupos.items() if v.get() and k in validos}
 
     def _opciones(self):
         o = {k: v.get() for k, v in self.n3.items()}
@@ -259,7 +366,7 @@ class Ventana:
         return o
 
     def _texto_opciones(self):
-        if self.sistema.get() != "nextor3":
+        if self._sistema() != "nextor3":
             return ""
         o = self._opciones()
         partes = [contenido.nombre_autoexec("nextor3", o)]
@@ -271,6 +378,20 @@ class Ventana:
         self.trabajando = si
         for b in (self.b_crear, self.b_imagen):
             b.state(["disabled"] if si else ["!disabled"])
+
+    def _listo_ocm(self):
+        if self.maquina.get() != "ocm":
+            return True
+        if not self.pack:
+            messagebox.showwarning("MSX SD Maker", "Para el MSXBOOK hace falta el OCM-SDBIOS Pack de KdL.")
+            return False
+        return True
+
+    def _texto_sistema(self):
+        if self.maquina.get() != "ocm":
+            return "Sistema: %s" % contenido.SISTEMAS[self.sistema.get()][0]
+        return "BIOS (%s):\n%s" % (self.pack.texto(), "\n".join("    %s  %s" % (n, ocm.describir(r, self.pack))
+                                                             for n, r in self.bios))
 
     def preparar(self):
         if self.trabajando:
@@ -289,11 +410,12 @@ class Ventana:
         except ValueError as e:
             messagebox.showerror("MSX SD Maker", str(e))
             return
+        if not self._listo_ocm():
+            return
         unidades = " ".join(t["letras"]) or "sin unidad"
         texto = ("Se va a BORRAR TODO lo que hay en:\n\n    %s, %s  (%s, disco %d)\n\ny se crearán:\n%s\n\n"
-                 "Sistema: %s%s\n\n¿Seguro?" % (t["modelo"], formato_tamano(t["bytes"]), unidades, t["numero"],
-                                                self.plan_txt["text"], contenido.SISTEMAS[self.sistema.get()][0],
-                                                self._texto_opciones()))
+                 "%s%s\n\n¿Seguro?" % (t["modelo"], formato_tamano(t["bytes"]), unidades, t["numero"],
+                                      self.plan_txt["text"], self._texto_sistema(), self._texto_opciones()))
         if not messagebox.askyesno("MSX SD Maker: borrar la tarjeta", texto, icon="warning", default="no"):
             return
 
@@ -302,7 +424,7 @@ class Ventana:
         self._lanzar(abrir, plan, "la tarjeta")
 
     def guardar_imagen(self):
-        if self.trabajando:
+        if self.trabajando or not self._listo_ocm():
             return
         # 1.1: el tamano se pregunta siempre (antes, con una tarjeta conectada, la imagen salia del tamano de la tarjeta).
         # 1800M cabe en cualquier tarjeta de 2 GB (las de "2 GB" tienen menos de 2 GiB); en una mayor sobra el resto.
@@ -335,7 +457,8 @@ class Ventana:
     def _lanzar(self, abrir, plan, destino):
         self._bloquear(True)
         self.log.delete("1.0", "end")
-        sistema, grupos, etiqueta = self.sistema.get(), self._elegidos(), self.etiqueta.get() or "MSX"
+        sistema, grupos, etiqueta = self._sistema(), self._elegidos(), self.etiqueta.get() or "MSX"
+        datos_ocm = {"pack": self.pack, "bios": self.bios} if self.maquina.get() == "ocm" else None
         opciones = self._opciones()
 
         def trabajo():
@@ -343,7 +466,8 @@ class Ventana:
             try:
                 dev = abrir()
                 inf = proceso.crear(dev, plan, sistema, grupos, etiqueta,
-                                    lambda texto, f=None: self.cola.put(("aviso", texto, f)), opciones=opciones)
+                                    lambda texto, f=None: self.cola.put(("aviso", texto, f)), opciones=opciones,
+                                    ocm=datos_ocm)
                 self.cola.put(("fin", inf, destino))
             except Exception as e:
                 self.cola.put(("error", "%s: %s" % (type(e).__name__, e), destino))
@@ -359,7 +483,9 @@ class Ventana:
         try:
             while True:
                 m = self.cola.get_nowait()
-                if m[0] == "aviso":
+                if m[0] == "pack":
+                    self._pack_listo(m[1], m[2])
+                elif m[0] == "aviso":
                     self.estado["text"] = m[1][:110]
                     if m[2] is not None:
                         self.barra["value"] = int(m[2] * 1000)

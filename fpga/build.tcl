@@ -38,6 +38,7 @@ add_file jtopl/jtopll_mmr.v
 add_file jtopl/jtopll_reg.v
 add_file jtopl/jtopll_reg_ch.v
 add_file src/flash_rw.v
+add_file src/flash_bridge.v
 add_file src/gowin/clk_108p.v
 add_file src/gowin_clkdiv/gowin_clkdiv.v
 add_file src/megaram.v

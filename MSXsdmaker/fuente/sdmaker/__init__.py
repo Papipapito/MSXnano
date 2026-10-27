@@ -1,2 +1,2 @@
-"""MSXsdmaker: tarjetas SD para MSXimus, MSXnano y MSX Pico."""
-VERSION = "1.3"
+"""MSXsdmaker: tarjetas SD para MSXimus, MSXnano, MSX Pico y MSXBOOK / 1chipMSX (OCM-PLD)."""
+VERSION = "1.5"

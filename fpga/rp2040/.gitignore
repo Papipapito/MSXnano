@@ -1,4 +1,5 @@
 build
-tinyusb
+build-*
+/tinyusb
 .vscode
 doc

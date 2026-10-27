@@ -160,6 +160,29 @@ cabecera (comprobado el 29/09). Campaña del par 48, el entregado como v2.0:
 **el repo no reconstruye byte a byte la release** (la reconstruye funcionalmente). Los
 dados se apuntan en `files/<fecha>/` con cada pareja `.fs` + `.bin`.
 
+### 2.1.1: el puente de la flash y la familia VRAM → sprites
+
+Con el puente (+39 LUT, +16 ALU, +64 FF; el módulo de la flash +214 LUT) el CLS queda en
+9.208-9.318 (89-90 %) y `clock_54m` cierra en los 10 dados (54,1-60,5 MHz). Pero la familia
+`clock_108i → clock_27m` (`mem1/vram_dout` → `CE` de `U_SPRITE`, relación 10,5 ns) sale
+**negativa en 9 de 10**: el `TNS` de Gowin **no la cuenta** (su resumen dice 0 en `clock_27m`) y
+`gowin_summary` da la tirada por limpia; hay que mirar la tabla de caminos de setup. No la
+trae el puente: la v2.1 sin él (campaña de referencia, 1.9.12) la tiene negativa en **3 de 6**
+dados (−1,1 a −1,5 ns), y la v2.0 entregada la tenía a +0,066. El puente solo la empeora.
+
+| Dado | v2.1 (sin puente) | 2.1.1 (con puente) |
+|---|---|---|
+| 999917 | +0,362 | −0,598 |
+| 999931 | −1,103 | −1,550 |
+| 999953 | −1,487 | −0,925 |
+| 999959 | −1,419 | −0,161 (y `54m→27m` −2,136) |
+| 999979 | +0,083 | −0,862 |
+| **999883** | +0,069 | **+0,389** ← entregado (`clock_54m` 57,7 MHz) |
+
+Los otros cuatro de la 2.1.1 (999907, 999863, 999853, 999809) también la dejan negativa. La cura
+de verdad (registrar `vram_dout` antes de los sprites, o un multiciclo justificado) queda
+pendiente en [09](09-pendientes.md).
+
 Método para juzgar una tirada: mirar las **familias de reloj** de los endpoints
 violados, no el total. Las familias `VideoDLClk/VideoDHClk → 108m` (VRAM → sprites) son
 el suelo: salen igual en builds buenas y malas, y se ha comprobado que son un artefacto
