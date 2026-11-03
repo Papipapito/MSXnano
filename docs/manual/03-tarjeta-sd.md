@@ -7,8 +7,7 @@ la lee directamente para enseñarte las ROMs y los discos.
 ## Qué tarjeta
 
 Una **microSD** de marca, en **FAT16**. La mejor forma de dejarla lista es
-**[MSX SD Maker](https://github.com/Papipapito/SD_Maker)**, un programa para Windows con su propio
-repositorio (en [`MSXsdmaker/`](../../MSXsdmaker/LEEME.md) hay una copia con sus instrucciones): parte la tarjeta en particiones FAT16 de 2 o 4 GB como lo hace el FDISK de
+**[MSX SD Maker](https://github.com/Papipapito/SD_Maker)**, un programa para Windows y macOS: parte la tarjeta en particiones FAT16 de 2 o 4 GB como lo hace el FDISK de
 Nextor, copia Nextor (la versión de tu pack), SofaRun, Multi Mente y un surtido de
 utilidades, y escribe el `AUTOEXEC.BAT` que monta las demás particiones como C:, D:…
 
