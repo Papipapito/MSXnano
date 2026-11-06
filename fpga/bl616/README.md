@@ -1,4 +1,8 @@
-# Teclado USB (BL616 / FPGA-Companion) — IMPORTANTE
+# Teclado USB (BL616 / FPGA-Companion) — solo hasta la v1.9
+
+> **Esto NO vale para la v2.0 ni posteriores**: esos cores no tienen camino BL616 ni M0S Dock, y el
+> teclado solo entra por el RP2040 (pin 31). Esta guía sirve con la v1.9 y anteriores; la última
+> release publicada con BL616 es la [`v1.8`](https://github.com/Papipapito/MSXnano/releases/tag/v1.8).
 
 El teclado y los mandos USB del MSXnano los gestiona el **MCU BL616** mediante el
 firmware **FPGA-Companion** (de [MiSTle-Dev](https://github.com/MiSTle-Dev/FPGA-Companion)),

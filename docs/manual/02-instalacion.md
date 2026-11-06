@@ -12,7 +12,7 @@ Education). **No** uses openFPGALoader: no maneja bien la flash externa de esta 
 
 | Qué | Fichero | Dirección | Modo del Programmer |
 |---|---|---|---|
-| Core | `msxnano_v2.1.fs` (de la [release](https://github.com/Papipapito/MSXnano/releases/tag/v2.1)) | `0x000000` | *External Flash Mode* |
+| Core | `msxnano_v2.1.1.fs` (de la [release](https://github.com/Papipapito/MSXnano/releases/tag/v2.1.1)) | `0x000000` | *External Flash Mode* |
 
 Al terminar, la placa reinicia sola con el core cargado. Sin pack todavía no arranca nada
 útil: falta la BIOS.
@@ -27,8 +27,8 @@ de la flash por streaming al arrancar.
 |---|---|---|---|
 | Pack | `pack_bios_msxnano.bin` | `0x200000` | *exFlash C Bin Erase, Program thru GAO-Bridge* |
 
-Hay dos packs en la release: **`pack_bios_msxnano.bin`** (Nextor 2.1.4, el recomendado) y
-`pack_bios_msxnano_nextor3.bin` (Nextor 3 beta). Ver [03. La tarjeta SD](03-tarjeta-sd.md)
+Hay cuatro packs en la release: **`pack_bios_msxnano.bin`** (Nextor 2.1.4, el recomendado),
+`pack_bios_msxnano_nextor3.bin` (Nextor 3 beta) y los mismos en inglés (`_en`). Ver [03. La tarjeta SD](03-tarjeta-sd.md)
 para las diferencias.
 
 > Los packs llevan ROMs de sistema con derechos de autor de sus dueños; van en la release
@@ -38,27 +38,23 @@ para las diferencias.
 
 ## 3. El host USB (teclado, joystick y ratón)
 
-El core es el mismo (`.fs` 2.1.1) en los tres montajes; cambia quién hace de host USB:
+El core es el mismo (`.fs` 2.1.1) en los dos montajes; cambia el firmware de la RP2040-Zero:
 
 | Montaje | Host USB | Qué grabar |
 |---|---|---|
-| **Tang sola** | el BL616 de la propia Tang | FPGA-Companion de [`fpga/bl616/`](../../fpga/bl616/README.md), con BouffaloLab DevCube y su `.ini` |
-| **A mano** | RP2040-Zero cableada al pin 31 | `rp2040_keyboard.uf2` |
+| **A mano** | RP2040-Zero cableada al pin 31 | `rp2040_keyboard_zero.uf2` |
 | **Placa MSXnano** | RP2040-Zero en su zócalo | `rp2040_keyboard_placa.uf2` |
 
-**Tang sola (BL616)**: solo funciona si el BL616 de la Tang no está bloqueado. Las placas
-marcadas `3921` (2024 en adelante) suelen venir bloqueadas; entonces usa el RP2040 o un
-**M0S Dock** externo. Pasos y diagnóstico en [`fpga/bl616/README.md`](../../fpga/bl616/README.md).
-
-**RP2040** (el resto de esta sección): un **RP2040** con firmware propio que hace de host
-USB y le cuenta al FPGA qué teclas hay pulsadas por **un solo hilo**.
+La **RP2040** lleva un firmware propio que hace de host USB y le cuenta al FPGA qué teclas
+hay pulsadas por **un solo hilo**. El core no tiene camino BL616 desde la v2.0: el `.ini` y
+el firmware de [`fpga/bl616/`](../../fpga/bl616/README.md) solo valen para la v1.9 y anteriores.
 
 **Firmware** (en [`fpga/rp2040/`](../../fpga/rp2040/), fuente incluido):
 
 | Placa | Fichero en el repo | Fichero en la release |
 |---|---|---|
 | Waveshare **RP2040-Zero** cableada a mano | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
-| RP2040-Zero en la **Placa MSXnano** | `rp2040_keyboard_placa.uf2` | — |
+| RP2040-Zero en la **Placa MSXnano** | `rp2040_keyboard_placa.uf2` | `rp2040_keyboard_placa.uf2` |
 
 Los dos firmwares de la Zero **no son intercambiables**: el de a mano usa el USB-C de la
 Zero como host; el de la Placa MSXnano usa los tres USB-A de la placa.
@@ -112,7 +108,7 @@ compilado para 859372 baudios (soportado de serie).
 | GND | GND | masa común |
 
 Firmware: [ESP32-for-FPGA](https://github.com/Papipapito/ESP32-for-FPGA)
-(`firmware_esp32c6_v2.0_merged.bin` en la release). La pantalla enseña el logo al arrancar,
+(`firmware_esp32c6_v3.8_merged.bin` en la release). La pantalla enseña el logo al arrancar,
 el estado de la WiFi, la hora y si el turbo está activo.
 
 Placa: Waveshare **ESP32-C6-LCD-1.3** (240×240). Se alimenta por su propio USB-C.

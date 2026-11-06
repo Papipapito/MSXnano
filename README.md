@@ -4,9 +4,8 @@
 
 > 📖 Project page, install guides and community: **[msx.barcelona](https://msx.barcelona)**
 
-> **Project status: v2.1** ([`v2.1`](https://github.com/Papipapito/MSXnano/releases/tag/v2.1), 30/09/2026 — a **pre-release** until it is
-> validated on the board; the last validated one is [`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final)).
-> v2.1 brings a sorted SD browser and a faster CPU read path; the core still fills ~89 % of
+> **Project status: v2.1.1** ([`v2.1.1`](https://github.com/Papipapito/MSXnano/releases/tag/v2.1.1)): the MSXnano board, updates from
+> MSX-DOS with `MXUPDATE.COM`, a sorted SD browser and a faster CPU read path; the core still fills ~89 % of
 > the GW2AR-18, so no larger features fit. Everything that
 > works is documented; everything that was left out is listed, with the reasons, in
 > [docs/tecnica/09-pendientes.md](docs/tecnica/09-pendientes.md). Larger features live on
@@ -57,8 +56,8 @@ images straight to the SD card, without a PC.
 ### 🕹️ RP2040 companion — better keyboards, and an MSX mouse
 
 The onboard **BL616 is no longer needed**. USB keyboard, joystick and mouse are now served
-by an **RP2040-Zero** over a single wire (the BL616 path is still in the core; see
-[Builds](#builds)).
+by an **RP2040-Zero** over a single wire. The core has no BL616 path since v2.0, so the
+`.ini` and firmware in [`fpga/bl616/`](fpga/bl616/README.md) only apply to v1.9 and earlier.
 
 This removes the biggest compatibility headache of the previous versions: Tang Nano 20K
 boards made since 2024 (marked **`3921`**) ship a BL616 in a secure-boot state that often
@@ -77,13 +76,12 @@ status, the clock and whether Turbo is on — plus the classic MSX boot logo. Th
 
 ## Builds
 
-The same core (`.fs` 2.1.1) runs in three setups. Only **who is the USB host** for the
-keyboard and pads changes:
+The same core (`.fs` 2.1.1) runs in two setups. Only **the RP2040-Zero firmware and its wiring**
+change:
 
 | Build | USB host | Firmware | Notes |
 |---|---|---|---|
-| **Tang alone** | the Tang's own BL616 ([`fpga/bl616/`](fpga/bl616/README.md)) | FPGA-Companion, flashed with BouffaloLab DevCube + its `.ini` | Works only if the BL616 is not locked: boards marked `3921` (2024+) often are. Alternative: an external M0S Dock |
-| **Hand-wired** | RP2040-Zero wired to pin 31 | `rp2040_keyboard.uf2` | Keyboard, pad or mouse on its USB-C, or through a hub. Optional ESP32-C6 or ESP-01S |
+| **Hand-wired** | RP2040-Zero wired to pin 31 | `rp2040_keyboard_zero.uf2` | Keyboard, pad or mouse on its USB-C, or through a hub. Optional ESP32-C6 or ESP-01S |
 | **MSXnano board** ([MSXnano-Boards/carrier](https://github.com/Papipapito/MSXnano-Boards/tree/main/carrier), rev B) | RP2040-Zero in its socket, 3 USB-A | `rp2040_keyboard_placa.uf2` | No wiring, no hubs. ESP32-C6 on J4 or ESP-01S on J6 |
 
 ---
@@ -134,14 +132,15 @@ Board: Waveshare **ESP32-C6-LCD-1.3**. Firmware: **[ESP32-for-FPGA](https://gith
 
 ## 💾 What to flash
 
-Everything is attached to the **[v2.1 release](https://github.com/Papipapito/MSXnano/releases/tag/v2.1)** (the previous one, [`v2.0-final`](https://github.com/Papipapito/MSXnano/releases/tag/v2.0-final), stays available).
+Everything is attached to the **[v2.1.1 release](https://github.com/Papipapito/MSXnano/releases/tag/v2.1.1)**.
 
 | Step | File | Address | Tool |
 |---|---|---|---|
-| 1 | `msxnano_v2.1.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
+| 1 | `msxnano_v2.1.1.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
 | 2 | **One** pack: `pack_bios_msxnano.bin` (Spanish menu, Nextor 2.1.4, recommended), `pack_bios_msxnano_en.bin` (English menu), `pack_bios_msxnano_nextor3.bin` / `pack_bios_msxnano_en_nextor3.bin` (Nextor 3 beta) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
-| 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero) **or** `rp2040_keyboard_placa.uf2` (MSXnano board; in [`fpga/rp2040/`](fpga/rp2040/)) | — | Drag onto the Zero's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
-| 4 | `firmware_esp32c6_v2.0_merged.bin` | `0x0` | `esptool` — only if you fit the ESP32-C6 (the ESP-01S uses the ducasp UNAPI firmware) |
+| 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero wired by hand) **or** `rp2040_keyboard_placa.uf2` (MSXnano board) | — | Drag onto the Zero's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
+| 4 | `firmware_esp32c6_v3.8_merged.bin` | `0x0` | `esptool` — only if you fit the ESP32-C6 (the ESP-01S uses the ducasp UNAPI firmware). It erases the saved WiFi settings |
+| 5 | `MXUPDATE.COM` | on the SD card | Run it from MSX-DOS to update the core and the pack later on |
 
 > The BIOS packs bundle the MSX2+ BIOS, sub-ROM, kanji, MSX-MUSIC, Nextor, the WiFi ROM,
 > the boot menu and the config block. The system ROMs in them are copyrighted by their

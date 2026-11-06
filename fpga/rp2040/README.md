@@ -9,10 +9,9 @@ Derived from the MSXgoauld "Guardian Angel" firmware. XInput host driver:
 
 | Build | Your setup | Flash | In the release |
 |---|---|---|---|
-| MSXnano board | **MSXnano board** (RP2040-Zero in its socket, 3 USB-A) | `rp2040_keyboard_placa.uf2` | — |
+| MSXnano board | **MSXnano board** (RP2040-Zero in its socket, 3 USB-A) | `rp2040_keyboard_placa.uf2` | `rp2040_keyboard_placa.uf2` |
 | MSXnano board | Debug log on the Zero's USB-C. **Tests only, not for normal use** | `rp2040_keyboard_placa_debug.uf2` | — |
 | Hand-wired | Waveshare RP2040-Zero wired to pin 31 (LED on GPIO16) | `rp2040_keyboard.uf2` | `rp2040_keyboard_zero.uf2` |
-| Tang alone | No RP2040: the Tang's own BL616 | see [`../bl616/README.md`](../bl616/README.md) | — |
 
 The two families are not interchangeable: the hand-wired images use the board's own USB-C as
 the host, the MSXnano board images use the board's three USB-A sockets and leave the USB-C free.

@@ -4,7 +4,7 @@ Resumen técnico de cada release (tags del repo). Las notas completas están en
 [GitHub → Releases](https://github.com/Papipapito/MSXnano/releases). Versión del core =
 puerto `0x2F`.
 
-## v2.1.1 — 2 de octubre de 2026 · `FPGA_VERSION = 0x21`, `FPGA_PATCH = 0x01` · **pendiente de validar en placa**
+## v2.1.1 — 2 de octubre de 2026 · `FPGA_VERSION = 0x21`, `FPGA_PATCH = 0x01` · **validada en placa**
 
 - **Actualizar el core y el pack desde el MSX**: el **puente de la flash** del MSXimus V3.8
   (`fpga/src/flash_bridge.v`, dispositivo de E/S conmutada `4Dh` en `#40`) y su
