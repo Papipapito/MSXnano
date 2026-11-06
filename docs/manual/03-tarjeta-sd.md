@@ -11,7 +11,7 @@ Una **microSD** de marca, en **FAT16**. La mejor forma de dejarla lista es
 Nextor, copia Nextor (la versión de tu pack), SofaRun, Multi Mente y un surtido de
 utilidades, y escribe el `AUTOEXEC.BAT` que monta las demás particiones como C:, D:…
 
-**FAT16, no FAT32.** Nextor (la 2.1.4 y la 3.0 beta 2) solo monta FAT12 y FAT16, hasta
+**FAT16, no FAT32.** Nextor (la 2.1.4 y la 3.0) solo monta FAT12 y FAT16, hasta
 4 GB por partición: con una tarjeta FAT32 el menú navega y lanza ROMs y discos, pero ESC no
 llega a MSX-DOS y el File-Hunter no descarga («FH: la SD es FAT32»). Sin MSX SD Maker, una
 tarjeta de 2 GB o menos se formatea en FAT16 desde cualquier sistema; con tarjetas mayores,
@@ -43,7 +43,7 @@ El pack lleva Nextor **dentro** (no va en la SD), y hay dos packs:
 | Pack | Nextor | Cuándo |
 |---|---|---|
 | `pack_bios_msxnano.bin` | **2.1.4** | El recomendado. Estable, es el de siempre |
-| `pack_bios_msxnano_nextor3.bin` | 3 beta | Para probar Nextor 3. Validado en el MSXimus; en el MSXnano no se ha probado en placa |
+| `pack_bios_msxnano_nextor3.bin` | 3.0 | Para probar Nextor 3. En MSX SD Maker elige **Nextor 3.0 final**. En el MSXnano aún no se ha probado en placa |
 
 La SD sirve igual para los dos. Nextor 3 trae mejoras de compatibilidad con FAT y
 ficheros largos; si no sabes cuál, el 2.1.4.

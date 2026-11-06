@@ -137,7 +137,7 @@ Everything is attached to the **[v2.1.1 release](https://github.com/Papipapito/M
 | Step | File | Address | Tool |
 |---|---|---|---|
 | 1 | `msxnano_v2.1.1.fs` | `0x000000` | [Gowin Programmer](https://www.gowinsemi.com/en/support/download_eda/) — External Flash mode |
-| 2 | **One** pack: `pack_bios_msxnano.bin` (Spanish menu, Nextor 2.1.4, recommended), `pack_bios_msxnano_en.bin` (English menu), `pack_bios_msxnano_nextor3.bin` / `pack_bios_msxnano_en_nextor3.bin` (Nextor 3 beta) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
+| 2 | **One** pack: `pack_bios_msxnano.bin` (Spanish menu, Nextor 2.1.4, recommended), `pack_bios_msxnano_en.bin` (English menu), `pack_bios_msxnano_nextor3.bin` / `pack_bios_msxnano_en_nextor3.bin` (Nextor 3.0, in MSX SD Maker choose *Nextor 3.0 final*) | `0x200000` | Gowin Programmer — *exFlash C Bin Erase, Program thru GAO-Bridge* |
 | 3 | `rp2040_keyboard_zero.uf2` (RP2040-Zero wired by hand) **or** `rp2040_keyboard_placa.uf2` (MSXnano board) | — | Drag onto the Zero's `RPI-RP2` drive (hold BOOTSEL while plugging in) |
 | 4 | `firmware_esp32c6_v3.8_merged.bin` | `0x0` | `esptool` — only if you fit the ESP32-C6 (the ESP-01S uses the ducasp UNAPI firmware). It erases the saved WiFi settings |
 | 5 | `MXUPDATE.COM` | on the SD card | Run it from MSX-DOS to update the core and the pack later on |

@@ -28,7 +28,7 @@ de la flash por streaming al arrancar.
 | Pack | `pack_bios_msxnano.bin` | `0x200000` | *exFlash C Bin Erase, Program thru GAO-Bridge* |
 
 Hay cuatro packs en la release: **`pack_bios_msxnano.bin`** (Nextor 2.1.4, el recomendado),
-`pack_bios_msxnano_nextor3.bin` (Nextor 3 beta) y los mismos en inglés (`_en`). Ver [03. La tarjeta SD](03-tarjeta-sd.md)
+`pack_bios_msxnano_nextor3.bin` (Nextor 3.0) y los mismos en inglés (`_en`). Ver [03. La tarjeta SD](03-tarjeta-sd.md)
 para las diferencias.
 
 > Los packs llevan ROMs de sistema con derechos de autor de sus dueños; van en la release

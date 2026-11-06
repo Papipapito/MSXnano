@@ -49,7 +49,7 @@ por lo que:
 - Los ficheros sueltos están en el `.gitignore`.
 - Lo que sí es del proyecto (menú, logo, cola de config, herramientas) tiene fuente en el
   repo `bios-msxnano-msximus`, que es **privado**.
-- Los dos packs montados (Nextor 2.1.4 y Nextor 3 beta) van como *assets* de la release,
+- Los dos packs montados (Nextor 2.1.4 y Nextor 3.0) van como *assets* de la release,
   por decisión y bajo la responsabilidad del autor. `bin/goauld_rom_int.bin` es el mismo
   pack de Nextor 2.1.4 de la v2.0 (md5 `4dc4e4f5…`, commit `c9f8595` del repo de BIOS).
 
