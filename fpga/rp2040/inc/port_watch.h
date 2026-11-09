@@ -37,4 +37,24 @@ static inline bool pw_step(uint8_t *passes, bool connected, bool suspended, bool
     return true;
 }
 
+// Segunda regla: un puerto connected, NO suspendido, con la linea fuera de SE0 y sin ningun
+// dispositivo montado en el durante PW_STUCK_PASSES pasadas = la enumeracion fallo (TinyUSB 0.21
+// no la reintenta y Pico-PIO-USB no genera otro attach). Pasa en frio con teclados que tardan en
+// arrancar (AJAZZ AK33). Se suelta el puerto para que vuelva a detectarse, como mucho
+// PW_STUCK_MAX veces por conexion (el contador se reinicia al montar o al quedar en SE0).
+#define PW_STUCK_PASSES 30         // ~3 s
+#define PW_STUCK_MAX    5
+
+typedef struct { uint8_t passes; uint8_t tries; } pw_stuck_t;
+
+static inline bool pw_stuck_step(pw_stuck_t *st, bool connected, bool suspended, bool in_reset, bool se0, bool mounted) {
+    if(mounted || se0) { st->passes = 0; st->tries = 0; return false; }   // montado o desenchufado: nueva conexion
+    if(!connected) { st->passes = 0; return false; }                    // (los intentos se conservan)
+    if(suspended || in_reset || st->tries >= PW_STUCK_MAX) { st->passes = 0; return false; }
+    if(++st->passes < PW_STUCK_PASSES) return false;
+    st->passes = 0;
+    st->tries++;
+    return true;
+}
+
 #endif

@@ -689,7 +689,22 @@ u8 hid_parse_report_descriptor(hid_report_info_t* report_info_arr, u8 arr_count,
 	desc_len -= size;
   }
 
+  // Algunos teclados (AJAZZ AK33, 1a2c:9df5) declaran un wReportLength corto y al descriptor le
+  // falta el End Collection final: la coleccion que queda abierta tambien es un informe.
+  if(ri_collection_depth > 0 && report_num < arr_count && (info->num_items || info->usage))
+    report_num++;
+
   return report_num;
+}
+
+// Una interfaz con protocolo de raton es un raton si su descriptor lo dice (Generic Desktop /
+// Mouse). Si no se pudo leer el descriptor se le da por bueno el protocolo.
+static bool slot_is_mouse(u8 slot) {
+  if(hid_info[slot].report_count == 0) return true;
+  for(u8 r = 0; r < hid_info[slot].report_count; r++)
+    if(hid_info[slot].report_info[r].usage_page == HID_USAGE_PAGE_DESKTOP &&
+       hid_info[slot].report_info[r].usage == 0x02 /* Mouse */) return true;
+  return false;
 }
 
 u8 hid_parse_keyboard_modifiers(hid_report_info_t* report_info_arr, const u8 *report, u8 len) {
@@ -1065,7 +1080,9 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 	// (como estaba) TinyUSB invalida la peticion ya armada al cambiar de
 	// protocolo y NADIE la vuelve a armar: el raton se monta pero no llega ni un
 	// informe. Sintoma exacto del 03/09 en el MSXnano.
-	if(hid_if_proto == HID_ITF_PROTOCOL_MOUSE) {
+	if(hid_if_proto == HID_ITF_PROTOCOL_MOUSE && !slot_is_mouse(slot)) {
+	    dbg_printf("HID   mount   addr=%u inst=%u %04x:%04x: dice ser raton y su descriptor no: se ignora\n", dev_addr, instance, vid, pid);
+	} else if(hid_if_proto == HID_ITF_PROTOCOL_MOUSE) {
 	    // BOOT: informe fijo de 3 bytes, lo soportan TODOS los ratones. Evita
 	    // interpretar descriptores raros y funciona igual detras de un hub.
 	    tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
@@ -1073,6 +1090,12 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 	    mim_add(&mice, dev_addr, instance);
 	    g_mouse_mounted = 1;
 	    dbg_printf("MOUSE mount   addr=%u inst=%u %04x:%04x -> puerto MSX 2 (lo ocupa la FPGA)\n", dev_addr, instance, vid, pid);
+	}
+	// Teclado cuyo descriptor de informe no se pudo leer (en algunos teclados, por PIO-USB llega
+	// basura: AJAZZ AK33): se le pide BOOT, formato fijo de 8 bytes, antes de armar la peticion.
+	if(hid_if_proto == HID_ITF_PROTOCOL_KEYBOARD && hid_info[slot].report_count == 0) {
+		tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
+		dbg_printf("KBD   addr=%u inst=%u: descriptor ilegible, se pide BOOT\n", dev_addr, instance);
 	}
 	if(!tuh_hid_receive_report(dev_addr, instance)) {
 		dbg_printf("HID   mount   addr=%u inst=%u %04x:%04x (%s): no se pudo pedir informe, no se registra\n",
@@ -1161,7 +1184,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 	// Raton: se reconoce por el protocolo de interfaz, sin registro aparte.
 	// Se pide BOOT al montarlo, asi que el informe es siempre [btn][dx][dy].
 	if(tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_MOUSE) {
-	    mouse_report_receive(report, len);
+	    if(mim_has(&mice, dev_addr, instance)) mouse_report_receive(report, len);
 	    tuh_hid_receive_report(dev_addr, instance);
 	    return;
 	}
@@ -1173,7 +1196,15 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 	}
 
 	u8 slot = hid_slot_get(dev_addr, instance, false);
-	if(slot == 0xFF) return;
+	if(slot == 0xFF) { tuh_hid_receive_report(dev_addr, instance); return; }
+	// Teclado en protocolo BOOT, o sin informes en su descriptor: formato boot de 8 bytes,
+	// [modificadores][reservado][6 teclas], sin Report ID.
+	if(tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_KEYBOARD && len >= 8 &&
+	   (tuh_hid_get_protocol(dev_addr, instance) == HID_PROTOCOL_BOOT || hid_info[slot].report_count == 0)) {
+		kb_dev_report(dev_addr, instance, report[0], report + 2, 6);
+		tuh_hid_receive_report(dev_addr, instance);
+		return;
+	}
 	hid_report_info_t* rpt_info_arr = hid_info[slot].report_info;
 	hid_report_info_t* rpt_info = NULL;
 
@@ -1191,7 +1222,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 		len--;
 	}
 
-  	if(!rpt_info) return;
+  	if(!rpt_info) { tuh_hid_receive_report(dev_addr, instance); return; }
 
 	if(tuh_hid_get_protocol(dev_addr, instance) == HID_PROTOCOL_BOOT) {
 	  u8 modifiers = report[0];

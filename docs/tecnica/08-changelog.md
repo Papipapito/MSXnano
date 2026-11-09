@@ -4,6 +4,19 @@ Resumen técnico de cada release (tags del repo). Las notas completas están en
 [GitHub → Releases](https://github.com/Papipapito/MSXnano/releases). Versión del core =
 puerto `0x2F`.
 
+## Firmware de la RP2040-Zero — 9 de noviembre de 2026 (sin cambio de core)
+
+- **Teclados con descriptor raro** (AJAZZ AK33, `1a2c:9df5`): en la Placa MSXnano solo llegaba
+  la primera tecla. Ahora cada informe se vuelve a pedir siempre, el teclado cuyo descriptor
+  no se puede leer pasa a protocolo BOOT, una interfaz que dice ser ratón pero cuyo
+  descriptor no lo es se ignora, y el parser acepta el descriptor sin `End Collection` final.
+- **Puertos de la placa**: un puerto conectado sin ningún dispositivo enumerado durante ~3 s
+  se vuelve a detectar (hasta 5 veces); arregla el teclado que no aparecía al arrancar con
+  él enchufado. No se toca un dispositivo con dirección aunque no haya configurado todas sus
+  interfaces.
+- TinyUSB `59faee91` (timeout de control y reintento de enumeración) y Pico-PIO-USB 0.7.3.
+- Validado en placa: AK33 (10 de 10 arranques en frío), ratón, dos mandos y conexión en caliente.
+
 ## v2.1.1 — 2 de octubre de 2026 · `FPGA_VERSION = 0x21`, `FPGA_PATCH = 0x01` · **validada en placa**
 
 - **Actualizar el core y el pack desde el MSX**: el **puente de la flash** del MSXimus V3.8

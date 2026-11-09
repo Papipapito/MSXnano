@@ -192,8 +192,8 @@ static void carrier_usb_init(void) {
     (void)cfg_ok; (void)host_ok; (void)r2; (void)r5;
 }
 
-#if MSXNANO_DEBUG_CDC
 // Registro de montajes: direccion, VID:PID y de que puerto raiz cuelga (J1/J2/J5).
+#if MSXNANO_DEBUG_CDC
 static uint16_t s_dev_vid[CFG_TUH_DEVICE_MAX + CFG_TUH_HUB + 1];
 static uint16_t s_dev_pid[CFG_TUH_DEVICE_MAX + CFG_TUH_HUB + 1];
 
@@ -205,48 +205,79 @@ static const char *carrier_port_name(uint8_t rhport) {
         default: return "?";
     }
 }
+#endif
+
+static uint8_t s_rh_mounted[PIO_USB_ROOT_PORT_CNT + 2];   // dispositivos montados por rhport (1..3)
+static uint8_t s_dev_rh[CFG_TUH_DEVICE_MAX + 2];             // rhport de cada daddr montado (0 = ninguno)
 
 void tuh_mount_cb(uint8_t daddr) {
     uint16_t vid = 0, pid = 0;
     tuh_vid_pid_get(daddr, &vid, &pid);
     tuh_bus_info_t bus;
     tuh_bus_info_get(daddr, &bus);
+    if (daddr < sizeof(s_dev_rh) && bus.rhport < sizeof(s_rh_mounted)) { s_dev_rh[daddr] = bus.rhport; s_rh_mounted[bus.rhport]++; }
+#if MSXNANO_DEBUG_CDC
     if (daddr < sizeof(s_dev_vid) / sizeof(s_dev_vid[0])) { s_dev_vid[daddr] = vid; s_dev_pid[daddr] = pid; }
     dbg_printf("USB mount   addr=%u %04x:%04x puerto=%s hub=%u/%u\n",
                daddr, vid, pid, carrier_port_name(bus.rhport), bus.hub_addr, bus.hub_port);
+#endif
 }
 
 void tuh_umount_cb(uint8_t daddr) {
+    if (daddr < sizeof(s_dev_rh) && s_dev_rh[daddr]) {
+        if (s_rh_mounted[s_dev_rh[daddr]]) s_rh_mounted[s_dev_rh[daddr]]--;
+        s_dev_rh[daddr] = 0;
+    }
+#if MSXNANO_DEBUG_CDC
     uint16_t vid = 0, pid = 0;
     if (daddr < sizeof(s_dev_vid) / sizeof(s_dev_vid[0])) { vid = s_dev_vid[daddr]; pid = s_dev_pid[daddr]; }
     dbg_printf("USB umount  addr=%u %04x:%04x\n", daddr, vid, pid);
-}
 #endif
+}
+
+// Hay en el puerto raiz rh algun dispositivo con direccion asignada (enumerado aunque no haya
+// terminado de configurar todas sus interfaces: el AJAZZ AK33 deja colgada la segunda y TinyUSB
+// no llama a tuh_mount_cb, pero su interfaz de teclado funciona). Solo se reintenta si no hay.
+static bool rh_has_device(uint8_t rh) {
+    if (s_rh_mounted[rh]) return true;
+    for (uint8_t d = 1; d <= CFG_TUH_DEVICE_MAX + CFG_TUH_HUB; d++) {
+        tuh_bus_info_t bus;
+        if (tuh_connected(d) && tuh_bus_info_get(d, &bus) && bus.rhport == rh) return true;
+    }
+    return false;
+}
 
 // Pico-PIO-USB deja un puerto connected+suspended con la linea en SE0 si el dispositivo se saca
 // antes de que TinyUSB lo reinicie (ver inc/port_watch.h) y ya no detecta nada hasta apagar. Cada
 // 100 ms se mira cada puerto raiz; si lleva 3 pasadas asi y no hay un reset de bus en curso (D+ con
 // el habilitador de salida forzado) se marca desconectado, y la IRQ de SOF volvera a ver la
 // proxima conexion. La lectura y el cambio van con las interrupciones cortadas: la alarma de 1 ms
-// de PIO-USB toca esos mismos campos.
+// de PIO-USB toca esos mismos campos. Segunda regla (pw_stuck_step): conectado sin ningun
+// dispositivo con direccion = enumeracion fallida, se vuelve a detectar.
 static void __noinline carrier_port_watch(uint64_t now) {
     static uint64_t next = 0;
     static uint8_t  se0_passes[PIO_USB_ROOT_PORT_CNT];
+    static pw_stuck_t stuck[PIO_USB_ROOT_PORT_CNT];
     if ((int64_t)(now - next) < 0) return;
     next = now + PW_INTERVAL_US;
     for (uint i = 0; i < PIO_USB_ROOT_PORT_CNT; i++) {
         root_port_t *root = PIO_USB_ROOT_PORT(i);
         uint32_t irq = save_and_disable_interrupts();
-        bool release = false;
+        bool release = false, retry = false;
         if (root->initialized) {
             uint32_t oeover = (io_bank0_hw->io[root->pin_dp].ctrl & IO_BANK0_GPIO0_CTRL_OEOVER_BITS)
                               >> IO_BANK0_GPIO0_CTRL_OEOVER_LSB;
-            release = pw_step(&se0_passes[i], root->connected, root->suspended, oeover != GPIO_OVERRIDE_NORMAL,
-                              pio_usb_bus_get_line_state(root) == PORT_PIN_SE0);
-            if (release) root->connected = false;
+            bool in_reset = oeover != GPIO_OVERRIDE_NORMAL;
+            bool se0 = pio_usb_bus_get_line_state(root) == PORT_PIN_SE0;
+            release = pw_step(&se0_passes[i], root->connected, root->suspended, in_reset, se0);
+            if (!release)
+                retry = pw_stuck_step(&stuck[i], root->connected, root->suspended, in_reset, se0, rh_has_device((uint8_t)(i + 1)));
+            if (release || retry) root->connected = false;
         }
         restore_interrupts(irq);
         if (release) dbg_printf("PIO-USB %s: linea en SE0 sin enumerar, puerto liberado\n", carrier_port_name((uint8_t)(i + 1)));
+        if (retry) dbg_printf("PIO-USB %s: conectado sin montar, se vuelve a detectar (intento %u)\n",
+                              carrier_port_name((uint8_t)(i + 1)), stuck[i].tries);
     }
 }
 #if MSXNANO_DEBUG_CDC

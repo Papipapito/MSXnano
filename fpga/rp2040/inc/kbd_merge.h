@@ -270,6 +270,14 @@ static inline bool mim_add(mim_t *m, uint8_t dev_addr, uint8_t instance) {
     return false;
 }
 
+// true si la interfaz esta dada de alta como raton.
+static inline bool mim_has(const mim_t *m, uint8_t dev_addr, uint8_t instance) {
+    if(dev_addr == 0) return false;
+    for(int i = 0; i < MIM_MAX; i++)
+        if(m->itf[i].dev_addr == dev_addr && m->itf[i].instance == instance) return true;
+    return false;
+}
+
 // Da de baja una interfaz: true si estaba dada de alta.
 static inline bool mim_remove(mim_t *m, uint8_t dev_addr, uint8_t instance) {
     if(dev_addr == 0) return false;
