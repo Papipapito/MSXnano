@@ -126,6 +126,10 @@ The C6 replaces the ESP-01S on the same UART and adds one wire for the Turbo ind
 | **GPIO3** | **pin 29** | Turbo status |
 | GND | GND | common ground |
 
+**With the Placa MSXnano** (connector J4 `5V · GND · NC · TX · RX · TURBO`): the board's **TX** pin
+goes to the C6's **GPIO17** and **RX** to **GPIO16**; **TURBO** to **GPIO3**, **5V** to 5V and **GND**
+to GND. The board's TX and RX are the FPGA's: do not cross them.
+
 Board: Waveshare **ESP32-C6-LCD-1.3**. Firmware: **[ESP32-for-FPGA](https://github.com/Papipapito/ESP32-for-FPGA)**.
 
 ---

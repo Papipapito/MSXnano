@@ -107,6 +107,10 @@ compilado para 859372 baudios (soportado de serie).
 | **GPIO3** | **pin 29** | indicador de turbo, FPGA → C6 |
 | GND | GND | masa común |
 
+**Con la Placa MSXnano** (conector J4 `5V · GND · NC · TX · RX · TURBO`): el pin **TX** de la
+placa va al **GPIO17** de la C6 y el **RX** al **GPIO16**; **TURBO** al **GPIO3**, **5V** al 5V y
+**GND** a GND. TX y RX de la placa son los del FPGA: no hay que cruzarlos.
+
 Firmware: [ESP32-for-FPGA](https://github.com/Papipapito/ESP32-for-FPGA)
 (`firmware_esp32c6_v3.8_merged.bin` en la release). La pantalla enseña el logo al arrancar,
 el estado de la WiFi, la hora y si el turbo está activo.
